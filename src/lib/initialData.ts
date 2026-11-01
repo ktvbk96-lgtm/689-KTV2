@@ -296,7 +296,11 @@ export const INITIAL_SETTINGS: AppSettings = {
   receiptLogoUrl: '',
   staffCanEditDebt: false,
   staffCanDeleteDebt: false,
+  receiptFontSize: 'large', // Default to Large font size so letters are easily readable
+  receiptPaperWidth: '58mm',
+  receiptBoldText: true,
 };
+
 
 export const INITIAL_DEBTS: DebtRecord[] = [
   {

@@ -9,9 +9,12 @@ import {
   AlertCircle,
   Image as ImageIcon,
   FileText,
+  Type,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
-import { BillRecord, AppSettings } from '../types';
-import { formatCurrency } from '../lib/storage';
+import { BillRecord, AppSettings, ReceiptFontSize, ReceiptPaperWidth } from '../types';
+import { formatCurrency, saveStoredSettings } from '../lib/storage';
 import {
   printReceiptAsImageViaBluetooth,
   getReceiptImageDataUrl,
@@ -29,6 +32,7 @@ interface BillingModalProps {
   bluetoothConnected: boolean;
   onOpenBluetoothSetup: () => void;
   onSyncGoogleSheet?: (bill: BillRecord) => Promise<boolean>;
+  onUpdateSettings?: (newSettings: AppSettings) => void;
 }
 
 export const BillingModal: React.FC<BillingModalProps> = ({
@@ -39,9 +43,18 @@ export const BillingModal: React.FC<BillingModalProps> = ({
   bluetoothConnected,
   onOpenBluetoothSetup,
   onSyncGoogleSheet,
+  onUpdateSettings,
 }) => {
   const [discount, setDiscount] = useState<number>(bill.discount || 0);
   const netTotal = Math.max(0, bill.subtotal - discount);
+
+  // Font Size & Paper Width state for instant adjustments right on the receipt
+  const [receiptFontSize, setReceiptFontSize] = useState<ReceiptFontSize>(
+    settings.receiptFontSize || 'large'
+  );
+  const [receiptPaperWidth, setReceiptPaperWidth] = useState<ReceiptPaperWidth>(
+    settings.receiptPaperWidth || '58mm'
+  );
 
   const [isPrintingBt, setIsPrintingBt] = useState<boolean>(false);
   const [printError, setPrintError] = useState<string>('');
@@ -61,17 +74,44 @@ export const BillingModal: React.FC<BillingModalProps> = ({
     },
   };
 
-  // Re-render receipt image whenever discount changes after ensuring Lao fonts are loaded
+  // Active settings with current font size and paper width
+  const activeSettings: AppSettings = {
+    ...settings,
+    receiptFontSize,
+    receiptPaperWidth,
+  };
+
+  // Handle Font Size changes & persist to settings
+  const handleUpdateFontSize = (newSize: ReceiptFontSize) => {
+    setReceiptFontSize(newSize);
+    const updated = { ...settings, receiptFontSize: newSize, receiptPaperWidth };
+    if (onUpdateSettings) {
+      onUpdateSettings(updated);
+    }
+    saveStoredSettings(updated);
+  };
+
+  // Handle Paper Width changes & persist to settings
+  const handleUpdatePaperWidth = (newWidth: ReceiptPaperWidth) => {
+    setReceiptPaperWidth(newWidth);
+    const updated = { ...settings, receiptFontSize, receiptPaperWidth: newWidth };
+    if (onUpdateSettings) {
+      onUpdateSettings(updated);
+    }
+    saveStoredSettings(updated);
+  };
+
+  // Re-render receipt image whenever discount, font size, or paper width changes
   useEffect(() => {
     let isCancelled = false;
     const generatePreview = async () => {
       try {
         await ensureLaoFontsReady();
-        if (settings.receiptLogoUrl) {
-          await loadReceiptImage(settings.receiptLogoUrl).catch(() => {});
+        if (activeSettings.receiptLogoUrl) {
+          await loadReceiptImage(activeSettings.receiptLogoUrl).catch(() => {});
         }
         if (isCancelled) return;
-        const dataUrl = getReceiptImageDataUrl(currentBillState, settings);
+        const dataUrl = getReceiptImageDataUrl(currentBillState, activeSettings);
         setReceiptImageUrl(dataUrl);
       } catch (e) {
         console.error('Error rendering receipt image:', e);
@@ -81,7 +121,7 @@ export const BillingModal: React.FC<BillingModalProps> = ({
     return () => {
       isCancelled = true;
     };
-  }, [discount, settings.receiptLogoUrl]);
+  }, [discount, activeSettings.receiptLogoUrl, receiptFontSize, receiptPaperWidth]);
 
   // Handle discount adjustments
   const handleSetDiscount = (val: number) => {
@@ -105,7 +145,7 @@ export const BillingModal: React.FC<BillingModalProps> = ({
     setPrintSuccess(false);
 
     try {
-      await printReceiptAsImageViaBluetooth(currentBillState, settings);
+      await printReceiptAsImageViaBluetooth(currentBillState, activeSettings);
       setPrintSuccess(true);
 
       // Auto-finalize & close receipt modal immediately as requested
@@ -126,7 +166,7 @@ export const BillingModal: React.FC<BillingModalProps> = ({
   // Download receipt image as PNG file
   const handleDownloadReceiptImage = () => {
     try {
-      const dataUrl = receiptImageUrl || getReceiptImageDataUrl(currentBillState, settings);
+      const dataUrl = receiptImageUrl || getReceiptImageDataUrl(currentBillState, activeSettings);
       const link = document.createElement('a');
       link.download = `Bill-689KTV-${bill.billNumber}.png`;
       link.href = dataUrl;
@@ -187,6 +227,79 @@ export const BillingModal: React.FC<BillingModalProps> = ({
           </button>
         </div>
 
+        {/* ========================================================================= */}
+        {/* RECEIPT FONT SIZE & PAPER CONTROLS (ປັບຂະໜາດຕົວໜັງສືໃຫຍ່-ນ້ອຍ ຕາມໃຈ)     */}
+        {/* ========================================================================= */}
+        <div className="mb-3 bg-gradient-to-r from-amber-500/10 via-rose-500/10 to-purple-500/10 border border-amber-500/30 rounded-2xl p-3 space-y-2">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-1.5">
+              <Type className="w-4 h-4 text-amber-400" />
+              <span className="text-xs font-black text-amber-300">
+                ປັບຂະໜາດຕົວໜັງສືໃບບິນ (Font Size):
+              </span>
+            </div>
+
+            {/* Font Size Pills Selector */}
+            <div className="flex items-center gap-1 bg-slate-950/80 p-1 rounded-xl border border-slate-800">
+              {[
+                { id: 'small', label: 'ປົກກະຕິ (S)', sub: '100%' },
+                { id: 'medium', label: 'ກາງ (M)', sub: '118%' },
+                { id: 'large', label: 'ໃຫຍ່ (L)', sub: '138%' },
+                { id: 'xlarge', label: 'ໃຫຍ່ພິເສດ (XL)', sub: '162%' },
+              ].map((f) => {
+                const isSelected = receiptFontSize === f.id;
+                return (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => handleUpdateFontSize(f.id as ReceiptFontSize)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                      isSelected
+                        ? 'bg-gradient-to-r from-amber-500 to-rose-500 text-slate-950 font-black shadow-md'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800/80'
+                    }`}
+                    title={`ຂະໜາດຕົວໜັງສື ${f.sub}`}
+                  >
+                    <span>{f.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between pt-1 border-t border-slate-800/70 text-[11px] text-slate-400 flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-slate-400">ຂະໜາດເຈ້ຍ:</span>
+              <button
+                type="button"
+                onClick={() => handleUpdatePaperWidth('58mm')}
+                className={`px-2 py-0.5 rounded-lg text-xs font-bold cursor-pointer transition-all ${
+                  receiptPaperWidth === '58mm'
+                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/50'
+                    : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                58 ມມ (Mini)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleUpdatePaperWidth('80mm')}
+                className={`px-2 py-0.5 rounded-lg text-xs font-bold cursor-pointer transition-all ${
+                  receiptPaperWidth === '80mm'
+                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/50'
+                    : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                80 ມມ (Wide)
+              </button>
+            </div>
+
+            <span className="text-[10px] font-semibold text-emerald-400">
+              ✓ ເຫັນຊັດເຈນເຕັມຕາ • ບັນທຶກອັດຕະໂນມັດ
+            </span>
+          </div>
+        </div>
+
         {/* Preview Selector: Image mode (Lao raster) vs Paper Text */}
         <div className="flex items-center justify-between gap-2 mb-2 bg-slate-950/60 p-1.5 rounded-2xl border border-slate-800">
           <div className="flex items-center gap-1">
@@ -236,18 +349,33 @@ export const BillingModal: React.FC<BillingModalProps> = ({
                 <img
                   src={receiptImageUrl}
                   alt="Receipt Preview"
-                  className="max-w-full h-auto w-[320px] object-contain mx-auto"
+                  className={`max-w-full h-auto object-contain mx-auto ${
+                    receiptPaperWidth === '80mm' ? 'w-[380px]' : 'w-[320px]'
+                  }`}
                 />
               </div>
             ) : (
               <p className="text-xs text-slate-500">ກຳລັງສ້າງຮູບໃບບິນ...</p>
             )}
             <p className="text-[10px] text-slate-400 mt-2 text-center">
-              * ລະບົບປ່ຽນໃບບິນພາສາລາວເປັນຮູບພາບຄົມຊັດ (Raster Bitmap) ກ່ອນສົ່ງຫາ Mini Thermal Printer
+              * ລະບົບປ່ຽນໃບບິນພາສາລາວເປັນຮູບພາບຄົມຊັດ (Raster Bitmap) ກ່ອນສົ່ງຫາ Mini Thermal Printer (Font: {receiptFontSize.toUpperCase()})
             </p>
           </div>
         ) : (
-          <div className="bg-slate-100 text-slate-900 p-5 rounded-2xl shadow-inner font-mono text-xs max-h-72 overflow-y-auto border border-slate-300 print:max-h-none print:shadow-none print:m-0 print:p-2 print:border-none print-receipt-container">
+          <div
+            className={`bg-slate-100 text-slate-900 p-5 rounded-2xl shadow-inner font-mono max-h-72 overflow-y-auto border border-slate-300 print:max-h-none print:shadow-none print:m-0 print:p-2 print:border-none print-receipt-container receipt-font-${receiptFontSize}`}
+            style={{
+              fontSize:
+                receiptFontSize === 'xlarge'
+                  ? '16px'
+                  : receiptFontSize === 'large'
+                  ? '14px'
+                  : receiptFontSize === 'medium'
+                  ? '12.5px'
+                  : '11px',
+              lineHeight: 1.38,
+            }}
+          >
             {/* Header 689 KTV */}
             <div className="text-center pb-2 border-b border-dashed border-slate-400">
               {settings.receiptLogoUrl && (
@@ -259,19 +387,27 @@ export const BillingModal: React.FC<BillingModalProps> = ({
                   />
                 </div>
               )}
-              <h2 className="text-base font-black tracking-wider text-slate-950">
+              <h2
+                className={`receipt-title font-black tracking-wider text-slate-950 ${
+                  receiptFontSize === 'xlarge'
+                    ? 'text-xl'
+                    : receiptFontSize === 'large'
+                    ? 'text-lg'
+                    : 'text-base'
+                }`}
+              >
                 {settings.shopName}
               </h2>
-              <p className="text-[11px] font-semibold text-slate-700">{settings.receiptHeader}</p>
-              {settings.shopAddress && <p className="text-[10px] text-slate-600">{settings.shopAddress}</p>}
-              {settings.shopPhone && <p className="text-[10px] text-slate-600">Tel: {settings.shopPhone}</p>}
+              <p className="font-semibold text-slate-700">{settings.receiptHeader}</p>
+              {settings.shopAddress && <p className="text-slate-600">{settings.shopAddress}</p>}
+              {settings.shopPhone && <p className="text-slate-600">Tel: {settings.shopPhone}</p>}
               {settings.wifiPassword && (
-                <p className="text-[10px] text-slate-600">WiFi: {settings.wifiPassword}</p>
+                <p className="text-slate-600">WiFi: {settings.wifiPassword}</p>
               )}
             </div>
 
             {/* Bill Meta */}
-            <div className="py-2 border-b border-dashed border-slate-400 space-y-0.5 text-[11px]">
+            <div className="py-2 border-b border-dashed border-slate-400 space-y-0.5">
               <div className="flex justify-between">
                 <span>ເລກທີບິນ:</span>
                 <span className="font-bold">{bill.billNumber}</span>
@@ -309,7 +445,7 @@ export const BillingModal: React.FC<BillingModalProps> = ({
                 </div>
               )}
               {bill.timeRangeFormatted && (
-                <div className="flex justify-between text-[10px] text-slate-600">
+                <div className="flex justify-between text-slate-600">
                   <span>ກຳນົດໄລຍະເວລາ:</span>
                   <span>{bill.timeRangeFormatted}</span>
                 </div>
@@ -337,10 +473,12 @@ export const BillingModal: React.FC<BillingModalProps> = ({
               {bill.items.map((item, idx) => (
                 <div key={idx} className="space-y-0.5">
                   <div className="flex justify-between">
-                    <span className="font-medium truncate max-w-[200px]">{item.productName}</span>
-                    <span>{formatCurrency(item.total, settings.currencySymbol)}</span>
+                    <span className="font-bold truncate max-w-[200px]">{item.productName}</span>
+                    <span className="font-bold font-mono">
+                      {formatCurrency(item.total, settings.currencySymbol)}
+                    </span>
                   </div>
-                  <div className="flex justify-between text-[10px] text-slate-600">
+                  <div className="flex justify-between text-[0.88em] text-slate-600">
                     <span>
                       {item.quantity} {item.unit} x {formatCurrency(item.price, '')}
                     </span>
@@ -351,7 +489,7 @@ export const BillingModal: React.FC<BillingModalProps> = ({
             </div>
 
             {/* Totals */}
-            <div className="py-2 border-b border-dashed border-slate-400 space-y-1 text-[11px]">
+            <div className="py-2 border-b border-dashed border-slate-400 space-y-1">
               <div className="flex justify-between text-slate-700">
                 <span>ລວມເງິນ:</span>
                 <span>{formatCurrency(bill.subtotal, settings.currencySymbol)}</span>
@@ -362,19 +500,28 @@ export const BillingModal: React.FC<BillingModalProps> = ({
                   <span>-{formatCurrency(discount, settings.currencySymbol)}</span>
                 </div>
               )}
-              <div className="flex justify-between text-sm font-black text-slate-950 pt-1 border-t border-slate-400">
+              <div
+                className={`receipt-total flex justify-between font-black text-slate-950 pt-1.5 border-t-2 border-slate-950 ${
+                  receiptFontSize === 'xlarge'
+                    ? 'text-lg'
+                    : receiptFontSize === 'large'
+                    ? 'text-base'
+                    : 'text-sm'
+                }`}
+              >
                 <span>ຍອດສຸດທິ (TOTAL):</span>
                 <span>{formatCurrency(netTotal, settings.currencySymbol)}</span>
               </div>
             </div>
 
             {/* Footer note */}
-            <div className="pt-2 text-center text-[10px] text-slate-600 space-y-0.5">
+            <div className="pt-2 text-center text-slate-600 space-y-0.5">
               <p>{settings.receiptFooter}</p>
               <p className="font-black text-slate-900">*** 689 KTV ***</p>
             </div>
           </div>
         )}
+
 
         {/* Dynamic Discount Controls */}
         <div className="mt-3 bg-slate-850 border border-slate-800 rounded-2xl p-3 space-y-2">

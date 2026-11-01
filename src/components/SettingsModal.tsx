@@ -26,8 +26,10 @@ import {
   Upload,
   Image as ImageIcon,
   ShieldAlert,
+  Type,
 } from 'lucide-react';
-import { AppSettings, StaffMember, RoomPackage, Room, Product, AppThemeId } from '../types';
+import { AppSettings, StaffMember, RoomPackage, Room, Product, AppThemeId, ReceiptFontSize, ReceiptPaperWidth } from '../types';
+
 import {
   connectBluetoothPrinter,
   disconnectBluetoothPrinter,
@@ -1110,8 +1112,267 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 />
               </div>
             </div>
+
+            {/* ========================================================================= */}
+            {/* RECEIPT FONT SIZE & PRINTING STYLE (ປັບຂະໜາດຕົວໜັງສືໃບບິນ)                */}
+            {/* ========================================================================= */}
+            <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-slate-850 via-slate-850 to-amber-950/20 border border-amber-500/30 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-700/60 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+                    <Type className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-black text-sm text-slate-100 flex items-center gap-1.5">
+                      <span>ຕັ້ງຄ່າຂະໜາດຕົວໜັງສືໃບບິນ (Receipt Font Size)</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40">
+                        ໃໝ່
+                      </span>
+                    </h4>
+                    <p className="text-[11px] text-slate-400">
+                      ປັບຂະໜາດຕົວໜັງສືໃຫ້ໃຫຍ່ຂຶ້ນ ເພື່ອໃຫ້ພິມໃສ່ເຈ້ຍຄວາມຮ້ອນເຫັນຊັດເຈນເຕັມຕາ
+                    </p>
+                  </div>
+                </div>
+
+                <span className="text-xs font-bold font-mono px-2.5 py-1 rounded-xl bg-slate-900 border border-slate-700 text-amber-300">
+                  {formData.receiptFontSize === 'xlarge'
+                    ? 'ໃຫຍ່ພິເສດ (162%)'
+                    : formData.receiptFontSize === 'medium'
+                    ? 'ຂະໜາດກາງ (118%)'
+                    : formData.receiptFontSize === 'small'
+                    ? 'ປົກກະຕິ (100%)'
+                    : 'ໃຫຍ່ (138% - ແນະນຳ)'}
+                </span>
+              </div>
+
+              {/* Font Size Preset Selector Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                {[
+                  {
+                    id: 'small',
+                    name: 'ປົກກະຕິ (Small)',
+                    scale: '100%',
+                    desc: 'ຂະໜາດດັ້ງເດີມ',
+                    previewClass: 'text-[11px]',
+                  },
+                  {
+                    id: 'medium',
+                    name: 'ຂະໜາດກາງ (Medium)',
+                    scale: '118%',
+                    desc: 'ອ່ານສະບາຍຕາຂຶ້ນ',
+                    previewClass: 'text-xs',
+                  },
+                  {
+                    id: 'large',
+                    name: 'ໃຫຍ່ (Large)',
+                    scale: '138%',
+                    desc: 'ແນະນຳ • ເຫັນຊັດເຈນ',
+                    isRecommended: true,
+                    previewClass: 'text-sm font-bold',
+                  },
+                  {
+                    id: 'xlarge',
+                    name: 'ໃຫຍ່ພິເສດ (Extra Large)',
+                    scale: '162%',
+                    desc: 'ໃຫຍ່ເຕັມຕາ 100%',
+                    previewClass: 'text-base font-black',
+                  },
+                ].map((item) => {
+                  const isSelected = (formData.receiptFontSize || 'large') === item.id;
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() =>
+                        setFormData({
+                          ...formData,
+                          receiptFontSize: item.id as ReceiptFontSize,
+                        })
+                      }
+                      className={`p-3 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between ${
+                        isSelected
+                          ? 'bg-amber-500/15 border-amber-500 shadow-lg shadow-amber-500/10'
+                          : 'bg-slate-900/70 border-slate-750 hover:border-slate-600'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <span
+                            className={`text-xs font-black ${
+                              isSelected ? 'text-amber-300' : 'text-slate-200'
+                            }`}
+                          >
+                            {item.name}
+                          </span>
+                          {item.isRecommended && (
+                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500 text-slate-950 font-black">
+                              ແນະນຳ
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-slate-400 block font-mono">
+                          ຂະໜາດ: {item.scale}
+                        </span>
+                        <p className="text-[10px] text-slate-400 mt-1">{item.desc}</p>
+                      </div>
+
+                      <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-center justify-between">
+                        <span className={item.previewClass}>ຕົວຢ່າງ Font</span>
+                        {isSelected ? (
+                          <span className="text-[10px] font-black text-amber-400">✓ ເລືອກແລ້ວ</span>
+                        ) : (
+                          <span className="text-[10px] text-slate-500">ກົດເລືອກ</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Additional Options: Paper Width & High Contrast / Extra Bold */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                {/* Paper Width (58mm vs 80mm) */}
+                <div className="p-3 rounded-xl bg-slate-900 border border-slate-750 flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-slate-200 block">
+                      ຂະໜາດເຈ້ຍເຄື່ອງພິມ (Thermal Paper Width):
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      ເລືອກຕາມຂະໜາດເຈ້ຍຂອງ Bluetooth Thermal Printer
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-1 bg-slate-800 p-1 rounded-lg border border-slate-700">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setFormData({
+                          ...formData,
+                          receiptPaperWidth: '58mm',
+                        })
+                      }
+                      className={`px-2.5 py-1 rounded-md text-xs font-bold cursor-pointer transition-all ${
+                        (formData.receiptPaperWidth || '58mm') === '58mm'
+                          ? 'bg-rose-500 text-white font-black shadow-sm'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      58 ມມ (Mini)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setFormData({
+                          ...formData,
+                          receiptPaperWidth: '80mm',
+                        })
+                      }
+                      className={`px-2.5 py-1 rounded-md text-xs font-bold cursor-pointer transition-all ${
+                        formData.receiptPaperWidth === '80mm'
+                          ? 'bg-rose-500 text-white font-black shadow-sm'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      80 ມມ (Wide)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Extra Bold / High Contrast Toggle */}
+                <div className="p-3 rounded-xl bg-slate-900 border border-slate-750 flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-slate-200 block">
+                      ເນັ້ນຕົວໜັງສືໜາເຂັ້ມ (High Contrast / Extra Bold):
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      ຊ່ວຍໃຫ້ຫົວພິມຄວາມຮ້ອນເຜົາສີດຳເຂັ້ມຊັດເຈນ ບໍ່ຈາງ
+                    </span>
+                  </div>
+
+                  <input
+                    type="checkbox"
+                    checked={formData.receiptBoldText !== false}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        receiptBoldText: e.target.checked,
+                      })
+                    }
+                    className="w-5 h-5 accent-amber-500 cursor-pointer"
+                  />
+                </div>
+              </div>
+
+              {/* Live Mini Preview Box */}
+              <div className="p-3 bg-white text-slate-950 rounded-xl shadow border border-slate-300 font-mono">
+                <span className="text-[10px] text-slate-500 font-sans block mb-1 font-bold">
+                  [ ຕົວຢ່າງໃບບິນຈິງຕາມຂະໜາດທີ່ເລືອກ / Live Sample Receipt ]:
+                </span>
+                <div
+                  className="space-y-1 text-center border-b border-dashed border-slate-400 pb-2"
+                  style={{
+                    fontSize:
+                      formData.receiptFontSize === 'xlarge'
+                        ? '16px'
+                        : formData.receiptFontSize === 'large'
+                        ? '14px'
+                        : formData.receiptFontSize === 'medium'
+                        ? '12px'
+                        : '10.5px',
+                  }}
+                >
+                  <p className="font-black text-slate-950">{formData.shopName || '689 KTV'}</p>
+                  <p className="text-[0.9em] font-semibold text-slate-700">
+                    {formData.receiptHeader || 'ຄາຣາໂອເກະ ຄຸນນະພາບສູງ'}
+                  </p>
+                </div>
+                <div
+                  className="py-1.5 border-b border-dashed border-slate-400 space-y-0.5"
+                  style={{
+                    fontSize:
+                      formData.receiptFontSize === 'xlarge'
+                        ? '15px'
+                        : formData.receiptFontSize === 'large'
+                        ? '13px'
+                        : formData.receiptFontSize === 'medium'
+                        ? '11.5px'
+                        : '10px',
+                  }}
+                >
+                  <div className="flex justify-between">
+                    <span>ເລກທີບິນ:</span>
+                    <span className="font-bold">689-20261101-001</span>
+                  </div>
+                  <div className="flex justify-between font-bold">
+                    <span>ຫ້ອງ KTV:</span>
+                    <span>ຫ້ອງ VIP 689</span>
+                  </div>
+                  <div className="flex justify-between pt-1">
+                    <span>1. ເບຍລາວ ຂວດໃຫຍ່ (3 ແກ້ວ)</span>
+                    <span className="font-bold">75,000 ₭</span>
+                  </div>
+                </div>
+                <div
+                  className="pt-1.5 flex justify-between font-black text-slate-950"
+                  style={{
+                    fontSize:
+                      formData.receiptFontSize === 'xlarge'
+                        ? '18px'
+                        : formData.receiptFontSize === 'large'
+                        ? '16px'
+                        : formData.receiptFontSize === 'medium'
+                        ? '13.5px'
+                        : '12px',
+                  }}
+                >
+                  <span>ຍອດສຸດທິ (TOTAL):</span>
+                  <span>155,000 ₭</span>
+                </div>
+              </div>
+            </div>
           </div>
         )}
+
 
         {/* TAB: BLUETOOTH PRINTER */}
         {activeTab === 'printer' && (
@@ -1178,6 +1439,96 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {btMessage}
               </div>
             )}
+
+            {/* Quick Font Size Selector in Printer tab */}
+            <div className="p-4 rounded-2xl bg-slate-800/60 border border-slate-700 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="font-bold text-xs text-slate-100 flex items-center gap-1.5">
+                    <Type className="w-4 h-4 text-amber-400" />
+                    <span>ຂະໜາດ Font ຕົວໜັງສືເວລາພິມ (Printing Font Size)</span>
+                  </h4>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    ເລືອກຂະໜາດຕົວໜັງສືໃຫ້ພໍດີກັບສາຍຕາ (ແນະນຳຂະໜາດ "ໃຫຍ່" ຫຼື "ໃຫຍ່ພິເສດ" ສຳລັບເຈ້ຍຄວາມຮ້ອນ)
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('receipt')}
+                  className="text-xs text-amber-400 hover:text-amber-300 font-bold underline cursor-pointer"
+                >
+                  ເບິ່ງຕົວຢ່າງໃບບິນເຕັມ →
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  { id: 'small', label: 'ປົກກະຕິ (100%)' },
+                  { id: 'medium', label: 'ຂະໜາດກາງ (118%)' },
+                  { id: 'large', label: 'ໃຫຍ່ (138% - ແນະນຳ)' },
+                  { id: 'xlarge', label: 'ໃຫຍ່ພິເສດ (162%)' },
+                ].map((f) => {
+                  const isSelected = (formData.receiptFontSize || 'large') === f.id;
+                  return (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() =>
+                        setFormData({
+                          ...formData,
+                          receiptFontSize: f.id as ReceiptFontSize,
+                        })
+                      }
+                      className={`py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                        isSelected
+                          ? 'bg-amber-500 border-amber-400 text-slate-950 font-black shadow-md'
+                          : 'bg-slate-900 border-slate-750 text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex items-center justify-between pt-1 border-t border-slate-750 text-xs text-slate-400">
+                <span>ຂະໜາດເຈ້ຍ:</span>
+                <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-700">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFormData({
+                        ...formData,
+                        receiptPaperWidth: '58mm',
+                      })
+                    }
+                    className={`px-2 py-0.5 rounded-md text-xs font-bold cursor-pointer transition-all ${
+                      (formData.receiptPaperWidth || '58mm') === '58mm'
+                        ? 'bg-rose-500 text-white font-black'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    58mm (Mini)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFormData({
+                        ...formData,
+                        receiptPaperWidth: '80mm',
+                      })
+                    }
+                    className={`px-2 py-0.5 rounded-md text-xs font-bold cursor-pointer transition-all ${
+                      formData.receiptPaperWidth === '80mm'
+                        ? 'bg-rose-500 text-white font-black'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    80mm (Wide)
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 

@@ -28,7 +28,29 @@
     background: #fff !important;
     border: none !important;
     box-shadow: none !important;
-    font-size: 12px !important;
-    line-height: 1.3 !important;
+    line-height: 1.35 !important;
+  }
+
+  .print-receipt-container.receipt-font-small {
+    font-size: 11px !important;
+  }
+  .print-receipt-container.receipt-font-medium {
+    font-size: 13.5px !important;
+  }
+  .print-receipt-container.receipt-font-large {
+    font-size: 16px !important;
+  }
+  .print-receipt-container.receipt-font-xlarge {
+    font-size: 18.5px !important;
+  }
+
+  .print-receipt-container .receipt-title {
+    font-size: 1.45em !important;
+    font-weight: 900 !important;
+  }
+  .print-receipt-container .receipt-total {
+    font-size: 1.4em !important;
+    font-weight: 900 !important;
   }
 }
+

@@ -133,29 +133,55 @@ export const loadReceiptImage = (src: string): Promise<HTMLImageElement> => {
 
 // Rendering Lao text on HTML5 Canvas ensures authentic Lao typography prints clearly.
 
+export const getReceiptFontScale = (size?: string): number => {
+  switch (size) {
+    case 'small':
+      return 1.0;
+    case 'medium':
+      return 1.18;
+    case 'xlarge':
+      return 1.62; // ໃຫຍ່ພິເສດ (Extra Large)
+    case 'large':
+    default:
+      return 1.38; // ໃຫຍ່ (Large - Default for maximum clarity)
+  }
+};
+
 export const renderReceiptToCanvas = (
   bill: BillRecord,
   settings: AppSettings,
-  printWidthDots: number = 384 // Standard 58mm printer width (384 dots)
+  customPrintWidthDots?: number
 ): HTMLCanvasElement => {
+  // Determine width based on settings or custom argument (58mm = 384 dots, 80mm = 576 dots)
+  const is80mm = settings.receiptPaperWidth === '80mm';
+  const printWidthDots = customPrintWidthDots || (is80mm ? 576 : 384);
+
   const canvas = document.createElement('canvas');
   canvas.width = printWidthDots;
 
-  // Temporary canvas to measure height
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Canvas 2D context not available');
+
+  // Font scale calculation
+  let scale = getReceiptFontScale(settings.receiptFontSize);
+  if (is80mm) {
+    scale *= 1.15; // Proportional boost for 80mm wider paper
+  }
+
+  const isExtraBold = settings.receiptBoldText !== false;
 
   // Lao font stack with highest priority to Google Noto Sans Lao
   const laoFont = '"Noto Sans Lao", "Noto Sans Thai", "Noto Sans", "Phetsarath OT", "Saysettha OT", "Lao UI", sans-serif';
   const monoFont = '"Courier New", Courier, monospace';
 
-  let estimatedHeight = 450; // Base header & footer
-  if (settings.receiptLogoUrl) estimatedHeight += 100;
-  if (bill.type === 'ktv_room') estimatedHeight += 160;
-  estimatedHeight += bill.items.length * 60;
-  if (bill.discount > 0) estimatedHeight += 36;
+  // Dynamic canvas height estimation to avoid any clipping
+  let estimatedHeight = Math.round(550 * scale);
+  if (settings.receiptLogoUrl) estimatedHeight += Math.round(140 * scale);
+  if (bill.type === 'ktv_room') estimatedHeight += Math.round(220 * scale);
+  estimatedHeight += bill.items.length * Math.round(80 * scale);
+  if (bill.discount > 0) estimatedHeight += Math.round(40 * scale);
 
-  canvas.height = Math.max(650, estimatedHeight);
+  canvas.height = Math.max(700, estimatedHeight);
 
   // Fill pure white background
   ctx.fillStyle = '#FFFFFF';
@@ -164,62 +190,65 @@ export const renderReceiptToCanvas = (
   ctx.fillStyle = '#000000';
   ctx.textBaseline = 'top';
 
-  let y = 18;
-  const paddingX = 14;
+  let y = Math.round(20 * scale);
+  const paddingX = Math.round(14 * (printWidthDots / 384));
   const contentWidth = canvas.width - paddingX * 2;
 
   // 0. LOGO IMAGE (If configured)
   if (settings.receiptLogoUrl && imageCache.has(settings.receiptLogoUrl)) {
     const logoImg = imageCache.get(settings.receiptLogoUrl)!;
     if (logoImg.complete && logoImg.naturalWidth > 0) {
-      const maxLogoW = 160;
-      const maxLogoH = 80;
+      const maxLogoW = Math.round(is80mm ? 240 : 180);
+      const maxLogoH = Math.round(is80mm ? 110 : 90);
       let drawW = logoImg.naturalWidth;
       let drawH = logoImg.naturalHeight;
       const ratio = Math.min(maxLogoW / drawW, maxLogoH / drawH, 1);
       drawW = Math.round(drawW * ratio);
       drawH = Math.round(drawH * ratio);
       ctx.drawImage(logoImg, Math.round((canvas.width - drawW) / 2), y, drawW, drawH);
-      y += drawH + 12;
+      y += drawH + Math.round(14 * scale);
     }
   }
 
   // 1. SHOP TITLE: 689 KTV
-  ctx.font = `bold 28px ${laoFont}`;
+  const titleSize = Math.round(26 * scale);
+  ctx.font = `900 ${titleSize}px ${laoFont}`;
   ctx.textAlign = 'center';
   ctx.fillText(settings.shopName || '689 KTV', canvas.width / 2, y);
-  y += 38;
+  y += Math.round(titleSize * 1.35);
 
   // Subheader
   if (settings.receiptHeader) {
-    ctx.font = `bold 14px ${laoFont}`;
+    const subheaderSize = Math.round(14 * scale);
+    ctx.font = `bold ${subheaderSize}px ${laoFont}`;
     ctx.fillText(settings.receiptHeader, canvas.width / 2, y);
-    y += 22;
+    y += Math.round(subheaderSize * 1.45);
   }
 
   // Branch / Address / Phone / WiFi
-  ctx.font = `12px ${laoFont}`;
+  const infoSize = Math.round(12.5 * scale);
+  ctx.font = isExtraBold ? `bold ${infoSize}px ${laoFont}` : `500 ${infoSize}px ${laoFont}`;
   if (settings.shopAddress) {
     ctx.fillText(settings.shopAddress, canvas.width / 2, y);
-    y += 18;
+    y += Math.round(infoSize * 1.4);
   }
   if (settings.shopPhone) {
     ctx.fillText(`Tel: ${settings.shopPhone}`, canvas.width / 2, y);
-    y += 18;
+    y += Math.round(infoSize * 1.4);
   }
   if (settings.wifiPassword) {
     ctx.fillText(`WiFi: ${settings.wifiPassword}`, canvas.width / 2, y);
-    y += 18;
+    y += Math.round(infoSize * 1.4);
   }
 
-  y += 8;
+  y += Math.round(8 * scale);
 
-  // Dashed line
+  // Dashed line helper
   const drawDashedLine = (currY: number) => {
     ctx.beginPath();
-    ctx.setLineDash([4, 4]);
+    ctx.setLineDash([Math.round(4 * scale), Math.round(4 * scale)]);
     ctx.strokeStyle = '#000000';
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = Math.max(1.5, Math.round(1.8 * scale));
     ctx.moveTo(paddingX, currY);
     ctx.lineTo(canvas.width - paddingX, currY);
     ctx.stroke();
@@ -227,19 +256,19 @@ export const renderReceiptToCanvas = (
   };
 
   drawDashedLine(y);
-  y += 10;
+  y += Math.round(10 * scale);
 
-  // Bill metadata (Bill No, Date, Staff, Room, Time)
-  ctx.textAlign = 'left';
-  ctx.font = `12px ${monoFont}`;
+  // Metadata Row Helper
+  const metaSize = Math.round(13 * scale);
+  const rowLineHeight = Math.round(metaSize * 1.45);
 
   const drawRow = (label: string, value: string, isBold = false) => {
-    ctx.font = isBold ? `bold 12px ${laoFont}` : `12px ${laoFont}`;
+    ctx.font = (isBold || isExtraBold) ? `bold ${metaSize}px ${laoFont}` : `${metaSize}px ${laoFont}`;
     ctx.textAlign = 'left';
     ctx.fillText(label, paddingX, y);
     ctx.textAlign = 'right';
     ctx.fillText(value, canvas.width - paddingX, y);
-    y += 18;
+    y += rowLineHeight;
   };
 
   drawRow('ເລກທີບິນ (Bill No):', bill.billNumber, true);
@@ -253,7 +282,7 @@ export const renderReceiptToCanvas = (
   drawRow('ພະນັກງານ:', bill.staffName || 'Admin');
 
   if (bill.type === 'ktv_room') {
-    y += 2;
+    y += Math.round(3 * scale);
     drawRow('ຫ້ອງ KTV:', bill.roomName || 'ຫ້ອງ KTV', true);
 
     if (bill.startTime) {
@@ -280,51 +309,86 @@ export const renderReceiptToCanvas = (
     }
   }
 
-  y += 4;
+  y += Math.round(6 * scale);
   drawDashedLine(y);
-  y += 10;
+  y += Math.round(10 * scale);
 
   // Table header
-  ctx.font = `bold 12px ${laoFont}`;
+  const tableHeaderSize = Math.round(13.5 * scale);
+  ctx.font = `bold ${tableHeaderSize}px ${laoFont}`;
   ctx.textAlign = 'left';
   ctx.fillText('ລາຍການສິນຄ້າ', paddingX, y);
   ctx.textAlign = 'center';
   ctx.fillText('ຈຳນວນ', paddingX + contentWidth * 0.58, y);
   ctx.textAlign = 'right';
   ctx.fillText('ລາຄາ', canvas.width - paddingX, y);
-  y += 20;
+  y += Math.round(tableHeaderSize * 1.55);
 
   drawDashedLine(y);
-  y += 10;
+  y += Math.round(10 * scale);
 
-  // Items
+  // Product Items breakdown
+  const itemNameSize = Math.round(13.5 * scale);
+  const itemDetailSize = Math.round(12.5 * scale);
+  const serverSize = Math.round(11 * scale);
+  const maxItemNameWidth = contentWidth * 0.52;
+
   bill.items.forEach((item) => {
-    ctx.font = `bold 12px ${laoFont}`;
+    ctx.font = isExtraBold ? `bold ${itemNameSize}px ${laoFont}` : `600 ${itemNameSize}px ${laoFont}`;
     ctx.textAlign = 'left';
 
-    // Truncate name if too long for one line
-    const nameText = item.productName.length > 20 ? item.productName.substring(0, 19) + '…' : item.productName;
-    ctx.fillText(nameText, paddingX, y);
+    // Measure name width. If too long, wrap onto second line instead of truncation
+    const rawName = item.productName;
+    const nameWidth = ctx.measureText(rawName).width;
 
-    ctx.font = `11px ${monoFont}`;
-    ctx.textAlign = 'center';
-    ctx.fillText(`${item.quantity} ${item.unit}`, paddingX + contentWidth * 0.58, y);
+    if (nameWidth > maxItemNameWidth && rawName.length > 14) {
+      // Find a space or break point
+      let breakIdx = Math.floor(rawName.length / 2);
+      const spaceIdx = rawName.indexOf(' ', 10);
+      if (spaceIdx > 0 && spaceIdx < rawName.length - 3) {
+        breakIdx = spaceIdx;
+      }
+      const line1 = rawName.substring(0, breakIdx).trim();
+      const line2 = rawName.substring(breakIdx).trim();
 
-    ctx.textAlign = 'right';
-    ctx.fillText(`${item.total.toLocaleString()}`, canvas.width - paddingX, y);
-    y += 18;
+      ctx.fillText(line1, paddingX, y);
+      // Right-hand quantity and total on line 1
+      ctx.font = `bold ${itemDetailSize}px ${monoFont}`;
+      ctx.textAlign = 'center';
+      ctx.fillText(`${item.quantity} ${item.unit}`, paddingX + contentWidth * 0.58, y);
+
+      ctx.textAlign = 'right';
+      ctx.fillText(`${item.total.toLocaleString()}`, canvas.width - paddingX, y);
+      y += Math.round(itemNameSize * 1.35);
+
+      // Line 2 of product name
+      ctx.font = isExtraBold ? `bold ${itemNameSize}px ${laoFont}` : `600 ${itemNameSize}px ${laoFont}`;
+      ctx.textAlign = 'left';
+      ctx.fillText(line2, paddingX, y);
+      y += Math.round(itemNameSize * 1.35);
+    } else {
+      ctx.fillText(rawName, paddingX, y);
+
+      ctx.font = `bold ${itemDetailSize}px ${monoFont}`;
+      ctx.textAlign = 'center';
+      ctx.fillText(`${item.quantity} ${item.unit}`, paddingX + contentWidth * 0.58, y);
+
+      ctx.textAlign = 'right';
+      ctx.fillText(`${item.total.toLocaleString()}`, canvas.width - paddingX, y);
+      y += Math.round(itemNameSize * 1.45);
+    }
 
     if (item.sellerName) {
-      ctx.font = `10px ${laoFont}`;
+      ctx.font = `${serverSize}px ${laoFont}`;
       ctx.textAlign = 'left';
-      ctx.fillText(`  (ຜູ້ເສີບ/ຂາຍ: ${item.sellerName})`, paddingX + 8, y);
-      y += 16;
+      ctx.fillText(`  (ຜູ້ເສີບ: ${item.sellerName})`, paddingX + Math.round(6 * scale), y);
+      y += Math.round(serverSize * 1.4);
     }
   });
 
-  y += 4;
+  y += Math.round(6 * scale);
   drawDashedLine(y);
-  y += 10;
+  y += Math.round(12 * scale);
 
   // Subtotal & Discount
   drawRow('ລວມເງິນ (Subtotal):', `${bill.subtotal.toLocaleString()} ${settings.currencySymbol}`);
@@ -333,27 +397,32 @@ export const renderReceiptToCanvas = (
     drawRow('ສ່ວນຫຼຸດ (Discount):', `-${bill.discount.toLocaleString()} ${settings.currencySymbol}`, true);
   }
 
-  y += 6;
-  // Grand TOTAL (Big Bold)
+  y += Math.round(8 * scale);
+
+  // Grand TOTAL (Big & Bold - Super Clear)
+  const totalSize = Math.round(22 * scale);
   ctx.fillStyle = '#000000';
-  ctx.font = `bold 18px ${laoFont}`;
+  ctx.font = `900 ${totalSize}px ${laoFont}`;
   ctx.textAlign = 'left';
   ctx.fillText('ຍອດສຸດທິ (TOTAL):', paddingX, y);
   ctx.textAlign = 'right';
   ctx.fillText(`${bill.total.toLocaleString()} ${settings.currencySymbol}`, canvas.width - paddingX, y);
-  y += 28;
+  y += Math.round(totalSize * 1.55);
 
   drawDashedLine(y);
-  y += 14;
+  y += Math.round(14 * scale);
 
   // Footer Message
-  ctx.font = `11px ${laoFont}`;
+  const footerSize = Math.round(12 * scale);
+  ctx.font = `${footerSize}px ${laoFont}`;
   ctx.textAlign = 'center';
   ctx.fillText(settings.receiptFooter || 'ຂໍຂອບໃຈລູກຄ້າທີ່ມາອຸດໜູນ!', canvas.width / 2, y);
-  y += 18;
-  ctx.font = `bold 13px ${laoFont}`;
+  y += Math.round(footerSize * 1.5);
+
+  const brandFooterSize = Math.round(15 * scale);
+  ctx.font = `900 ${brandFooterSize}px ${laoFont}`;
   ctx.fillText('*** 689 KTV ***', canvas.width / 2, y);
-  y += 24;
+  y += Math.round(brandFooterSize * 1.7);
 
   // Crop canvas to actual height used
   const finalCanvas = document.createElement('canvas');
@@ -368,6 +437,7 @@ export const renderReceiptToCanvas = (
 
   return finalCanvas;
 };
+
 
 // Convert Canvas to ESC/POS Raster Bit Image (GS v 0)
 export const convertCanvasToEscPosRaster = (canvas: HTMLCanvasElement): Uint8Array => {
@@ -462,8 +532,9 @@ export const printReceiptAsImageViaBluetooth = async (
     await loadReceiptImage(settings.receiptLogoUrl).catch(() => {});
   }
 
-  // 1. Render high quality Lao receipt to canvas
-  const canvas = renderReceiptToCanvas(bill, settings, 384);
+  // 1. Render high quality Lao receipt to canvas with configured width & font scale
+  const printWidthDots = settings.receiptPaperWidth === '80mm' ? 576 : 384;
+  const canvas = renderReceiptToCanvas(bill, settings, printWidthDots);
 
   // 2. Convert to ESC/POS raster bit image commands
   const rasterBytes = convertCanvasToEscPosRaster(canvas);
@@ -485,7 +556,8 @@ export const printReceiptAsImageViaBluetooth = async (
 
 // Get Data URL of the receipt image (for web preview & PNG download)
 export const getReceiptImageDataUrl = (bill: BillRecord, settings: AppSettings): string => {
-  const canvas = renderReceiptToCanvas(bill, settings, 384);
+  const printWidthDots = settings.receiptPaperWidth === '80mm' ? 576 : 384;
+  const canvas = renderReceiptToCanvas(bill, settings, printWidthDots);
   return canvas.toDataURL('image/png');
 };
 
@@ -573,15 +645,25 @@ export const printViaBluetooth = async (bill: BillRecord, settings: AppSettings)
   return await printReceiptAsImageViaBluetooth(bill, settings);
 };
 
-// Render Lao Debt Slip / Receipt Statement to Canvas (58mm = 384px width)
+// Render Lao Debt Slip / Receipt Statement to Canvas (58mm = 384px width, 80mm = 576px)
 export const renderDebtSlipToCanvas = (
   debt: DebtRecord,
   settings: AppSettings,
-  canvasWidth: number = 384
+  customCanvasWidth?: number
 ): HTMLCanvasElement => {
+  const is80mm = settings.receiptPaperWidth === '80mm';
+  const canvasWidth = customCanvasWidth || (is80mm ? 576 : 384);
+
   const canvas = document.createElement('canvas');
   canvas.width = canvasWidth;
-  canvas.height = 1200; // temporary height, will be cropped
+
+  let scale = getReceiptFontScale(settings.receiptFontSize);
+  if (is80mm) {
+    scale *= 1.15;
+  }
+  const isExtraBold = settings.receiptBoldText !== false;
+
+  canvas.height = Math.round(1350 * scale); // temporary height, will be cropped
   const ctx = canvas.getContext('2d');
   if (!ctx) return canvas;
 
@@ -589,35 +671,39 @@ export const renderDebtSlipToCanvas = (
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = '#000000';
 
-  const laoFont = '"Noto Sans Lao", "Phetsarath OT", sans-serif';
+  const laoFont = '"Noto Sans Lao", "Noto Sans Thai", "Noto Sans", "Phetsarath OT", sans-serif';
   const monoFont = '"Courier New", Courier, monospace';
-  const paddingX = 14;
-  let y = 20;
+  const paddingX = Math.round(14 * (canvasWidth / 384));
+  let y = Math.round(20 * scale);
 
   // Header Title
   ctx.textAlign = 'center';
-  ctx.font = `bold 22px ${laoFont}`;
+  const titleSize = Math.round(24 * scale);
+  ctx.font = `900 ${titleSize}px ${laoFont}`;
   ctx.fillText(settings.shopName || '689 KTV', canvas.width / 2, y);
-  y += 26;
+  y += Math.round(titleSize * 1.35);
 
-  ctx.font = `bold 15px ${laoFont}`;
+  const subSize = Math.round(15 * scale);
+  ctx.font = `bold ${subSize}px ${laoFont}`;
   ctx.fillText('ໃບຢັ້ງຢືນຄ້າງຊຳລະ / ຕິດໜີ້', canvas.width / 2, y);
-  y += 18;
-  ctx.font = `12px ${laoFont}`;
+  y += Math.round(subSize * 1.4);
+
+  const enSubSize = Math.round(12 * scale);
+  ctx.font = `bold ${enSubSize}px ${laoFont}`;
   ctx.fillText('DEBT / CREDIT STATEMENT', canvas.width / 2, y);
-  y += 20;
+  y += Math.round(enSubSize * 1.5);
 
   if (settings.shopPhone) {
     ctx.fillText(`Tel: ${settings.shopPhone}`, canvas.width / 2, y);
-    y += 18;
+    y += Math.round(enSubSize * 1.4);
   }
 
   // Dashed separator
   const drawDashed = (currY: number) => {
     ctx.beginPath();
-    ctx.setLineDash([4, 4]);
+    ctx.setLineDash([Math.round(4 * scale), Math.round(4 * scale)]);
     ctx.strokeStyle = '#000000';
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = Math.max(1.5, Math.round(1.8 * scale));
     ctx.moveTo(paddingX, currY);
     ctx.lineTo(canvas.width - paddingX, currY);
     ctx.stroke();
@@ -625,15 +711,18 @@ export const renderDebtSlipToCanvas = (
   };
 
   drawDashed(y);
-  y += 12;
+  y += Math.round(12 * scale);
+
+  const metaSize = Math.round(13 * scale);
+  const rowHeight = Math.round(metaSize * 1.45);
 
   const drawRow = (label: string, value: string, isBold = false) => {
-    ctx.font = isBold ? `bold 12px ${laoFont}` : `12px ${laoFont}`;
+    ctx.font = (isBold || isExtraBold) ? `bold ${metaSize}px ${laoFont}` : `${metaSize}px ${laoFont}`;
     ctx.textAlign = 'left';
     ctx.fillText(label, paddingX, y);
     ctx.textAlign = 'right';
     ctx.fillText(value, canvas.width - paddingX, y);
-    y += 18;
+    y += rowHeight;
   };
 
   drawRow('ຊື່ລູກຄ້າ (Customer):', debt.customerName, true);
@@ -653,32 +742,32 @@ export const renderDebtSlipToCanvas = (
   }
   drawRow('ພະນັກງານບັນທຶກ:', debt.staffName || 'Admin');
 
-  y += 4;
+  y += Math.round(6 * scale);
   drawDashed(y);
-  y += 14;
+  y += Math.round(14 * scale);
 
   // Amounts Breakdown
-  ctx.textAlign = 'left';
-  ctx.font = `12px ${laoFont}`;
   drawRow('ຍອດໜີ້ທັງໝົດ (Total Debt):', `${debt.totalAmount.toLocaleString()} ${settings.currencySymbol}`);
   drawRow('ຊຳລະແລ້ວ (Paid So Far):', `${debt.paidAmount.toLocaleString()} ${settings.currencySymbol}`);
 
-  y += 4;
+  y += Math.round(6 * scale);
+  const bannerHeight = Math.round(38 * scale);
   ctx.fillStyle = '#000000';
-  ctx.fillRect(paddingX, y, canvas.width - paddingX * 2, 34);
+  ctx.fillRect(paddingX, y, canvas.width - paddingX * 2, bannerHeight);
   ctx.fillStyle = '#FFFFFF';
-  ctx.font = `bold 13px ${laoFont}`;
+  ctx.font = `bold ${Math.round(14 * scale)}px ${laoFont}`;
   ctx.textAlign = 'left';
-  ctx.fillText('ຍອດຄ້າງຊຳລະ (REMAINING):', paddingX + 8, y + 22);
+  ctx.fillText('ຍອດຄ້າງຊຳລະ (REMAINING):', paddingX + Math.round(8 * scale), y + Math.round(10 * scale));
   ctx.textAlign = 'right';
-  ctx.font = `bold 15px ${monoFont}`;
-  ctx.fillText(`${debt.remainingAmount.toLocaleString()} ${settings.currencySymbol}`, canvas.width - paddingX - 8, y + 22);
+  ctx.font = `bold ${Math.round(16 * scale)}px ${monoFont}`;
+  ctx.fillText(`${debt.remainingAmount.toLocaleString()} ${settings.currencySymbol}`, canvas.width - paddingX - Math.round(8 * scale), y + Math.round(10 * scale));
   ctx.fillStyle = '#000000';
-  y += 44;
+  y += bannerHeight + Math.round(12 * scale);
 
   // Status Badge
   ctx.textAlign = 'center';
-  ctx.font = `bold 13px ${laoFont}`;
+  const badgeSize = Math.round(13.5 * scale);
+  ctx.font = `900 ${badgeSize}px ${laoFont}`;
   const statusText =
     debt.status === 'paid'
       ? '✓ ຊຳລະຄົບຖ້ວນແລ້ວ (FULLY PAID)'
@@ -686,33 +775,35 @@ export const renderDebtSlipToCanvas = (
       ? '⚡ ຈ່າຍບາງສ່ວນ (PARTIALLY PAID)'
       : '⚠️ ຍັງຄ້າງຊຳລະ (UNPAID)';
   ctx.fillText(statusText, canvas.width / 2, y);
-  y += 20;
+  y += Math.round(badgeSize * 1.6);
 
   if (debt.note) {
     ctx.textAlign = 'left';
-    ctx.font = `11px ${laoFont}`;
+    const noteSize = Math.round(11.5 * scale);
+    ctx.font = `${noteSize}px ${laoFont}`;
     ctx.fillText(`ໝາຍເຫດ: ${debt.note}`, paddingX, y);
-    y += 18;
+    y += Math.round(noteSize * 1.5);
   }
 
-  y += 8;
+  y += Math.round(6 * scale);
   drawDashed(y);
-  y += 24;
+  y += Math.round(20 * scale);
 
   // Signatures
   ctx.textAlign = 'center';
-  ctx.font = `11px ${laoFont}`;
+  const signSize = Math.round(11.5 * scale);
+  ctx.font = `${signSize}px ${laoFont}`;
   ctx.fillText('( ລາຍເຊັນລູກຄ້າ / Customer )', canvas.width * 0.28, y);
   ctx.fillText('( ລາຍເຊັນຜູ້ຮັບ / Staff )', canvas.width * 0.72, y);
-  y += 35;
+  y += Math.round(38 * scale);
 
   ctx.fillText('.................................', canvas.width * 0.28, y);
   ctx.fillText('.................................', canvas.width * 0.72, y);
-  y += 24;
+  y += Math.round(24 * scale);
 
-  ctx.font = `11px ${laoFont}`;
+  ctx.font = `bold ${Math.round(12 * scale)}px ${laoFont}`;
   ctx.fillText('*** ຂໍຂອບໃຈ 689 KTV ***', canvas.width / 2, y);
-  y += 20;
+  y += Math.round(22 * scale);
 
   // Crop to actual height used
   const finalCanvas = document.createElement('canvas');
@@ -728,7 +819,8 @@ export const renderDebtSlipToCanvas = (
 };
 
 export const getDebtSlipImageDataUrl = (debt: DebtRecord, settings: AppSettings): string => {
-  const canvas = renderDebtSlipToCanvas(debt, settings, 384);
+  const printWidthDots = settings.receiptPaperWidth === '80mm' ? 576 : 384;
+  const canvas = renderDebtSlipToCanvas(debt, settings, printWidthDots);
   return canvas.toDataURL('image/png');
 };
 
@@ -744,7 +836,8 @@ export const printDebtSlipAsImageViaBluetooth = async (
   }
 
   await ensureLaoFontsReady();
-  const canvas = renderDebtSlipToCanvas(debt, settings, 384);
+  const printWidthDots = settings.receiptPaperWidth === '80mm' ? 576 : 384;
+  const canvas = renderDebtSlipToCanvas(debt, settings, printWidthDots);
   const rasterBytes = convertCanvasToEscPosRaster(canvas);
 
   const chunkSize = 128;
@@ -759,4 +852,5 @@ export const printDebtSlipAsImageViaBluetooth = async (
   }
   return true;
 };
+
 

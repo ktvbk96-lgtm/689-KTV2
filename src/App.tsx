@@ -552,7 +552,12 @@ export default function App() {
           bluetoothConnected={bluetoothConnected}
           onOpenBluetoothSetup={() => setShowBluetoothModal(true)}
           onSyncGoogleSheet={handleSyncBillToGoogleSheet}
+          onUpdateSettings={(newSettings) => {
+            setSettings(newSettings);
+            saveStoredSettings(newSettings);
+          }}
         />
+
       )}
 
       {/* Google Sheets Sync Modal */}
@@ -579,8 +584,13 @@ export default function App() {
             const status = getBluetoothStatus();
             setBluetoothConnected(status.connected);
           }}
+          onUpdateSettings={(newSettings) => {
+            setSettings(newSettings);
+            saveStoredSettings(newSettings);
+          }}
         />
       )}
+
     </div>
   );
 }

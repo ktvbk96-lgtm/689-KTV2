@@ -10,7 +10,8 @@ import {
   Sliders,
   HelpCircle,
 } from 'lucide-react';
-import { AppSettings, BillRecord } from '../types';
+import { AppSettings, BillRecord, ReceiptFontSize } from '../types';
+import { saveStoredSettings } from '../lib/storage';
 import {
   connectBluetoothPrinter,
   disconnectBluetoothPrinter,
@@ -23,6 +24,7 @@ interface BluetoothModalProps {
   bluetoothConnected: boolean;
   onClose: () => void;
   onRefreshStatus: () => void;
+  onUpdateSettings?: (newSettings: AppSettings) => void;
 }
 
 export const BluetoothModal: React.FC<BluetoothModalProps> = ({
@@ -30,10 +32,24 @@ export const BluetoothModal: React.FC<BluetoothModalProps> = ({
   bluetoothConnected,
   onClose,
   onRefreshStatus,
+  onUpdateSettings,
 }) => {
   const [loading, setLoading] = useState<boolean>(false);
   const [message, setMessage] = useState<string>('');
   const [isTestPrinting, setIsTestPrinting] = useState<boolean>(false);
+  const [currentFontSize, setCurrentFontSize] = useState<ReceiptFontSize>(
+    settings.receiptFontSize || 'large'
+  );
+
+  const handleUpdateFontSize = (newSize: ReceiptFontSize) => {
+    setCurrentFontSize(newSize);
+    const updated = { ...settings, receiptFontSize: newSize };
+    if (onUpdateSettings) {
+      onUpdateSettings(updated);
+    }
+    saveStoredSettings(updated);
+  };
+
 
   const handleConnect = async () => {
     setLoading(true);
@@ -88,8 +104,13 @@ export const BluetoothModal: React.FC<BluetoothModalProps> = ({
         staffName: 'Admin',
       };
 
-      await printViaBluetooth(sampleBill, settings);
-      setMessage('ສົ່ງຄຳສັ່ງພິມທົດສອບສຳເລັດແລ້ວ!');
+      const activeSettings: AppSettings = {
+        ...settings,
+        receiptFontSize: currentFontSize,
+      };
+
+      await printViaBluetooth(sampleBill, activeSettings);
+      setMessage('ສົ່ງຄຳສັ່ງພິມທົດສອບສຳເລັດແລ້ວ! (ຂະໜາດ Font: ' + currentFontSize.toUpperCase() + ')');
     } catch (err: any) {
       setMessage('ພິມທົດສອບລົ້ມເຫຼວ: ' + err.message);
     } finally {
@@ -167,6 +188,49 @@ export const BluetoothModal: React.FC<BluetoothModalProps> = ({
             </div>
           </div>
 
+          {/* Quick Font Size Selection */}
+          <div className="p-3.5 rounded-2xl bg-slate-800/60 border border-slate-700 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-200">
+                ຂະໜາດຕົວໜັງສືເວລາພິມ (Font Size):
+              </span>
+              <span className="text-[11px] font-mono text-amber-300 font-bold">
+                {currentFontSize === 'xlarge'
+                  ? 'ໃຫຍ່ພິເສດ (162%)'
+                  : currentFontSize === 'large'
+                  ? 'ໃຫຍ່ (138% - ແນະນຳ)'
+                  : currentFontSize === 'medium'
+                  ? 'ກາງ (118%)'
+                  : 'ປົກກະຕິ (100%)'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-4 gap-1.5">
+              {[
+                { id: 'small', label: 'ປົກກະຕິ' },
+                { id: 'medium', label: 'ກາງ' },
+                { id: 'large', label: 'ໃຫຍ່' },
+                { id: 'xlarge', label: 'ໃຫຍ່ພິເສດ' },
+              ].map((f) => {
+                const isSelected = currentFontSize === f.id;
+                return (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => handleUpdateFontSize(f.id as ReceiptFontSize)}
+                    className={`py-1.5 px-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                      isSelected
+                        ? 'bg-amber-500 border-amber-400 text-slate-950 font-black shadow-md'
+                        : 'bg-slate-900 border-slate-750 text-slate-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Test Print button */}
           {bluetoothConnected && (
             <div className="pt-1">
@@ -182,6 +246,7 @@ export const BluetoothModal: React.FC<BluetoothModalProps> = ({
               </button>
             </div>
           )}
+
 
           {/* Message Feedback */}
           {message && (

@@ -156,6 +156,9 @@ export type AppThemeId =
   | 'amber_gold'
   | 'midnight_black';
 
+export type ReceiptFontSize = 'small' | 'medium' | 'large' | 'xlarge';
+export type ReceiptPaperWidth = '58mm' | '80mm';
+
 export interface AppSettings {
   shopName: string; // "689 KTV"
   shopBranch: string;
@@ -179,4 +182,8 @@ export interface AppSettings {
   receiptLogoUrl?: string; // ຮູບພາບ/ໂລໂກ້ຫົວໃບບິນ (Receipt Header Logo)
   staffCanEditDebt?: boolean; // ອະນຸຍາດໃຫ້ພະນັກງານແກ້ໄຂຍອດຕິດໜີ້ໄດ້ຫຼືບໍ່ (Admin ເປັນຜູ້ກຳນົດ)
   staffCanDeleteDebt?: boolean; // ອະນຸຍາດໃຫ້ພະນັກງານລຶບຍອດຕິດໜີ້ໄດ້ຫຼືບໍ່ (Admin ເປັນຜູ້ກຳນົດ)
+  receiptFontSize?: ReceiptFontSize; // ຂະໜາດຕົວໜັງສືໃບບິນ ('small' | 'medium' | 'large' | 'xlarge')
+  receiptPaperWidth?: ReceiptPaperWidth; // ຂະໜາດເຈ້ຍໃບບິນ ('58mm' | '80mm')
+  receiptBoldText?: boolean; // ເນັ້ນຕົວໜັງສືໜາເຂັ້ມພິເສດ (Extra Bold)
 }
+
