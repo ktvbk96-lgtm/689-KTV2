@@ -1,0 +1,8 @@
+{
+  "name": "Remix Remix 689 KTV",
+  "description": "ລະບົບຈັດການຮ້ານ 689 KTV - ລະບົບ POS ຂາຍສິນຄ້າ, ເປີດຫ້ອງຄາຣາໂອເກະ, ສະຕັອກ, ພິມໃບບິນ ແລະ ຊິ້ງຂໍ້ມູນ Google Sheets",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    background-color: #020617;
+    color: #f8fafc;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Noto Sans Lao', 'Phetsarath OT', sans-serif;
+  }
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-receipt-container,
+  .print-receipt-container * {
+    visibility: visible;
+  }
+  .print-receipt-container {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100% !important;
+    max-width: 80mm !important;
+    margin: 0 !important;
+    padding: 8px !important;
+    color: #000 !important;
+    background: #fff !important;
+    border: none !important;
+    box-shadow: none !important;
+    font-size: 12px !important;
+    line-height: 1.3 !important;
+  }
+}
