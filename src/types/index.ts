@@ -121,6 +121,8 @@ export interface BillRecord {
   billNumber: string; // e.g. 689-20261031-001
   type: 'pos_sale' | 'ktv_room';
   roomName?: string;
+  packageName?: string; // e.g. "4 ชั่วโมง 300,000 กีบ"
+  bookedHours?: number; // e.g. 4
   startTime?: string;
   endTime: string;
   targetEndTime?: string;
@@ -185,5 +187,8 @@ export interface AppSettings {
   receiptFontSize?: ReceiptFontSize; // ຂະໜາດຕົວໜັງສືໃບບິນ ('small' | 'medium' | 'large' | 'xlarge')
   receiptPaperWidth?: ReceiptPaperWidth; // ຂະໜາດເຈ້ຍໃບບິນ ('58mm' | '80mm')
   receiptBoldText?: boolean; // ເນັ້ນຕົວໜັງສືໜາເຂັ້ມພິເສດ (Extra Bold)
+  gasWebAppUrl?: string; // Google Apps Script Web App URL ສໍາລັບ Real-time Sync ຫຼາຍເຄື່ອງພ້ອມກັນ
+  realtimeSyncEnabled?: boolean; // ເປີດການຊິ້ງຂໍ້ມູນ Real-time ອັດຕະໂນມັດເມື່ອມີການປ່ຽນແປງ
+  lastSyncedAt?: string; // ເວລາຊິ້ງຂໍ້ມູນຫຼ້າສຸດ
 }
 

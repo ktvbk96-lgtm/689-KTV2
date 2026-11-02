@@ -1,3 +1,8 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 import React, { useState, useEffect } from 'react';
 import {
   FileSpreadsheet,
@@ -11,12 +16,20 @@ import {
   Plus,
   Shield,
   Layers,
+  Zap,
+  Copy,
+  Check,
+  Code,
+  Database,
+  Cloud,
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  Clock,
 } from 'lucide-react';
-import { BillRecord, Product, AppSettings } from '../types';
+import { BillRecord, Product, Room, RoomPackage, StaffMember, DebtRecord, AppSettings } from '../types';
 import {
   googleSignIn,
   logoutGoogle,
-  getAccessToken,
   initAuth,
 } from '../lib/firebase';
 import {
@@ -26,31 +39,62 @@ import {
   appendBillToSheet,
   SpreadsheetInfo,
 } from '../lib/googleSheets';
+import {
+  fetchLatestDataFromGas,
+  sendDataToGas,
+  GOOGLE_APPS_SCRIPT_TEMPLATE,
+  GasFullDataPayload,
+} from '../lib/gasSyncService';
 
 interface GoogleSheetsSyncModalProps {
   settings: AppSettings;
   bills: BillRecord[];
   products: Product[];
+  rooms?: Room[];
+  packages?: RoomPackage[];
+  staffList?: StaffMember[];
+  debts?: DebtRecord[];
   onClose: () => void;
   onUpdateSettings: (settings: AppSettings) => void;
+  onApplyRemoteData?: (data: GasFullDataPayload) => void;
 }
 
 export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
   settings,
   bills,
   products,
+  rooms = [],
+  packages = [],
+  staffList = [],
+  debts = [],
   onClose,
   onUpdateSettings,
+  onApplyRemoteData,
 }) => {
+  // Active Tab: 'gas' (Google Apps Script Web App - Recommended for multi-device) or 'oauth'
+  const [activeTab, setActiveTab] = useState<'gas' | 'oauth'>('gas');
+
+  // GAS State
+  const [gasUrlInput, setGasUrlInput] = useState<string>(settings.gasWebAppUrl || '');
+  const [isAutoSyncEnabled, setIsAutoSyncEnabled] = useState<boolean>(settings.realtimeSyncEnabled !== false);
+  const [isPullingGas, setIsPullingGas] = useState<boolean>(false);
+  const [isPushingGas, setIsPushingGas] = useState<boolean>(false);
+  const [gasStatusMsg, setGasStatusMsg] = useState<string>('');
+  const [gasErrorMsg, setGasErrorMsg] = useState<string>('');
+  const [gasSuccessMsg, setGasSuccessMsg] = useState<string>('');
+  const [copiedScript, setCopiedScript] = useState<boolean>(false);
+  const [showScriptModal, setShowScriptModal] = useState<boolean>(false);
+
+  // OAuth State (Existing secondary flow)
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
   const [spreadsheets, setSpreadsheets] = useState<SpreadsheetInfo[]>([]);
   const [isLoadingSheets, setIsLoadingSheets] = useState<boolean>(false);
   const [isCreatingSheet, setIsCreatingSheet] = useState<boolean>(false);
-  const [isSyncing, setIsSyncing] = useState<boolean>(false);
-  const [syncStatusMsg, setSyncStatusMsg] = useState<string>('');
-  const [errorMsg, setErrorMsg] = useState<string>('');
+  const [isOAuthSyncing, setIsOAuthSyncing] = useState<boolean>(false);
+  const [oauthStatusMsg, setOauthStatusMsg] = useState<string>('');
+  const [oauthErrorMsg, setOauthErrorMsg] = useState<string>('');
 
   useEffect(() => {
     const unsubscribe = initAuth(
@@ -69,13 +113,12 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
 
   const loadSpreadsheets = async (tok: string) => {
     setIsLoadingSheets(true);
-    setErrorMsg('');
+    setOauthErrorMsg('');
     try {
       const list = await listExistingSpreadsheets(tok);
       setSpreadsheets(list);
     } catch (err: any) {
-      console.error('Failed to list spreadsheets', err);
-      setErrorMsg('ບໍ່ສາມາດໂຫຼດລາຍການ Spreadsheets ໄດ້: ' + (err.message || ''));
+      setOauthErrorMsg('ບໍ່ສາມາດໂຫຼດລາຍການ Spreadsheets ໄດ້: ' + (err.message || ''));
     } finally {
       setIsLoadingSheets(false);
     }
@@ -83,7 +126,7 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
 
   const handleGoogleLogin = async () => {
     setIsLoggingIn(true);
-    setErrorMsg('');
+    setOauthErrorMsg('');
     try {
       const res = await googleSignIn();
       if (res) {
@@ -92,7 +135,7 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
         await loadSpreadsheets(res.accessToken);
       }
     } catch (err: any) {
-      setErrorMsg('ການເຂົ້າສູ່ລະບົບ Google ລົ້ມເຫຼວ: ' + (err.message || ''));
+      setOauthErrorMsg('ການເຂົ້າສູ່ລະບົບ Google ລົ້ມເຫຼວ: ' + (err.message || ''));
     } finally {
       setIsLoggingIn(false);
     }
@@ -108,24 +151,21 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
   const handleCreateNewSheet = async () => {
     if (!token) return;
     setIsCreatingSheet(true);
-    setErrorMsg('');
+    setOauthErrorMsg('');
     try {
       const sheet = await createKtvSpreadsheet(token, `689 KTV - ບັນທຶກຍອດຂາຍ ແລະ ສະຕັອກ (${new Date().getFullYear()})`);
       setSpreadsheets((prev) => [sheet, ...prev]);
 
-      // Save to settings
       onUpdateSettings({
         ...settings,
         googleSheetId: sheet.id,
         googleSheetName: sheet.name,
       });
 
-      // Immediately sync current inventory
       await syncInventoryToSheet(token, sheet.id, products);
-
-      setSyncStatusMsg('ສ້າງ Google Sheet ສຳເລັດ ແລະ ບັນທຶກຫົວຕາຕະລາງພ້ອມສະຕັອກແລ້ວ!');
+      setOauthStatusMsg('ສ້າງ Google Sheet ສຳເລັດ ແລະ ບັນທຶກຫົວຕາຕະລາງພ້ອມສະຕັອກແລ້ວ!');
     } catch (err: any) {
-      setErrorMsg('ສ້າງ Google Sheet ລົ້ມເຫຼວ: ' + err.message);
+      setOauthErrorMsg('ສ້າງ Google Sheet ລົ້ມເຫຼວ: ' + err.message);
     } finally {
       setIsCreatingSheet(false);
     }
@@ -137,51 +177,154 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
       googleSheetId: sheet.id,
       googleSheetName: sheet.name,
     });
-    setSyncStatusMsg(`ເລືອກ Google Sheet: ${sheet.name}`);
+    setOauthStatusMsg(`ເລືອກ Google Sheet: ${sheet.name}`);
   };
 
-  const handleSyncAllData = async () => {
+  const handleSyncOAuthAllData = async () => {
     if (!token || !settings.googleSheetId) {
       alert('ກະລຸນາເລືອກ ຫຼື ສ້າງ Google Sheet ກ່ອນ!');
       return;
     }
 
-    setIsSyncing(true);
-    setErrorMsg('');
-    setSyncStatusMsg('ກຳລັງຊິ້ງຂໍ້ມູນຍອດຂາຍ ແລະ ສະຕັອກ...');
+    setIsOAuthSyncing(true);
+    setOauthErrorMsg('');
+    setOauthStatusMsg('ກຳລັງຊິ້ງຂໍ້ມູນຍອດຂາຍ ແລະ ສະຕັອກ...');
 
     try {
-      // 1. Sync inventory
       await syncInventoryToSheet(token, settings.googleSheetId, products);
-
-      // 2. Sync all bills
       for (const bill of bills) {
         await appendBillToSheet(token, settings.googleSheetId, bill);
       }
-
-      setSyncStatusMsg(`ຊິ້ງຂໍ້ມູນສຳເລັດ! ບັນທຶກ ${bills.length} ໃບບິນ ແລະ ${products.length} ລາຍການສະຕັອກ.`);
+      setOauthStatusMsg('ຊິ້ງຂໍ້ມູນທັງໝົດລົງ Google Sheet ສຳເລັດແລ້ວ!');
     } catch (err: any) {
-      setErrorMsg('ເກີດຂໍ້ຜິດພາດໃນການຊິ້ງ: ' + err.message);
+      setOauthErrorMsg('ຊິ້ງຂໍ້ມູນລົ້ມເຫຼວ: ' + err.message);
     } finally {
-      setIsSyncing(false);
+      setIsOAuthSyncing(false);
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // GAS REAL-TIME WEB APP HANDLERS
+  // ---------------------------------------------------------------------------
+
+  const handleSaveGasSettings = () => {
+    const cleanUrl = gasUrlInput.trim();
+    const updated: AppSettings = {
+      ...settings,
+      gasWebAppUrl: cleanUrl,
+      realtimeSyncEnabled: isAutoSyncEnabled,
+    };
+    onUpdateSettings(updated);
+    setGasSuccessMsg('ບັນທຶກການຕັ້ງຄ່າ Web App URL ສຳເລັດແລ້ວ!');
+    setTimeout(() => setGasSuccessMsg(''), 3000);
+  };
+
+  // Pull latest data from Sheets (Multi-device loading)
+  const handlePullFromGas = async () => {
+    const cleanUrl = gasUrlInput.trim();
+    if (!cleanUrl) {
+      setGasErrorMsg('ກະລຸນາໃສ່ Web App URL ກ່ອນ!');
+      return;
+    }
+
+    setIsPullingGas(true);
+    setGasErrorMsg('');
+    setGasSuccessMsg('');
+    setGasStatusMsg('ກຳລັງດຶງຂໍ້ມູນລ່າສຸດຈາກ Google Sheets...');
+
+    try {
+      const res = await fetchLatestDataFromGas(cleanUrl, 8000);
+      if (res.success && res.data) {
+        if (onApplyRemoteData) {
+          onApplyRemoteData(res.data);
+        }
+        const nowStr = new Date().toISOString();
+        onUpdateSettings({
+          ...settings,
+          gasWebAppUrl: cleanUrl,
+          realtimeSyncEnabled: isAutoSyncEnabled,
+          lastSyncedAt: nowStr,
+        });
+
+        const prodCount = res.data.products?.length || 0;
+        const roomCount = res.data.rooms?.length || 0;
+        setGasSuccessMsg(`✓ ດຶງຂໍ້ມູນສຳເລັດ! ພົບສິນຄ້າ ${prodCount} ລາຍການ, ຫ້ອງ ${roomCount} ຫ້ອງ`);
+      } else {
+        setGasErrorMsg(res.error || 'ດຶງຂໍ້ມູນບໍ່ສຳເລັດ');
+      }
+    } catch (err: any) {
+      setGasErrorMsg('ເກີດຂໍ້ຜິດພາດ: ' + (err.message || 'Network error'));
+    } finally {
+      setIsPullingGas(false);
+      setGasStatusMsg('');
+    }
+  };
+
+  // Push all local data up to Sheets
+  const handlePushAllToGas = async () => {
+    const cleanUrl = gasUrlInput.trim();
+    if (!cleanUrl) {
+      setGasErrorMsg('ກະລຸນາໃສ່ Web App URL ກ່ອນ!');
+      return;
+    }
+
+    setIsPushingGas(true);
+    setGasErrorMsg('');
+    setGasSuccessMsg('');
+    setGasStatusMsg('ກຳລັງສົ່ງຂໍ້ມູນສິນຄ້າ, ຫ້ອງ, ແພັກເກັດ, ພະນັກງານ ຂຶ້ນ Sheets...');
+
+    try {
+      const payload: GasFullDataPayload = {
+        products,
+        rooms,
+        packages,
+        staff: staffList,
+        debts,
+        timestamp: new Date().toISOString(),
+      };
+
+      const res = await sendDataToGas(cleanUrl, 'syncAll', payload, 10000);
+      if (res.success) {
+        const nowStr = new Date().toISOString();
+        onUpdateSettings({
+          ...settings,
+          gasWebAppUrl: cleanUrl,
+          realtimeSyncEnabled: isAutoSyncEnabled,
+          lastSyncedAt: nowStr,
+        });
+        setGasSuccessMsg('✓ ສົ່ງຂໍ້ມູນທັງໝົດຂຶ້ນ Google Sheets ສຳເລັດແລ້ວ!');
+      } else {
+        setGasErrorMsg(res.error || 'ສົ່ງຂໍ້ມູນຂຶ້ນ Sheets ບໍ່ສຳເລັດ');
+      }
+    } catch (err: any) {
+      setGasErrorMsg('ເກີດຂໍ້ຜິດພາດ: ' + (err.message || 'Network error'));
+    } finally {
+      setIsPushingGas(false);
+      setGasStatusMsg('');
+    }
+  };
+
+  const handleCopyScript = () => {
+    navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_TEMPLATE);
+    setCopiedScript(true);
+    setTimeout(() => setCopiedScript(false), 2500);
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 overflow-y-auto">
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 w-full max-w-2xl shadow-2xl text-white my-8">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-3 sm:p-4 animate-in fade-in duration-200">
+      <div className="bg-slate-900 border border-slate-700/80 rounded-3xl p-5 sm:p-6 w-full max-w-2xl shadow-2xl text-white max-h-[92vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
+        <div className="flex items-center justify-between pb-3 border-b border-slate-800 shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
-              <FileSpreadsheet className="w-6 h-6" />
+              <FileSpreadsheet className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-black text-lg text-slate-100">
-                ເຊື່ອມຕໍ່ Google Sheets (ບັນທຶກຂໍ້ມູນອັດຕະໂນມັດ)
-              </h3>
+              <h2 className="text-base sm:text-lg font-black text-slate-100 flex items-center gap-2">
+                <span>ຊິ້ງຂໍ້ມູນ Google Sheets (Real-time Sync)</span>
+              </h2>
               <p className="text-xs text-slate-400">
-                ບັນທຶກຍອດຂາຍ, ລາຍລະອຽດສິນຄ້າ ແລະ ສະຕັອກລົງໃນ Google Spreadsheet ຂອງທ່ານ
+                ເຊື່ອມຕໍ່ຖານຂໍ້ມູນ Google Sheets ເພື່ອໃຊ້ງານຫຼາຍເຄື່ອງພ້ອມກັນ
               </p>
             </div>
           </div>
@@ -189,220 +332,377 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
             onClick={onClose}
             className="p-1 rounded-xl hover:bg-slate-800 text-slate-400 cursor-pointer"
           >
-            <X className="w-6 h-6" />
+            <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Auth Section */}
-        {!currentUser ? (
-          <div className="p-6 rounded-3xl bg-slate-800/60 border border-slate-700 text-center space-y-4 my-4">
-            <div className="max-w-md mx-auto space-y-2">
-              <h4 className="font-bold text-sm text-slate-200">
-                ເຂົ້າສູ່ລະບົບດ້ວຍບັນຊີ Google
-              </h4>
-              <p className="text-xs text-slate-400">
-                ເພື່ອໃຫ້ລະບົບ 689 KTV ສາມາດບັນທຶກໃບບິນ ແລະ ສະຕັອກລົງໃນ Google Sheets ຂອງເຈົ້າໄດ້ຢ່າງປອດໄພ
-              </p>
-            </div>
+        {/* Tab Switcher */}
+        <div className="flex items-center gap-2 pt-3 shrink-0">
+          <button
+            type="button"
+            onClick={() => setActiveTab('gas')}
+            className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer border ${
+              activeTab === 'gas'
+                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white border-emerald-500/50 shadow-md shadow-emerald-600/20'
+                : 'bg-slate-800/80 text-slate-400 border-slate-700 hover:text-slate-200'
+            }`}
+          >
+            <Zap className="w-3.5 h-3.5 text-amber-300" />
+            <span>Web App Real-time (ແນະນຳ ສຳລັບຫຼາຍເຄື່ອງ)</span>
+          </button>
 
-            {/* Official Sign In with Google style button as required by Skill */}
-            <div className="flex justify-center pt-2">
-              <button
-                type="button"
-                onClick={handleGoogleLogin}
-                disabled={isLoggingIn}
-                className="inline-flex items-center gap-3 px-5 py-3 rounded-2xl bg-white text-slate-800 hover:bg-slate-100 font-semibold text-xs shadow-lg transition-all cursor-pointer active:scale-95 disabled:opacity-50"
-              >
-                <svg className="w-5 h-5" viewBox="0 0 48 48">
-                  <path
-                    fill="#EA4335"
-                    d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
-                  />
-                  <path
-                    fill="#4285F4"
-                    d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
-                  />
-                  <path
-                    fill="#FBBC05"
-                    d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
-                  />
-                  <path
-                    fill="#34A853"
-                    d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
-                  />
-                </svg>
-                <span>{isLoggingIn ? 'ກຳລັງເຂົ້າສູ່ລະບົບ...' : 'Sign in with Google (ເຂົ້າສູ່ລະບົບ)'}</span>
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {/* Account Info bar */}
-            <div className="p-3.5 rounded-2xl bg-slate-800/80 border border-slate-700 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                {currentUser.photoURL ? (
-                  <img
-                    src={currentUser.photoURL}
-                    alt={currentUser.displayName || ''}
-                    className="w-9 h-9 rounded-full border border-emerald-500/50"
-                  />
-                ) : (
-                  <div className="w-9 h-9 rounded-full bg-emerald-600 flex items-center justify-center font-bold text-xs">
-                    {currentUser.email?.slice(0, 2).toUpperCase()}
+          <button
+            type="button"
+            onClick={() => setActiveTab('oauth')}
+            className={`py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer border ${
+              activeTab === 'oauth'
+                ? 'bg-slate-700 text-white border-slate-600 shadow-sm'
+                : 'bg-slate-800/80 text-slate-400 border-slate-700 hover:text-slate-200'
+            }`}
+          >
+            <Shield className="w-3.5 h-3.5 text-indigo-400" />
+            <span>OAuth Login (ສຳຮອງ)</span>
+          </button>
+        </div>
+
+        {/* Body Container */}
+        <div className="flex-1 overflow-y-auto py-3 space-y-4 pr-1 scrollbar-thin">
+          {/* TAB 1: GOOGLE APPS SCRIPT WEB APP (RECOMMENDED) */}
+          {activeTab === 'gas' && (
+            <div className="space-y-4">
+              {/* Highlight Banner */}
+              <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-950/70 via-slate-900 to-teal-950/70 border border-emerald-500/40 text-xs space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 font-black text-emerald-300 text-sm">
+                    <Cloud className="w-4 h-4 text-emerald-400" />
+                    <span>ລະບົບ Real-time Sync ຫຼາຍເຄື່ອງພ້ອມກັນ</span>
                   </div>
-                )}
-                <div>
-                  <h4 className="font-bold text-xs text-slate-100">
-                    {currentUser.displayName || 'Google Account'}
-                  </h4>
-                  <p className="text-[11px] text-slate-400">{currentUser.email}</p>
+                  {settings.lastSyncedAt && (
+                    <span className="text-[10px] text-slate-400 flex items-center gap-1 font-mono">
+                      <Clock className="w-3 h-3 text-amber-400" />
+                      <span>ຊິ້ງຫຼ້າສຸດ: {new Date(settings.lastSyncedAt).toLocaleTimeString('lo-LA', { hour: '2-digit', minute: '2-digit' })}</span>
+                    </span>
+                  )}
                 </div>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  ທຸກຄັ້ງທີ່ມີການເພີ່ມ ຫຼື ແກ້ໄຂຫ້ອງ/ສິນຄ້າ ຂໍ້ມູນຈະຖືກສົ່ງຂຶ້ນ Google Sheets ທັນທີ. ແລະ ເມື່ອເປີດແອັບໃນເຄື່ອງອື່ນ ລະບົບຈະດຶງຂໍ້ມູນລ່າສຸດມາສະແດງໂດຍອັດຕະໂນມັດ ໂດຍບໍ່ຄ້າງ ບໍ່ໝຸນຕິ້ວໆ.
+                </p>
               </div>
 
-              <button
-                type="button"
-                onClick={handleGoogleLogout}
-                className="px-3 py-1.5 rounded-xl bg-slate-700/60 hover:bg-slate-700 text-slate-300 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>ອອກຈາກລະບົບ</span>
-              </button>
-            </div>
+              {/* URL Input Form */}
+              <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-200 mb-1">
+                    Google Apps Script Web App URL <span className="text-rose-400">*</span>:
+                  </label>
+                  <input
+                    type="url"
+                    value={gasUrlInput}
+                    onChange={(e) => setGasUrlInput(e.target.value)}
+                    placeholder="https://script.google.com/macros/s/AKfycb.../exec"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-emerald-300 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    * ນຳ URL ທີ່ໄດ້ຈາກການ Deploy Web App ໃນ Google Sheets ມາວາງໃສ່ນີ້
+                  </p>
+                </div>
 
-            {/* Current Selected Sheet Status */}
-            {settings.googleSheetId ? (
-              <div className="p-4 rounded-2xl bg-emerald-950/40 border border-emerald-500/50 space-y-2">
-                <div className="flex items-center justify-between">
+                {/* Auto Real-time Sync Checkbox */}
+                <div className="flex items-center justify-between pt-1 border-t border-slate-800/80">
                   <div className="flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                    <span className="font-bold text-xs text-emerald-300">
-                      ເຊື່ອມຕໍ່ກັບ Google Sheet ນີ້ແລ້ວ:
-                    </span>
-                  </div>
-                  <a
-                    href={`https://docs.google.com/spreadsheets/d/${settings.googleSheetId}/edit`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 text-xs font-bold text-emerald-400 hover:text-emerald-300 underline"
-                  >
-                    <span>ເປີດໃນ Google Sheets</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-                </div>
-
-                <div className="text-sm font-black text-slate-100 font-mono">
-                  {settings.googleSheetName || settings.googleSheetId}
-                </div>
-
-                <div className="pt-2 flex items-center justify-between border-t border-emerald-900/40 text-xs">
-                  <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
-                      checked={settings.autoSyncGoogleSheets}
-                      onChange={(e) =>
-                        onUpdateSettings({ ...settings, autoSyncGoogleSheets: e.target.checked })
-                      }
-                      className="w-4 h-4 accent-emerald-500 rounded cursor-pointer"
+                      id="autoSyncToggle"
+                      checked={isAutoSyncEnabled}
+                      onChange={(e) => setIsAutoSyncEnabled(e.target.checked)}
+                      className="w-4 h-4 rounded text-emerald-500 focus:ring-0 cursor-pointer accent-emerald-500"
                     />
-                    <span className="text-slate-300">
-                      ຊິ້ງອັດຕະໂນມັດທຸກຄັ້ງທີ່ເຊັກບິນສຳເລັດ (Auto-sync)
-                    </span>
-                  </label>
+                    <label htmlFor="autoSyncToggle" className="text-xs font-semibold text-slate-300 cursor-pointer">
+                      ເປີດໃຊ້ງານ Real-time Sync ອັດຕະໂນມັດ (ທຸກຄັ້ງທີ່ເພີ່ມ/ແກ້ໄຂຫ້ອງ ແລະ ສິນຄ້າ)
+                    </label>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleSaveGasSettings}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 cursor-pointer border border-slate-700"
+                  >
+                    ບັນທຶກ URL
+                  </button>
+                </div>
+
+                {/* Sync Action Buttons */}
+                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800/80">
+                  <button
+                    type="button"
+                    disabled={isPullingGas || isPushingGas || !gasUrlInput.trim()}
+                    onClick={handlePullFromGas}
+                    className="py-2.5 px-3 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <ArrowDownToLine className={`w-3.5 h-3.5 ${isPullingGas ? 'animate-bounce' : ''}`} />
+                    <span>{isPullingGas ? 'ກຳລັງດຶງຂໍ້ມູນ...' : 'ດຶງຂໍ້ມູນລ່າສຸດ (Pull)'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isPullingGas || isPushingGas || !gasUrlInput.trim()}
+                    onClick={handlePushAllToGas}
+                    className="py-2.5 px-3 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <ArrowUpFromLine className={`w-3.5 h-3.5 ${isPushingGas ? 'animate-pulse' : ''}`} />
+                    <span>{isPushingGas ? 'ກຳລັງສົ່ງຂໍ້ມູນ...' : 'ສົ່ງຂໍ້ມູນທັງໝົດຂຶ້ນ (Push)'}</span>
+                  </button>
                 </div>
               </div>
-            ) : (
-              <div className="p-4 rounded-2xl bg-amber-950/40 border border-amber-600/50 text-xs text-amber-300 flex items-center gap-2">
-                <AlertCircle className="w-5 h-5 shrink-0" />
-                <span>ຍັງບໍ່ທັນມີ Spreadsheet ທີ່ເຊື່ອມຕໍ່! ກະລຸນາສ້າງໃໝ່ ຫຼື ເລືອກຈາກລາຍການລຸ່ມນີ້</span>
-              </div>
-            )}
 
-            {/* Status & Error Messages */}
-            {syncStatusMsg && (
-              <div className="p-3 bg-emerald-950/80 border border-emerald-800 rounded-xl text-xs text-emerald-300 flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
-                <span>{syncStatusMsg}</span>
-              </div>
-            )}
-            {errorMsg && (
-              <div className="p-3 bg-rose-950/80 border border-rose-800 rounded-xl text-xs text-rose-300 flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-                <span>{errorMsg}</span>
-              </div>
-            )}
+              {/* Status & Feedback Messages */}
+              {gasStatusMsg && (
+                <div className="p-3 rounded-xl bg-indigo-950/60 border border-indigo-500/40 text-indigo-300 text-xs flex items-center gap-2 animate-pulse">
+                  <RefreshCw className="w-4 h-4 animate-spin text-indigo-400 shrink-0" />
+                  <span>{gasStatusMsg}</span>
+                </div>
+              )}
 
-            {/* Action Buttons: Create New Sheet or Manual Sync */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-              <button
-                type="button"
-                onClick={handleCreateNewSheet}
-                disabled={isCreatingSheet}
-                className="py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-              >
-                <Plus className="w-4 h-4" />
-                <span>{isCreatingSheet ? 'ກຳລັງສ້າງ...' : 'ສ້າງ Google Sheet ສຳລັບ 689 KTV ໃໝ່'}</span>
-              </button>
+              {gasSuccessMsg && (
+                <div className="p-3 rounded-xl bg-emerald-950/80 border border-emerald-500 text-emerald-300 text-xs font-bold flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{gasSuccessMsg}</span>
+                </div>
+              )}
 
-              <button
-                type="button"
-                onClick={handleSyncAllData}
-                disabled={isSyncing || !settings.googleSheetId}
-                className="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-bold flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40"
-              >
-                <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
-                <span>{isSyncing ? 'ກຳລັງຊິ້ງຂໍ້ມູນ...' : 'ຊິ້ງຂໍ້ມູນທັງໝົດດຽວນີ້ (Sync Now)'}</span>
-              </button>
-            </div>
+              {gasErrorMsg && (
+                <div className="p-3 rounded-xl bg-rose-950/80 border border-rose-500 text-rose-300 text-xs font-bold flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>{gasErrorMsg}</span>
+                </div>
+              )}
 
-            {/* List of Existing Spreadsheets from User's Drive */}
-            <div className="pt-2 space-y-2">
-              <div className="flex items-center justify-between text-xs text-slate-400">
-                <span>ເລືອກຈາກ Google Sheets ໃນ Google Drive:</span>
-                <button
-                  onClick={() => token && loadSpreadsheets(token)}
-                  disabled={isLoadingSheets}
-                  className="hover:text-white flex items-center gap-1 cursor-pointer"
-                >
-                  <RefreshCw className={`w-3 h-3 ${isLoadingSheets ? 'animate-spin' : ''}`} />
-                  <span>ໂຫຼດໃໝ່</span>
-                </button>
-              </div>
+              {/* Section: Google Apps Script Code with 1-Click Copy */}
+              <div className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Code className="w-4 h-4 text-amber-400" />
+                    <h3 className="font-bold text-xs text-slate-200">
+                      ໂຄ້ດ Google Apps Script (ສຳລັບວາງໃນ Google Sheets)
+                    </h3>
+                  </div>
 
-              <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1 scrollbar-thin">
-                {spreadsheets.length === 0 ? (
-                  <p className="text-xs text-slate-500 text-center py-4">
-                    {isLoadingSheets ? 'ກຳລັງໂຫຼດ...' : 'ບໍ່ພົບ Spreadsheet ໃນ Google Drive'}
-                  </p>
-                ) : (
-                  spreadsheets.map((sheet) => (
-                    <div
-                      key={sheet.id}
-                      onClick={() => handleSelectSheet(sheet)}
-                      className={`p-2.5 rounded-xl border flex items-center justify-between text-xs cursor-pointer transition-all ${
-                        settings.googleSheetId === sheet.id
-                          ? 'bg-emerald-950/60 border-emerald-500 text-white font-bold'
-                          : 'bg-slate-800/60 border-slate-800 text-slate-300 hover:bg-slate-800'
-                      }`}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowScriptModal(!showScriptModal)}
+                      className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-semibold cursor-pointer"
                     >
-                      <div className="flex items-center gap-2 truncate">
-                        <FileCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-                        <span className="truncate">{sheet.name}</span>
-                      </div>
-                      <span className="text-[10px] text-slate-400 shrink-0">
-                        {settings.googleSheetId === sheet.id ? 'ເລືອກແລ້ວ' : 'ເລືອກ'}
-                      </span>
-                    </div>
-                  ))
+                      {showScriptModal ? 'ຫຍໍ້ໂຄ້ດ' : 'ເບິ່ງໂຄ້ດ'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleCopyScript}
+                      className="py-1 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-rose-500 text-slate-950 font-black text-xs flex items-center gap-1.5 cursor-pointer shadow-md active:scale-95"
+                    >
+                      {copiedScript ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedScript ? 'ຄັດລອກແລ້ວ!' : 'ຄັດລອກໂຄ້ດ (Copy)'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 5-Step Instructions */}
+                <div className="text-[11px] text-slate-300 space-y-1 bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                  <p className="font-bold text-amber-300 mb-1">📋 ຂັ້ນຕອນການຕິດຕັ້ງງ່າຍໆພຽງ 1 ນາທີ:</p>
+                  <p>1. ເປີດ Google Sheet ຂອງທ່ານ ➔ ໄປທີ່ເມນູ <b>ສ່ວນຂະຫຍາຍ (Extensions) &gt; Apps Script</b></p>
+                  <p>2. ລຶບໂຄ້ດເກົ່າອອກທັງໝົດ ແລ້ວ <b>ກົດປຸ່ມ ຄັດລອກໂຄ້ດ (Copy) ຂ້າງເທິງ</b> ມາວາງລົງໄປ</p>
+                  <p>3. ກົດປຸ່ມ <b>Save (ບັນທຶກ)</b></p>
+                  <p>4. ກົດ <b>Deploy (ການນຳໄປໃຊ້) &gt; New deployment (ການນຳໄປໃຊ້ໃໝ່)</b></p>
+                  <p className="pl-4 text-emerald-400 font-semibold">
+                    ➔ ເລືອກ: Web app &nbsp;|&nbsp; Execute as: <b>Me</b> &nbsp;|&nbsp; Who has access: <b>Anyone (ທຸກຄົນ)</b>
+                  </p>
+                  <p>5. ກົດ <b>Deploy</b> ➔ ສຳເນົາ <b>Web app URL</b> (ທີ່ລົງທ້າຍດ້ວຍ <code className="text-amber-400 font-mono">/exec</code>) ມາວາງໃສ່ຊ່ອງຂ້າງເທິງນີ້!</p>
+                </div>
+
+                {/* Code Preview Box */}
+                {showScriptModal && (
+                  <div className="relative">
+                    <pre className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-[10px] font-mono text-emerald-400 max-h-52 overflow-y-auto overflow-x-auto scrollbar-thin">
+                      {GOOGLE_APPS_SCRIPT_TEMPLATE}
+                    </pre>
+                  </div>
                 )}
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <div className="pt-4 border-t border-slate-800 flex justify-end">
+          {/* TAB 2: OAUTH DIRECT API (SECONDARY / FALLBACK) */}
+          {activeTab === 'oauth' && (
+            <div className="space-y-4">
+              <div className="p-3.5 rounded-2xl bg-indigo-950/50 border border-indigo-500/40 text-xs space-y-1">
+                <span className="font-bold text-indigo-300 flex items-center gap-1.5">
+                  <Shield className="w-4 h-4 text-indigo-400" />
+                  <span>ວິທີການເຊື່ອມຕໍ່ຜ່ານ Google OAuth ໂດຍກົງ</span>
+                </span>
+                <p className="text-[11px] text-slate-300">
+                  ເໝາະສຳລັບການນຳໃຊ້ເຄື່ອງດຽວ ຫຼື ສຳຮອງຂໍ້ມູນລົງ Drive ໂດຍບໍ່ຕ້ອງຕັ້ງຄ່າ Apps Script.
+                </p>
+              </div>
+
+              {/* Login State */}
+              {!currentUser ? (
+                <div className="p-5 rounded-2xl bg-slate-950/60 border border-slate-800 text-center space-y-3">
+                  <p className="text-xs text-slate-300">
+                    ເຂົ້າສູ່ລະບົບ Google ເພື່ອເລືອກ ຫຼື ສ້າງ Google Sheet ໃນ Google Drive ຂອງທ່ານ
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleGoogleLogin}
+                    disabled={isLoggingIn}
+                    className="py-2.5 px-6 rounded-2xl bg-white hover:bg-slate-100 text-slate-900 font-bold text-xs shadow-lg inline-flex items-center gap-2 cursor-pointer transition-all"
+                  >
+                    <img
+                      src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+                      alt="Google"
+                      className="w-4 h-4"
+                    />
+                    <span>{isLoggingIn ? 'ກຳລັງເຂົ້າສູ່ລະບົບ...' : 'ເຂົ້າສູ່ລະບົບດ້ວຍ Google'}</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* User Profile */}
+                  <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-950/60 border border-slate-800">
+                    <div className="flex items-center gap-2.5">
+                      {currentUser.photoURL ? (
+                        <img
+                          src={currentUser.photoURL}
+                          alt={currentUser.displayName || ''}
+                          className="w-8 h-8 rounded-full border border-slate-700"
+                        />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-xs">
+                          {currentUser.displayName?.[0] || 'U'}
+                        </div>
+                      )}
+                      <div>
+                        <h4 className="font-bold text-xs text-slate-200">
+                          {currentUser.displayName || 'Google User'}
+                        </h4>
+                        <p className="text-[10px] text-slate-400">{currentUser.email}</p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleGoogleLogout}
+                      className="p-1.5 rounded-xl hover:bg-slate-800 text-slate-400 text-xs flex items-center gap-1 cursor-pointer"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span>ອອກລະບົບ</span>
+                    </button>
+                  </div>
+
+                  {/* Create or Select Sheet */}
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={handleCreateNewSheet}
+                      disabled={isCreatingSheet}
+                      className="py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-md"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>{isCreatingSheet ? 'ກຳລັງສ້າງ Sheet...' : '+ ສ້າງ Google Sheet ໃໝ່'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => token && loadSpreadsheets(token)}
+                      disabled={isLoadingSheets}
+                      className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs cursor-pointer"
+                      title="ໂຫຼດລາຍການຄືນໃໝ່"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isLoadingSheets ? 'animate-spin' : ''}`} />
+                    </button>
+                  </div>
+
+                  {/* Spreadsheets list */}
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1 scrollbar-thin">
+                    {spreadsheets.map((s) => {
+                      const isSelected = settings.googleSheetId === s.id;
+                      return (
+                        <div
+                          key={s.id}
+                          onClick={() => handleSelectSheet(s)}
+                          className={`p-3 rounded-2xl border cursor-pointer transition-all flex items-center justify-between ${
+                            isSelected
+                              ? 'bg-emerald-950/60 border-emerald-500 text-white'
+                              : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:bg-slate-800/80'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <FileSpreadsheet className={`w-4 h-4 ${isSelected ? 'text-emerald-400' : 'text-slate-500'}`} />
+                            <span className="font-bold text-xs">{s.name}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {isSelected && (
+                              <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full font-bold">
+                                ໃຊ້ງານຢູ່
+                              </span>
+                            )}
+                            <a
+                              href={s.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="p-1 rounded-lg hover:bg-white/10 text-slate-400"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Sync all via OAuth button */}
+                  {settings.googleSheetId && (
+                    <button
+                      type="button"
+                      onClick={handleSyncOAuthAllData}
+                      disabled={isOAuthSyncing}
+                      className="w-full py-3 rounded-2xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-black text-xs shadow-lg cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${isOAuthSyncing ? 'animate-spin' : ''}`} />
+                      <span>{isOAuthSyncing ? 'ກຳລັງຊິ້ງ...' : 'ຊິ້ງຍອດຂາຍ ແລະ ສະຕັອກທັງໝົດລົງ Sheet'}</span>
+                    </button>
+                  )}
+
+                  {oauthStatusMsg && (
+                    <div className="p-2.5 rounded-xl bg-emerald-950 border border-emerald-500 text-emerald-300 text-xs font-bold">
+                      {oauthStatusMsg}
+                    </div>
+                  )}
+
+                  {oauthErrorMsg && (
+                    <div className="p-2.5 rounded-xl bg-rose-950 border border-rose-500 text-rose-300 text-xs font-bold">
+                      {oauthErrorMsg}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Modal Footer */}
+        <div className="pt-3 border-t border-slate-800 flex items-center justify-between shrink-0">
+          <span className="text-[10px] text-slate-400">
+            {settings.gasWebAppUrl
+              ? '✓ ເຊື່ອມຕໍ່ Google Apps Script Web App ແລ້ວ'
+              : '• ຍັງບໍ່ໄດ້ກຳນົດ Web App URL'}
+          </span>
+
           <button
+            type="button"
             onClick={onClose}
-            className="py-2.5 px-5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+            className="py-2 px-5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer transition-colors"
           >
             ປິດໜ້າຕ່າງ
           </button>

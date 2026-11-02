@@ -284,6 +284,9 @@ export const renderReceiptToCanvas = (
   if (bill.type === 'ktv_room') {
     y += Math.round(3 * scale);
     drawRow('ຫ້ອງ KTV:', bill.roomName || 'ຫ້ອງ KTV', true);
+    if (bill.packageName) {
+      drawRow('ແພັກເກັດ:', bill.packageName, true);
+    }
 
     if (bill.startTime) {
       const formattedStartTime = new Date(bill.startTime).toLocaleTimeString('lo-LA', {

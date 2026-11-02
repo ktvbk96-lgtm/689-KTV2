@@ -27,6 +27,12 @@ import {
   Image as ImageIcon,
   ShieldAlert,
   Type,
+  Clock,
+  FileSpreadsheet,
+  Zap,
+  Copy,
+  ExternalLink,
+  Code,
 } from 'lucide-react';
 import { AppSettings, StaffMember, RoomPackage, Room, Product, AppThemeId, ReceiptFontSize, ReceiptPaperWidth } from '../types';
 
@@ -37,6 +43,7 @@ import {
 } from '../lib/bluetoothPrinter';
 import { formatCurrency } from '../lib/storage';
 import { THEMES } from '../lib/theme';
+import { GOOGLE_APPS_SCRIPT_TEMPLATE } from '../lib/gasSyncService';
 
 interface SettingsModalProps {
   settings: AppSettings;
@@ -74,8 +81,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [localProducts, setLocalProducts] = useState<Product[]>([...products]);
 
   const [activeTab, setActiveTab] = useState<
-    'theme' | 'sellers' | 'rooms' | 'receipt' | 'printer' | 'security' | 'packages'
+    'theme' | 'sellers' | 'rooms' | 'receipt' | 'printer' | 'security' | 'packages' | 'sheets'
   >('theme');
+  const [copiedGasScript, setCopiedGasScript] = useState<boolean>(false);
 
   // Staff Management inputs
   const [newStaffName, setNewStaffName] = useState<string>('');
@@ -308,6 +316,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           { id: 'printer', label: 'Bluetooth Printer', icon: Bluetooth },
           { id: 'security', label: 'ລະຫັດ PIN', icon: KeyRound },
           { id: 'packages', label: 'ແພັກເກັດຫ້ອງ', icon: Package },
+          { id: 'sheets', label: 'Google Sheets Real-time', icon: FileSpreadsheet },
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -1753,56 +1762,315 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {/* TAB: ROOM PACKAGES */}
         {activeTab === 'packages' && (
           <div className="space-y-4">
-            <h3 className="font-bold text-sm text-slate-200 border-b border-slate-800 pb-2">
-              ແພັກເກັດຫ້ອງຄາຣາໂອເກະ (Choice 1)
-            </h3>
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+              <div>
+                <h3 className="font-bold text-sm text-slate-200">
+                  ແພັກເກັດຫ້ອງຄາຣາໂອເກະ (Choice 1: Room Packages)
+                </h3>
+                <p className="text-[11px] text-slate-400">
+                  ກຳນົດຊື່, ລາຄາ, ແລະ ໄລຍະເວລາຊົ່ວໂມງຂອງແພັກເກັດ (ເຊັ່ນ 4 ຊົ່ວໂມງ 300,000 ກີບ)
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const newPkg: RoomPackage = {
+                    id: 'pkg-' + Date.now(),
+                    name: 'ແພັກເກັດ 4 ຊົ່ວໂມງ',
+                    durationMinutes: 240,
+                    price: 300000,
+                    description: 'ຮ້ອງເພງ 4 ຊົ່ວໂມງ + ເຄື່ອງດື່ມ',
+                    includesBeerCount: 0,
+                  };
+                  setLocalPackages([...localPackages, newPkg]);
+                }}
+                className="py-1.5 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-md"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ ເພີ່ມແພັກເກັດໃໝ່</span>
+              </button>
+            </div>
 
             <div className="space-y-3">
-              {localPackages.map((pkg, idx) => (
-                <div
-                  key={pkg.id}
-                  className="p-4 rounded-2xl bg-slate-800/60 border border-slate-700 space-y-2"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <input
-                      type="text"
-                      value={pkg.name}
-                      onChange={(e) => {
-                        const updated = [...localPackages];
-                        updated[idx].name = e.target.value;
-                        setLocalPackages(updated);
-                      }}
-                      className="font-bold text-xs text-white bg-slate-900 border border-slate-700 px-2 py-1 rounded-lg flex-1"
-                    />
-                    <div className="flex items-center gap-1">
-                      <input
-                        type="number"
-                        step="10000"
-                        value={pkg.price}
-                        onChange={(e) => {
-                          const updated = [...localPackages];
-                          updated[idx].price = parseFloat(e.target.value) || 0;
-                          setLocalPackages(updated);
-                        }}
-                        className="w-28 text-right font-mono font-bold text-xs text-amber-400 bg-slate-900 border border-slate-700 px-2 py-1 rounded-lg"
-                      />
-                      <span className="text-xs text-slate-400">{formData.currencySymbol}</span>
+              {localPackages.map((pkg, idx) => {
+                // Parse hours from durationMinutes, fallback to detect from name if default
+                const currentMinutes = pkg.durationMinutes && pkg.durationMinutes > 0 ? pkg.durationMinutes : 120;
+                const hoursVal = Number((currentMinutes / 60).toFixed(1));
+
+                // Helper to auto-detect hours from name string
+                const checkAutoHours = (nameStr: string) => {
+                  const match = nameStr.match(/(\d+(?:\.\d+)?)\s*(?:ຊົ່ວໂມງ|ชั่วโมง|ຊມ|ชม|ช\.ม\.|ช\.ມ\.|hrs?|hours?)/i);
+                  return match ? parseFloat(match[1]) : null;
+                };
+
+                return (
+                  <div
+                    key={pkg.id}
+                    className="p-4 rounded-2xl bg-slate-800/60 border border-slate-700 space-y-3"
+                  >
+                    {/* Row 1: Name, Price, and Delete */}
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                      <div className="flex-1 w-full">
+                        <label className="block text-[10px] text-slate-400 mb-0.5">
+                          ຊື່ແພັກເກັດ (Package Name):
+                        </label>
+                        <input
+                          type="text"
+                          value={pkg.name}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            const updated = [...localPackages];
+                            updated[idx].name = val;
+                            // Smart auto-detect: if name specifies hours (e.g. 4 ชั่วโมง or 4 ຊົ່ວໂມງ), auto-sync duration!
+                            const detected = checkAutoHours(val);
+                            if (detected && detected > 0) {
+                              updated[idx].durationMinutes = Math.round(detected * 60);
+                            }
+                            setLocalPackages(updated);
+                          }}
+                          placeholder="ຕົວຢ່າງ: 4 ຊົ່ວໂມງ 300,000 ກີບ"
+                          className="w-full font-bold text-xs text-white bg-slate-900 border border-slate-700 px-3 py-2 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-500"
+                        />
+                      </div>
+
+                      <div className="w-full sm:w-auto flex items-center justify-between sm:justify-end gap-2">
+                        <div>
+                          <label className="block text-[10px] text-slate-400 mb-0.5">
+                            ລາຄາແພັກເກັດ:
+                          </label>
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              step="10000"
+                              value={pkg.price}
+                              onChange={(e) => {
+                                const updated = [...localPackages];
+                                updated[idx].price = parseFloat(e.target.value) || 0;
+                                setLocalPackages(updated);
+                              }}
+                              className="w-32 text-right font-mono font-bold text-xs text-amber-400 bg-slate-900 border border-slate-700 px-2 py-2 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-500"
+                            />
+                            <span className="text-xs text-slate-400 font-bold">{formData.currencySymbol}</span>
+                          </div>
+                        </div>
+
+                        {localPackages.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (confirm(`ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການລຶບແພັກເກັດ "${pkg.name}"?`)) {
+                                setLocalPackages(localPackages.filter((p) => p.id !== pkg.id));
+                              }
+                            }}
+                            className="p-2 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/40 text-rose-400 cursor-pointer mt-3 sm:mt-4"
+                            title="ລຶບແພັກເກັດ"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Row 2: Duration in Hours Setting (Crucial for correct time calculation) */}
+                    <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-750 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-amber-400 shrink-0" />
+                        <div>
+                          <span className="text-xs font-bold text-slate-200">
+                            ໄລຍະເວລາແພັກເກັດ (ຊົ່ວໂມງ / Hours):
+                          </span>
+                          <span className="text-[10px] text-slate-400 block">
+                            ລະບົບຈະຄຳນວນເວລາເລີ່ມ - ໝົດເວລາອັດຕະໂນມັດຕາມຄ່ານີ້
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {/* Quick hour buttons */}
+                        {[1, 2, 3, 4, 5, 6].map((h) => (
+                          <button
+                            key={h}
+                            type="button"
+                            onClick={() => {
+                              const updated = [...localPackages];
+                              updated[idx].durationMinutes = h * 60;
+                              setLocalPackages(updated);
+                            }}
+                            className={`px-2 py-1 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
+                              hoursVal === h
+                                ? 'bg-amber-500 border-amber-400 text-slate-950 font-black shadow-sm'
+                                : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-750'
+                            }`}
+                          >
+                            {h} ຊມ
+                          </button>
+                        ))}
+
+                        {/* Custom hour input */}
+                        <div className="flex items-center gap-1 ml-1">
+                          <input
+                            type="number"
+                            min="0.5"
+                            step="0.5"
+                            max="24"
+                            value={hoursVal}
+                            onChange={(e) => {
+                              const h = parseFloat(e.target.value) || 1;
+                              const updated = [...localPackages];
+                              updated[idx].durationMinutes = Math.round(h * 60);
+                              setLocalPackages(updated);
+                            }}
+                            className="w-16 text-center font-mono font-bold text-xs text-amber-400 bg-slate-950 border border-amber-500/50 px-2 py-1 rounded-lg focus:outline-none"
+                          />
+                          <span className="text-xs font-bold text-slate-300">ຊົ່ວໂມງ</span>
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            ({pkg.durationMinutes || 120} ນາທີ)
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Row 3: Description & Free Beers count */}
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                      <div className="sm:col-span-3">
+                        <input
+                          type="text"
+                          value={pkg.description}
+                          onChange={(e) => {
+                            const updated = [...localPackages];
+                            updated[idx].description = e.target.value;
+                            setLocalPackages(updated);
+                          }}
+                          placeholder="ລາຍລະອຽດແພັກເກັດ (ເຊັ່ນ ຮ້ອງເພງ 4 ຊົ່ວໂມງ + ເບຍລາວ 3 ແກ້ວ)..."
+                          className="w-full text-[11px] text-slate-300 bg-slate-900 border border-slate-700 px-3 py-1.5 rounded-xl focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 px-2 py-1 rounded-xl">
+                          <span className="text-[10px] text-slate-400 whitespace-nowrap">ແຖມເບຍ:</span>
+                          <input
+                            type="number"
+                            min="0"
+                            value={pkg.includesBeerCount || 0}
+                            onChange={(e) => {
+                              const updated = [...localPackages];
+                              updated[idx].includesBeerCount = parseInt(e.target.value) || 0;
+                              setLocalPackages(updated);
+                            }}
+                            className="w-full text-right font-mono font-bold text-xs text-amber-400 bg-transparent border-none focus:outline-none"
+                          />
+                          <span className="text-[10px] text-slate-400">ແກ້ວ</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
-                  <input
-                    type="text"
-                    value={pkg.description}
-                    onChange={(e) => {
-                      const updated = [...localPackages];
-                      updated[idx].description = e.target.value;
-                      setLocalPackages(updated);
-                    }}
-                    placeholder="ລາຍລະອຽດແພັກເກັດ..."
-                    className="w-full text-[11px] text-slate-300 bg-slate-900 border border-slate-700 px-2 py-1 rounded-lg"
-                  />
+        {/* TAB: GOOGLE SHEETS REAL-TIME SYNC (ລະບົບຊິ້ງຂໍ້ມູນ Real-time ຫຼາຍເຄື່ອງ) */}
+        {activeTab === 'sheets' && (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+              <div>
+                <h3 className="font-bold text-base text-slate-100 flex items-center gap-2">
+                  <FileSpreadsheet className="w-5 h-5 text-emerald-400" />
+                  <span>Google Sheets Real-time & Multi-Device Sync</span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  ລະບົບບັນທຶກ ແລະ ດຶງຂໍ້ມູນອັດຕະໂນມັດແບບ Real-time ຜ່ານ Google Apps Script ສຳລັບໃຊ້ງານຫຼາຍເຄື່ອງພ້ອມກັນ
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span
+                  className={`text-xs font-bold px-3 py-1 rounded-xl border flex items-center gap-1.5 ${
+                    formData.gasWebAppUrl
+                      ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
+                      : 'bg-slate-800 border-slate-700 text-slate-400'
+                  }`}
+                >
+                  <span className={`w-2 h-2 rounded-full ${formData.gasWebAppUrl ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
+                  <span>{formData.gasWebAppUrl ? 'ເຊື່ອມຕໍ່ Sheets ແລ້ວ' : 'ຍັງບໍ່ທັນຕິດຕັ້ງ URL'}</span>
+                </span>
+              </div>
+            </div>
+
+            {/* URL Input and Real-time toggle */}
+            <div className="p-4 rounded-2xl bg-slate-800/60 border border-slate-700 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-200 mb-1.5 flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-amber-400" />
+                  <span>Google Apps Script Web App URL:</span>
+                </label>
+                <input
+                  type="url"
+                  placeholder="https://script.google.com/macros/s/.../exec"
+                  value={formData.gasWebAppUrl || ''}
+                  onChange={(e) => setFormData({ ...formData, gasWebAppUrl: e.target.value.trim() })}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
+                />
+                <p className="text-[11px] text-slate-400 mt-1.5">
+                  ວາງ URL ທີ່ໄດ້ຈາກການກົດ Deploy &gt; New deployment &gt; Web app ໃນ Google Sheets
+                </p>
+              </div>
+
+              <div className="pt-3 border-t border-slate-700/60 flex items-center justify-between">
+                <div>
+                  <h4 className="font-bold text-xs text-slate-200">ເປີດລະບົບຊິ້ງຂໍ້ມູນ Real-time ອັດຕະໂນມັດ</h4>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    ເມື່ອມີການເພີ່ມ/ແກ້ໄຂຫ້ອງ, ສິນຄ້າ, ຍອດຕິດໜີ້ ຈະສົ່ງຂໍ້ມູນເຂົ້າ Google Sheets ທັນທີ
+                  </p>
                 </div>
-              ))}
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={formData.realtimeSyncEnabled !== false}
+                    onChange={(e) => setFormData({ ...formData, realtimeSyncEnabled: e.target.checked })}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                </label>
+              </div>
+            </div>
+
+            {/* Quick 1-Click Code Copy */}
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-950 to-slate-900 border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Code className="w-4 h-4 text-emerald-400" />
+                  <span className="text-xs font-bold text-slate-200">ໂຄ້ດ Google Apps Script ຊຸດດຽວຈົບ (Backend Code)</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_TEMPLATE);
+                    setCopiedGasScript(true);
+                    setTimeout(() => setCopiedGasScript(false), 2500);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-lg shadow-emerald-600/20"
+                >
+                  {copiedGasScript ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedGasScript ? 'ກັອບປີ້ແລ້ວ! (Copied)' : 'ກັອບປີ້ໂຄ້ດທັງໝົດ'}</span>
+                </button>
+              </div>
+
+              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 text-[11px] font-mono text-emerald-300/80 max-h-36 overflow-y-auto leading-relaxed">
+                <code>{GOOGLE_APPS_SCRIPT_TEMPLATE.slice(0, 400)}...</code>
+              </div>
+
+              <div className="p-3 bg-slate-900/80 border border-slate-800 rounded-xl space-y-1 text-[11px] text-slate-300">
+                <p className="font-bold text-amber-400">ຂັ້ນຕອນການຕິດຕັ້ງງ່າຍໆໃນ 1 ນາທີ:</p>
+                <ol className="list-decimal pl-4 space-y-1 text-slate-400">
+                  <li>ເປີດ Google Sheet ຂອງທ່ານ ແລ້ວກົດທີ່ເມນູ <strong className="text-slate-200">Extensions (ສ່ວນຂະຫຍາຍ) &gt; Apps Script</strong></li>
+                  <li>ລຶບໂຄ້ດເກົ່າອອກ ແລ້ວກົດ <strong className="text-slate-200">"ກັອບປີ້ໂຄ້ດທັງໝົດ"</strong> ດ້ານເທິງໄປວາງໃສ່</li>
+                  <li>ກົດປຸ່ມສີຟ້າ <strong className="text-slate-200">Deploy (ນຳໄປໃຊ້) &gt; New deployment (ການນຳໄປໃຊ້ໃໝ່)</strong></li>
+                  <li>ເລືອກປະເພດ <strong className="text-slate-200">Web app</strong>, ຕັ້ງ Who has access ເປັນ <strong className="text-emerald-400">"Anyone (ທຸກຄົນ)"</strong></li>
+                  <li>ກົດ Deploy ແລ້ວກັອບປີ້ Web App URL ມາໃສ່ໃນຊ່ອງດ້ານເທິງ ແລ້ວກົດ <strong className="text-slate-200">ບັນທຶກການຕັ້ງຄ່າ</strong></li>
+                </ol>
+              </div>
             </div>
           </div>
         )}

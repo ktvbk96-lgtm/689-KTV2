@@ -18,9 +18,13 @@ import {
   Coffee,
   Hourglass,
   CalendarCheck,
+  DollarSign,
+  UserCheck,
+  Trash2,
 } from 'lucide-react';
 import { Room, RoomPackage, Product, StaffMember, AppSettings, CartItem } from '../types';
 import { formatCurrency } from '../lib/storage';
+import { formatWithSeparators, parseCleanNumber, FormattedNumberInput } from './FormattedNumberInput';
 
 interface RoomManagementProps {
   rooms: Room[];
@@ -53,10 +57,31 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
   // Live ticker for time
   const [now, setNow] = useState<Date>(new Date());
 
+  // Helper to extract effective duration hours from package
+  const parsePackageDurationHours = (pkg?: RoomPackage): number => {
+    if (!pkg) return 2;
+    const text = `${pkg.name || ''} ${pkg.description || ''}`;
+    const match = text.match(/(\d+(?:\.\d+)?)\s*(?:ຊົ່ວໂມງ|ชั่วโมง|ຊມ|ชม|ช\.ມ\.|ช\.ม\.|hrs?|hours?)/i);
+    if (match) {
+      const parsed = parseFloat(match[1]);
+      if (parsed > 0) {
+        // If durationMinutes was default 120 or mismatch with name, prioritize hours from name!
+        if (!pkg.durationMinutes || pkg.durationMinutes === 120 || Math.abs(pkg.durationMinutes - parsed * 60) > 1) {
+          return parsed;
+        }
+      }
+    }
+    if (pkg.durationMinutes && pkg.durationMinutes > 0) {
+      return Number((pkg.durationMinutes / 60).toFixed(1));
+    }
+    return 2;
+  };
+
   // Modal states: Open Room
   const [openingRoom, setOpeningRoom] = useState<Room | null>(null);
   const [pricingChoice, setPricingChoice] = useState<'package' | 'fixed_hourly'>('fixed_hourly');
   const [selectedPackageId, setSelectedPackageId] = useState<string>(packages[0]?.id || '');
+  const [packageHours, setPackageHours] = useState<number>(() => parsePackageDurationHours(packages[0]));
   const [customHourlyRate, setCustomHourlyRate] = useState<number>(settings.defaultHourlyRate);
   const [bookedHours, setBookedHours] = useState<number>(4); // Default 4 hours as requested!
   const [openedByStaffId, setOpenedByStaffId] = useState<string>(currentStaff?.id || staffList[0]?.id || '');
@@ -65,6 +90,13 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
   const [selectedRoomForDetails, setSelectedRoomForDetails] = useState<Room | null>(null);
   const [orderSearch, setOrderSearch] = useState<string>('');
   const [orderStaffId, setOrderStaffId] = useState<string>(currentStaff?.id || staffList[0]?.id || '');
+
+  // Dedicated Price & Seller input modal for Room Orders (Mandatory when price needs input or seller is required)
+  const [pendingOrderItem, setPendingOrderItem] = useState<Product | null>(null);
+  const [pendingOrderPrice, setPendingOrderPrice] = useState<string>('');
+  const [pendingOrderQty, setPendingOrderQty] = useState<number>(1);
+  const [pendingOrderSellerId, setPendingOrderSellerId] = useState<string>(''); // Starts empty as strictly requested!
+  const [pendingOrderError, setPendingOrderError] = useState<string>('');
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -142,30 +174,32 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
   const calculateTargetEndTime = (
     startDate: Date,
     hoursOrPackage: { type: 'package' | 'fixed_hourly'; hours?: number; packageId?: string }
-  ): { targetDate: Date; hoursLabel: string } => {
+  ): { targetDate: Date; hoursLabel: string; effectiveHours: number } => {
     let target = new Date(startDate.getTime());
     let hoursLabel = '';
+    let effectiveHours = 4;
 
     if (hoursOrPackage.type === 'package') {
       const pkg = packages.find((p) => p.id === hoursOrPackage.packageId);
-      const durationMins = pkg ? pkg.durationMinutes : 120;
+      effectiveHours = hoursOrPackage.hours !== undefined ? hoursOrPackage.hours : parsePackageDurationHours(pkg);
+      const durationMins = Math.round(effectiveHours * 60);
       target = new Date(startDate.getTime() + durationMins * 60 * 1000);
-      hoursLabel = `${(durationMins / 60).toFixed(0)} ຊົ່ວໂມງ (${pkg?.name || ''})`;
+      hoursLabel = `${effectiveHours} ຊົ່ວໂມງ (${pkg?.name || 'ແພັກເກັດ'})`;
     } else {
-      const h = hoursOrPackage.hours || 4;
-      target = new Date(startDate.getTime() + h * 60 * 60 * 1000);
-      hoursLabel = `${h} ຊົ່ວໂມງ`;
+      effectiveHours = hoursOrPackage.hours || 4;
+      target = new Date(startDate.getTime() + effectiveHours * 60 * 60 * 1000);
+      hoursLabel = `${effectiveHours} ຊົ່ວໂມງ`;
     }
 
-    return { targetDate: target, hoursLabel };
+    return { targetDate: target, hoursLabel, effectiveHours };
   };
 
   const calculateRoomFee = (room: Room): number => {
     if (room.status !== 'in_use' || !room.openedAt) return 0;
 
     if (room.pricingType === 'package') {
-      const pkg = packages.find((p) => p.id === room.packageId);
-      return pkg ? pkg.price : 0;
+      const pkg = packages.find((p) => p.id === room.packageId) || packages.find((p) => p.name === room.packageName);
+      return pkg ? pkg.price : room.hourlyRate || 0;
     }
 
     // Fixed hourly rate (if booked specific hours, charge booked hours or actual duration, whichever is greater)
@@ -182,10 +216,11 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
     const staff = staffList.find((s) => s.id === openedByStaffId) || currentStaff;
     const pkg = packages.find((p) => p.id === selectedPackageId);
     const openTime = new Date();
+    const effectiveHours = pricingChoice === 'package' ? packageHours : bookedHours;
 
     const { targetDate } = calculateTargetEndTime(openTime, {
       type: pricingChoice,
-      hours: bookedHours,
+      hours: effectiveHours,
       packageId: selectedPackageId,
     });
 
@@ -197,8 +232,8 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
           pricingType: pricingChoice,
           packageId: pricingChoice === 'package' ? selectedPackageId : undefined,
           packageName: pricingChoice === 'package' ? pkg?.name : undefined,
-          hourlyRate: pricingChoice === 'fixed_hourly' ? customHourlyRate : r.hourlyRate,
-          bookedHours: pricingChoice === 'fixed_hourly' ? bookedHours : (pkg ? pkg.durationMinutes / 60 : 2),
+          hourlyRate: pricingChoice === 'fixed_hourly' ? customHourlyRate : (pkg?.price || r.hourlyRate),
+          bookedHours: effectiveHours,
           openedAt: openTime.toISOString(),
           targetEndTime: targetDate.toISOString(),
           openedByStaffId: staff?.id,
@@ -230,6 +265,67 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
     setSelectedRoomForDetails(updatedRoom);
   };
 
+  // Check if an item requires custom price or seller selection
+  const requiresCustomPriceOrSeller = (product: Product): boolean => {
+    return product.requireSeller === true || product.category === 'service' || product.salePrice <= 0;
+  };
+
+  // Open dedicated modal to specify price & seller before adding to room
+  const openOrderPriceSellerModal = (product: Product) => {
+    setPendingOrderItem(product);
+    setPendingOrderQty(1);
+    setPendingOrderPrice(product.salePrice > 0 ? formatWithSeparators(product.salePrice) : '');
+    setPendingOrderSellerId(''); // MUST start completely blank as requested!
+    setPendingOrderError('');
+  };
+
+  // Confirm adding item to room with validated price (>0) and seller selected
+  const handleConfirmOrderWithPriceAndSeller = () => {
+    if (!selectedRoomForDetails || !pendingOrderItem) return;
+
+    const numericPrice = parseCleanNumber(pendingOrderPrice);
+    if (numericPrice <= 0) {
+      setPendingOrderError('⚠️ ທ່ານລືມປ້ອນລາຄາສິນຄ້າ! ລາຄາຕ້ອງຫຼາຍກວ່າ 0 ₭ (ບໍ່ສາມາດເປັນ 0 ₭ ໄດ້)');
+      return;
+    }
+
+    if (!pendingOrderSellerId.trim()) {
+      setPendingOrderError('⚠️ ທ່ານລືມເລືອກຊື່ຜູ້ຂາຍ! ກະລຸນາກົດເລືອກພະນັກງານຂາຍ/ເສີບກ່ອນສັ່ງ');
+      return;
+    }
+
+    if (pendingOrderItem.category !== 'service' && pendingOrderItem.stock < pendingOrderQty) {
+      alert(`ສະຕັອກບໍ່ພຽງພໍ! ສິນຄ້າ "${pendingOrderItem.name}" ເຫຼືອພຽງ ${pendingOrderItem.stock} ${pendingOrderItem.unit}`);
+      return;
+    }
+
+    const seller = staffList.find((s) => s.id === pendingOrderSellerId);
+
+    const newOrder = {
+      id: 'order-' + Date.now(),
+      product: pendingOrderItem,
+      quantity: pendingOrderQty,
+      price: numericPrice,
+      customPrice: numericPrice !== pendingOrderItem.salePrice ? numericPrice : undefined,
+      orderedAt: new Date().toISOString(),
+      sellerId: seller?.id,
+      sellerName: seller?.name,
+    };
+
+    const updatedRoom: Room = {
+      ...selectedRoomForDetails,
+      orders: [...selectedRoomForDetails.orders, newOrder],
+    };
+
+    const updatedRooms = rooms.map((r) => (r.id === selectedRoomForDetails.id ? updatedRoom : r));
+    onUpdateRooms(updatedRooms);
+    setSelectedRoomForDetails(updatedRoom);
+
+    // Reset and close
+    setPendingOrderItem(null);
+    setPendingOrderError('');
+  };
+
   // Add Item to Room
   const handleAddItemToRoom = (product: Product) => {
     if (!selectedRoomForDetails) return;
@@ -239,6 +335,13 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
       return;
     }
 
+    // CRITICAL: If item requires seller or custom price or is a service, FORCE the price & seller modal
+    if (requiresCustomPriceOrSeller(product)) {
+      openOrderPriceSellerModal(product);
+      return;
+    }
+
+    // Standard items with valid price
     const server = staffList.find((s) => s.id === orderStaffId) || currentStaff;
 
     const newOrder = {
@@ -307,7 +410,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
   // Preview target time in modal
   const previewEndTime = calculateTargetEndTime(now, {
     type: pricingChoice,
-    hours: bookedHours,
+    hours: pricingChoice === 'package' ? packageHours : bookedHours,
     packageId: selectedPackageId,
   });
 
@@ -564,9 +667,12 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                     onClick={() => {
                       setOpeningRoom(room);
                       setCustomHourlyRate(room.hourlyRate);
-                      setPricingChoice('fixed_hourly');
-                      setBookedHours(4); // Default 4 hours as requested!
-                      setSelectedPackageId(packages[0]?.id || '');
+                      setPricingChoice('package'); // Default to package (Choice 1)
+                      const firstPkg = packages[0];
+                      setSelectedPackageId(firstPkg?.id || '');
+                      const hrs = parsePackageDurationHours(firstPkg);
+                      setPackageHours(hrs);
+                      setBookedHours(hrs || 4);
                     }}
                     className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-700 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-black shadow-lg shadow-indigo-600/30 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
                   >
@@ -639,28 +745,10 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
-                  onClick={() => setPricingChoice('fixed_hourly')}
-                  className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
-                    pricingChoice === 'fixed_hourly'
-                      ? 'bg-amber-950/50 border-amber-500 text-amber-200 shadow-md shadow-amber-950/40'
-                      : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <Timer className="w-4 h-4 text-amber-400" />
-                    <span className="font-bold text-xs text-white">Choice 2: ລາຄາຕາຍຕົວ</span>
-                  </div>
-                  <p className="text-[11px] text-slate-400">
-                    ເລືອກຈຳນວນຊົ່ວໂມງ (ເຊັ່ນ 4 ຊມ)
-                  </p>
-                </button>
-
-                <button
-                  type="button"
                   onClick={() => setPricingChoice('package')}
                   className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
                     pricingChoice === 'package'
-                      ? 'bg-rose-950/50 border-rose-500 text-rose-200 shadow-md shadow-rose-950/40'
+                      ? 'bg-rose-950/50 border-rose-500 text-rose-200 shadow-md shadow-rose-950/40 ring-1 ring-rose-500/50'
                       : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
                   }`}
                 >
@@ -670,6 +758,24 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                   </div>
                   <p className="text-[11px] text-slate-400">
                     ລາຄາເໝົາລວມ ພ້ອມເຄື່ອງດື່ມແຖມ
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPricingChoice('fixed_hourly')}
+                  className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
+                    pricingChoice === 'fixed_hourly'
+                      ? 'bg-amber-950/50 border-amber-500 text-amber-200 shadow-md shadow-amber-950/40 ring-1 ring-amber-500/50'
+                      : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <Timer className="w-4 h-4 text-amber-400" />
+                    <span className="font-bold text-xs text-white">Choice 2: ລາຄາຕາຍຕົວ</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    ເລືອກຈຳນວນຊົ່ວໂມງ (ເຊັ່ນ 4 ຊມ)
                   </p>
                 </button>
               </div>
@@ -728,28 +834,73 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
 
             {/* If Choice 1: Package List */}
             {pricingChoice === 'package' && (
-              <div className="mb-4 space-y-2">
-                <label className="block text-xs text-slate-400">ເລືອກແພັກເກັດ:</label>
-                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                  {packages.map((pkg) => (
-                    <div
-                      key={pkg.id}
-                      onClick={() => setSelectedPackageId(pkg.id)}
-                      className={`p-3 rounded-2xl border cursor-pointer transition-all flex items-center justify-between ${
-                        selectedPackageId === pkg.id
-                          ? 'bg-rose-900/40 border-rose-500 text-white'
-                          : 'bg-slate-800/80 border-slate-700/80 text-slate-300 hover:bg-slate-800'
-                      }`}
-                    >
-                      <div>
-                        <h4 className="font-bold text-xs text-slate-100">{pkg.name}</h4>
-                        <p className="text-[11px] text-slate-400">{pkg.description}</p>
+              <div className="mb-4 space-y-3">
+                <label className="block text-xs text-slate-300 font-bold">
+                  ເລືອກແພັກເກັດຮ້ານ (Choice 1):
+                </label>
+                <div className="space-y-2 max-h-52 overflow-y-auto pr-1 scrollbar-thin">
+                  {packages.map((pkg) => {
+                    const pkgHours = parsePackageDurationHours(pkg);
+                    const isSelected = selectedPackageId === pkg.id;
+                    return (
+                      <div
+                        key={pkg.id}
+                        onClick={() => {
+                          setSelectedPackageId(pkg.id);
+                          setPackageHours(pkgHours);
+                        }}
+                        className={`p-3 rounded-2xl border cursor-pointer transition-all flex items-center justify-between ${
+                          isSelected
+                            ? 'bg-rose-950/60 border-rose-500 text-white shadow-md shadow-rose-950/50 ring-1 ring-rose-500/50'
+                            : 'bg-slate-800/80 border-slate-700/80 text-slate-300 hover:bg-slate-800'
+                        }`}
+                      >
+                        <div className="flex-1 min-w-0 pr-2">
+                          <div className="flex items-center gap-2 mb-0.5">
+                            <h4 className="font-black text-xs text-slate-100 truncate">
+                              {pkg.name}
+                            </h4>
+                            <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[10px] font-bold whitespace-nowrap">
+                              ⏱ {pkgHours} ຊົ່ວໂມງ
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 truncate">{pkg.description}</p>
+                        </div>
+                        <span className="font-mono font-black text-xs text-amber-400 shrink-0">
+                          {formatCurrency(pkg.price, settings.currencySymbol)}
+                        </span>
                       </div>
-                      <span className="font-mono font-bold text-xs text-amber-400">
-                        {formatCurrency(pkg.price, settings.currencySymbol)}
-                      </span>
-                    </div>
-                  ))}
+                    );
+                  })}
+                </div>
+
+                {/* Duration fine-tune for package */}
+                <div className="p-3 rounded-2xl bg-slate-850 border border-slate-750 space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-300 font-bold flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-amber-400" />
+                      <span>ໄລຍະເວລາແພັກເກັດທີ່ເລືອກ:</span>
+                    </span>
+                    <span className="font-mono font-black text-amber-400 text-sm">
+                      {packageHours} ຊົ່ວໂມງ
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-6 gap-1.5">
+                    {[1, 2, 3, 4, 5, 6].map((h) => (
+                      <button
+                        key={h}
+                        type="button"
+                        onClick={() => setPackageHours(h)}
+                        className={`py-1 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                          packageHours === h
+                            ? 'bg-rose-500 border-rose-400 text-white font-black shadow-sm'
+                            : 'bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800'
+                        }`}
+                      >
+                        {h} ຊມ
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
             )}
@@ -965,6 +1116,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                     })
                     .map((prod) => {
                       const isOutOfStock = prod.stock <= 0 && prod.category !== 'service';
+                      const needsCustom = requiresCustomPriceOrSeller(prod);
                       const badgeInfo =
                         prod.category === 'beer'
                           ? { label: 'ເບຍ', badge: 'bg-amber-950/80 text-amber-300 border-amber-500/40', text: 'text-amber-400', border: 'hover:border-amber-400' }
@@ -979,13 +1131,17 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                           : { label: 'ອື່ນໆ', badge: 'bg-slate-800 text-slate-300 border-slate-700', text: 'text-slate-300', border: 'hover:border-slate-500' };
 
                       return (
-                        <button
+                        <div
                           key={prod.id}
-                          disabled={isOutOfStock}
-                          onClick={() => handleAddItemToRoom(prod)}
-                          className={`p-2 rounded-2xl border text-left flex gap-2.5 transition-all cursor-pointer ${
+                          onClick={() => {
+                            if (isOutOfStock) return;
+                            handleAddItemToRoom(prod);
+                          }}
+                          className={`p-2 rounded-2xl border text-left flex gap-2.5 transition-all cursor-pointer relative ${
                             isOutOfStock
                               ? 'bg-rose-950/20 border-rose-900/50 opacity-60 cursor-not-allowed'
+                              : needsCustom
+                              ? `bg-slate-800/90 border-amber-500/50 hover:border-amber-400 hover:bg-slate-750 shadow-sm`
                               : `bg-slate-800/80 border-slate-700/80 ${badgeInfo.border} hover:bg-slate-750`
                           }`}
                         >
@@ -1021,9 +1177,15 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                                 <span className={`text-[9px] px-1.5 py-0.2 rounded border font-semibold ${badgeInfo.badge}`}>
                                   {badgeInfo.label}
                                 </span>
-                                <span className="text-[10px] text-slate-400 font-mono">
-                                  {prod.unit}
-                                </span>
+                                {needsCustom ? (
+                                  <span className="text-[9px] px-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold">
+                                    ປ້ອນລາຄາ
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] text-slate-400 font-mono">
+                                    {prod.unit}
+                                  </span>
+                                )}
                               </div>
                               <h5 className="font-bold text-xs text-slate-200 truncate">
                                 {prod.name}
@@ -1032,20 +1194,35 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
 
                             <div className="flex items-center justify-between text-xs mt-1 pt-0.5 border-t border-slate-700/50">
                               <span className={`font-mono font-bold ${badgeInfo.text}`}>
-                                {formatCurrency(prod.salePrice, settings.currencySymbol)}
+                                {prod.salePrice > 0
+                                  ? formatCurrency(prod.salePrice, settings.currencySymbol)
+                                  : 'ກຳນົດເອງ'}
                               </span>
                               {isOutOfStock ? (
                                 <span className="text-[9px] font-bold text-rose-400 bg-rose-950 px-1 py-0.2 rounded">
                                   ໝົດ
                                 </span>
                               ) : (
-                                <span className="p-0.5 rounded-lg bg-slate-700 hover:bg-white/20 text-slate-200 transition-colors">
-                                  <Plus className="w-3 h-3" />
-                                </span>
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openOrderPriceSellerModal(prod);
+                                    }}
+                                    title="ປ້ອນລາຄາ & ເລືອກຜູ້ຂາຍ"
+                                    className="p-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[10px] border border-amber-500/40 cursor-pointer"
+                                  >
+                                    ✏️
+                                  </button>
+                                  <span className="p-0.5 rounded-lg bg-slate-700 hover:bg-white/20 text-slate-200 transition-colors">
+                                    <Plus className="w-3 h-3" />
+                                  </span>
+                                </div>
                               )}
                             </div>
                           </div>
-                        </button>
+                        </div>
                       );
                     })}
                 </div>
@@ -1073,6 +1250,218 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                 <span>ໄປໜ້າເຊັກບິນ ແລະ ພິມໃບບິນ</span>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Mandatory Price and Seller input before adding order to Room */}
+      {pendingOrderItem && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/85 backdrop-blur-md p-4">
+          <div className="bg-slate-900 border border-amber-500/50 rounded-3xl p-6 w-full max-w-md shadow-2xl text-white space-y-4">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+                  <DollarSign className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-sm text-slate-100">
+                    ກຳນົດລາຄາ & ເລືອກຜູ້ຂາຍ
+                  </h3>
+                  <p className="text-[11px] text-amber-300">
+                    {pendingOrderItem.name}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingOrderItem(null);
+                  setPendingOrderError('');
+                }}
+                className="p-1 rounded-xl hover:bg-slate-800 text-slate-400 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Warning requirement notice */}
+            <div className="p-3 rounded-2xl bg-amber-950/40 border border-amber-500/40 text-amber-300 text-xs space-y-1">
+              <div className="flex items-center gap-1.5 font-bold">
+                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>ເງື່ອນໄຂການສັ່ງເພີ່ມ (ຈຳເປັນ):</span>
+              </div>
+              <p className="text-[11px] text-slate-300 pl-5 leading-relaxed">
+                1. ຕ້ອງປ້ອນລາຄາສິນຄ້າ (ລາຄາຕ້ອງຫຼາຍກວ່າ 0 ₭)<br />
+                2. ຕ້ອງເລືອກຊື່ຜູ້ຂາຍ/ເສີບກ່ອນ ຈຶ່ງຈະສາມາດກົດສັ່ງໄດ້
+              </p>
+            </div>
+
+            {/* Quantity Selector */}
+            <div className="flex items-center justify-between bg-slate-950/70 p-3 rounded-2xl border border-slate-800">
+              <span className="text-xs text-slate-300 font-semibold">ຈຳນວນ ({pendingOrderItem.unit}):</span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPendingOrderQty((prev) => Math.max(1, prev - 1))}
+                  className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold flex items-center justify-center cursor-pointer border border-slate-700"
+                >
+                  -
+                </button>
+                <span className="w-8 text-center font-mono font-black text-base text-white">
+                  {pendingOrderQty}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPendingOrderQty((prev) => prev + 1)}
+                  className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold flex items-center justify-center cursor-pointer border border-slate-700"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+
+            {/* Price Input (Mandatory > 0) */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-bold text-slate-200">
+                  ລາຄາຕໍ່ໜ່ວຍ ({settings.currencySymbol}) <span className="text-rose-400">*</span>:
+                </label>
+                {parseCleanNumber(pendingOrderPrice) > 0 && (
+                  <span className="text-[11px] font-mono font-bold text-emerald-400">
+                    ລວມ: {formatCurrency(parseCleanNumber(pendingOrderPrice) * pendingOrderQty, settings.currencySymbol)}
+                  </span>
+                )}
+              </div>
+              <input
+                type="text"
+                value={pendingOrderPrice}
+                onChange={(e) => {
+                  setPendingOrderPrice(formatWithSeparators(e.target.value));
+                  setPendingOrderError('');
+                }}
+                placeholder="ປ້ອນລາຄາ ເຊັ່ນ: 150,000"
+                className={`w-full bg-slate-950 border px-3 py-2.5 rounded-2xl text-base font-mono font-black text-amber-400 placeholder-slate-600 focus:outline-none ${
+                  parseCleanNumber(pendingOrderPrice) <= 0
+                    ? 'border-rose-500/80 focus:ring-2 focus:ring-rose-500'
+                    : 'border-slate-700 focus:ring-2 focus:ring-emerald-500'
+                }`}
+              />
+
+              {/* Quick Price Buttons */}
+              <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                {[10000, 20000, 30000, 50000, 80000, 100000, 150000, 200000, 300000].map((amt) => (
+                  <button
+                    key={amt}
+                    type="button"
+                    onClick={() => {
+                      setPendingOrderPrice(formatWithSeparators(amt));
+                      setPendingOrderError('');
+                    }}
+                    className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[10px] font-mono text-slate-300 cursor-pointer"
+                  >
+                    +{amt.toLocaleString()}
+                  </button>
+                ))}
+              </div>
+
+              {parseCleanNumber(pendingOrderPrice) <= 0 && (
+                <p className="text-[11px] text-rose-400 font-bold flex items-center gap-1 pt-0.5">
+                  <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                  <span>ກະລຸນາປ້ອນລາຄາ (ຕ້ອງຫຼາຍກວ່າ 0 ₭ ບໍ່ສາມາດຂາຍ 0 ₭ ໄດ້)</span>
+                </p>
+              )}
+            </div>
+
+            {/* Seller Dropdown (Mandatory Selection) */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-bold text-slate-200">
+                ພະນັກງານຂາຍ / ເສີບ (Server) <span className="text-rose-400">*</span>:
+              </label>
+              <select
+                value={pendingOrderSellerId}
+                onChange={(e) => {
+                  setPendingOrderSellerId(e.target.value);
+                  setPendingOrderError('');
+                }}
+                className={`w-full bg-slate-950 border px-3 py-2.5 rounded-2xl text-xs font-semibold focus:outline-none ${
+                  !pendingOrderSellerId
+                    ? 'border-rose-500/80 text-rose-300 focus:ring-2 focus:ring-rose-500'
+                    : 'border-slate-700 text-emerald-300 focus:ring-2 focus:ring-emerald-500'
+                }`}
+              >
+                <option value="">-- ກະລຸນາເລືອກຊື່ຜູ້ຂາຍ/ເສີບ (ຈຳເປັນ) --</option>
+                {staffList.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} ({s.role === 'admin' ? 'Admin' : 'ພະນັກງານ'})
+                  </option>
+                ))}
+              </select>
+
+              {!pendingOrderSellerId && (
+                <p className="text-[11px] text-rose-400 font-bold flex items-center gap-1 pt-0.5">
+                  <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                  <span>ທ່ານລືມເລືອກຊື່ຜູ້ຂາຍ! ກະລຸນາກົດເລືອກຊື່ພະນັກງານຂາຍກ່ອນ</span>
+                </p>
+              )}
+            </div>
+
+            {/* Error Message banner */}
+            {pendingOrderError && (
+              <div className="p-2.5 rounded-xl bg-rose-950/80 border border-rose-500 text-rose-200 text-xs font-bold flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{pendingOrderError}</span>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            {(() => {
+              const numericPrice = parseCleanNumber(pendingOrderPrice);
+              const isPriceValid = numericPrice > 0;
+              const isSellerValid = !!pendingOrderSellerId.trim();
+              const canSubmit = isPriceValid && isSellerValid;
+
+              return (
+                <div className="flex gap-2 pt-2 border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPendingOrderItem(null);
+                      setPendingOrderError('');
+                    }}
+                    className="flex-1 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer transition-colors"
+                  >
+                    ຍົກເລີກ
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={!canSubmit}
+                    onClick={handleConfirmOrderWithPriceAndSeller}
+                    className={`flex-2 py-3 px-4 rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-1.5 ${
+                      canSubmit
+                        ? 'bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-600/30 cursor-pointer active:scale-95'
+                        : 'bg-slate-800 text-slate-500 border border-slate-700/80 opacity-60 cursor-not-allowed'
+                    }`}
+                  >
+                    {!isPriceValid && !isSellerValid ? (
+                      <span>❌ ປ້ອນລາຄາ & ເລືອກຜູ້ຂາຍກ່ອນ</span>
+                    ) : !isPriceValid ? (
+                      <span>{'❌ ປ້ອນລາຄາ (>0 ₭) ກ່ອນ'}</span>
+                    ) : !isSellerValid ? (
+                      <span>❌ ເລືອກຊື່ຜູ້ຂາຍ/ເສີບກ່ອນ</span>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>
+                          ຢືນຢັນສັ່ງເພີ່ມ ({formatCurrency(numericPrice * pendingOrderQty, settings.currencySymbol)})
+                        </span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}

@@ -299,6 +299,8 @@ export const INITIAL_SETTINGS: AppSettings = {
   receiptFontSize: 'large', // Default to Large font size so letters are easily readable
   receiptPaperWidth: '58mm',
   receiptBoldText: true,
+  gasWebAppUrl: '',
+  realtimeSyncEnabled: true,
 };
 
 

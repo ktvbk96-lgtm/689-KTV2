@@ -426,6 +426,12 @@ export const BillingModal: React.FC<BillingModalProps> = ({
                   <span>{bill.roomName}</span>
                 </div>
               )}
+              {bill.packageName && (
+                <div className="flex justify-between font-bold text-slate-900">
+                  <span>ແພັກເກັດຫ້ອງ:</span>
+                  <span>{bill.packageName}</span>
+                </div>
+              )}
               {bill.startTime && (
                 <div className="flex justify-between font-bold text-slate-950 py-0.5 bg-slate-200/80 px-1.5 rounded">
                   <span>ເວລາເປີດ - ສິ້ນສຸດ:</span>
