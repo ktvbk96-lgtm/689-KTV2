@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Role,
   StaffMember,
@@ -77,8 +77,37 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState<string>('');
 
   // Google Apps Script Real-time Sync & Multi-Device States
+  // Google Apps Script Real-time Sync & Multi-Device States
   const [syncStatus, setSyncStatus] = useState<'idle' | 'loading' | 'success' | 'error' | 'syncing'>('idle');
   const [syncMessage, setSyncMessage] = useState<string>('');
+
+  // Refs to track current state for race-condition-free background sync
+  const productsRef = useRef<Product[]>(products);
+  const roomsRef = useRef<Room[]>(rooms);
+  const packagesRef = useRef<RoomPackage[]>(packages);
+  const staffRef = useRef<StaffMember[]>(staffList);
+  const debtsRef = useRef<DebtRecord[]>(debts);
+  const isPushingRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    productsRef.current = products;
+  }, [products]);
+
+  useEffect(() => {
+    roomsRef.current = rooms;
+  }, [rooms]);
+
+  useEffect(() => {
+    packagesRef.current = packages;
+  }, [packages]);
+
+  useEffect(() => {
+    staffRef.current = staffList;
+  }, [staffList]);
+
+  useEffect(() => {
+    debtsRef.current = debts;
+  }, [debts]);
 
   // Function to dispatch real-time sync in background to Google Sheets Web App
   const triggerGasSync = (
@@ -87,6 +116,8 @@ export default function App() {
   ) => {
     if (!settings.gasWebAppUrl || settings.realtimeSyncEnabled === false) return;
 
+    // Pause polling temporarily during local push
+    isPushingRef.current = true;
     setSyncStatus('syncing');
     setSyncMessage('ກຳລັງຊິ້ງຂໍ້ມູນລົງ Google Sheets...');
 
@@ -104,39 +135,81 @@ export default function App() {
         setSyncMessage(res.error || 'ຊິ້ງຂໍ້ມູນບໍ່ສຳເລັດ');
         setTimeout(() => setSyncStatus('idle'), 4000);
       }
+      // Re-enable polling after 3.5s to allow Google Sheets write buffer to commit
+      setTimeout(() => {
+        isPushingRef.current = false;
+      }, 3500);
     });
   };
 
-  // Function to fetch latest data from Google Sheets (Multi-device auto loading with timeout)
-  const fetchFromGas = async (isManual = false) => {
+  // Function to fetch latest data from Google Sheets (Multi-device auto loading with timeout & diffing)
+  const fetchFromGas = async (isManual = false, isSilent = false) => {
     if (!settings.gasWebAppUrl) return;
 
-    setSyncStatus('loading');
-    setSyncMessage(isManual ? 'ກຳລັງດຶງຂໍ້ມູນລ່າສຸດ...' : 'ກວດສອບ ແລະ ດຶງຂໍ້ມູນລ່າສຸດຈາກ Google Sheets...');
+    if (!isSilent) {
+      setSyncStatus('loading');
+      setSyncMessage(isManual ? 'ກຳລັງດຶງຂໍ້ມູນລ່າສຸດ...' : 'ກວດສອບ ແລະ ດຶງຂໍ້ມູນລ່າສຸດຈາກ Google Sheets...');
+    }
 
     try {
       // 7.5s AbortController timeout prevents freezing or infinite spinning
       const res = await fetchLatestDataFromGas(settings.gasWebAppUrl, 7500);
       if (res.success && res.data) {
+        let hasAnyUpdates = false;
+
+        // 1. Sync Products if remote changed
         if (res.data.products && Array.isArray(res.data.products) && res.data.products.length > 0) {
-          setProducts(res.data.products);
-          saveStoredProducts(res.data.products);
+          const currentStr = JSON.stringify(productsRef.current);
+          const newStr = JSON.stringify(res.data.products);
+          if (currentStr !== newStr) {
+            setProducts(res.data.products);
+            saveStoredProducts(res.data.products);
+            hasAnyUpdates = true;
+          }
         }
+
+        // 2. Sync Rooms if remote changed
         if (res.data.rooms && Array.isArray(res.data.rooms) && res.data.rooms.length > 0) {
-          setRooms(res.data.rooms);
-          saveStoredRooms(res.data.rooms);
+          const currentStr = JSON.stringify(roomsRef.current);
+          const newStr = JSON.stringify(res.data.rooms);
+          if (currentStr !== newStr) {
+            setRooms(res.data.rooms);
+            saveStoredRooms(res.data.rooms);
+            hasAnyUpdates = true;
+          }
         }
+
+        // 3. Sync Packages if remote changed
         if (res.data.packages && Array.isArray(res.data.packages) && res.data.packages.length > 0) {
-          setPackages(res.data.packages);
-          saveStoredPackages(res.data.packages);
+          const currentStr = JSON.stringify(packagesRef.current);
+          const newStr = JSON.stringify(res.data.packages);
+          if (currentStr !== newStr) {
+            setPackages(res.data.packages);
+            saveStoredPackages(res.data.packages);
+            hasAnyUpdates = true;
+          }
         }
+
+        // 4. Sync Staff if remote changed
         if (res.data.staff && Array.isArray(res.data.staff) && res.data.staff.length > 0) {
-          setStaffList(res.data.staff);
-          saveStoredStaff(res.data.staff);
+          const currentStr = JSON.stringify(staffRef.current);
+          const newStr = JSON.stringify(res.data.staff);
+          if (currentStr !== newStr) {
+            setStaffList(res.data.staff);
+            saveStoredStaff(res.data.staff);
+            hasAnyUpdates = true;
+          }
         }
+
+        // 5. Sync Debts if remote changed
         if (res.data.debts && Array.isArray(res.data.debts) && res.data.debts.length > 0) {
-          setDebts(res.data.debts);
-          saveStoredDebts(res.data.debts);
+          const currentStr = JSON.stringify(debtsRef.current);
+          const newStr = JSON.stringify(res.data.debts);
+          if (currentStr !== newStr) {
+            setDebts(res.data.debts);
+            saveStoredDebts(res.data.debts);
+            hasAnyUpdates = true;
+          }
         }
 
         const nowStr = new Date().toISOString();
@@ -144,39 +217,71 @@ export default function App() {
         setSettings(updatedSettings);
         saveStoredSettings(updatedSettings);
 
-        setSyncStatus('success');
-        setSyncMessage('ດຶງຂໍ້ມູນລ່າສຸດຈາກ Sheets ສຳເລັດແລ້ວ (ອອນໄລນ໌)');
-        setTimeout(() => setSyncStatus('idle'), 2500);
-      } else {
-        // Fast graceful fallback without hanging
+        if (hasAnyUpdates && isSilent) {
+          showToast('🔄 ອັບເດດຂໍ້ມູນລ່າສຸດຈາກ Google Sheets ອັດຕະໂນມັດແລ້ວ');
+        }
+
+        if (!isSilent) {
+          setSyncStatus('success');
+          setSyncMessage('ດຶງຂໍ້ມູນລ່າສຸດຈາກ Sheets ສຳເລັດແລ້ວ (ອອນໄລນ໌)');
+          setTimeout(() => setSyncStatus('idle'), 2500);
+        }
+      } else if (!isSilent) {
         setSyncStatus('error');
         setSyncMessage(res.error || 'ບໍ່ສາມາດເຊື່ອມຕໍ່ Sheets ໄດ້ (ກຳລັງໃຊ້ຂໍ້ມູນໃນເຄື່ອງ)');
         setTimeout(() => setSyncStatus('idle'), 4000);
       }
     } catch {
-      setSyncStatus('error');
-      setSyncMessage('ຂໍ້ຜິດພາດການດຶງຂໍ້ມູນ (ກຳລັງໃຊ້ຂໍ້ມູນໃນເຄື່ອງ)');
-      setTimeout(() => setSyncStatus('idle'), 4000);
+      if (!isSilent) {
+        setSyncStatus('error');
+        setSyncMessage('ຂໍ້ຜິດພາດການດຶງຂໍ້ມູນ (ກຳລັງໃຊ້ຂໍ້ມູນໃນເຄື່ອງ)');
+        setTimeout(() => setSyncStatus('idle'), 4000);
+      }
     }
   };
 
-  // Run on startup when gasWebAppUrl is configured + check on window focus
+  // Continuous background real-time sync polling loop (every 5 seconds)
+  // Ensures tablet, mobile phone, and PC all stay strictly in sync without page refresh
   useEffect(() => {
     if (settings.gasWebAppUrl) {
-      fetchFromGas();
+      fetchFromGas(false, false);
     }
 
-    const handleFocus = () => {
-      if (settings.gasWebAppUrl && settings.realtimeSyncEnabled !== false) {
-        fetchFromGas();
+    const handleFocusOrVisible = () => {
+      if (
+        document.visibilityState === 'visible' &&
+        settings.gasWebAppUrl &&
+        settings.realtimeSyncEnabled !== false &&
+        !isPushingRef.current
+      ) {
+        fetchFromGas(false, true);
       }
     };
-    window.addEventListener('focus', handleFocus);
+
+    window.addEventListener('focus', handleFocusOrVisible);
+    document.addEventListener('visibilitychange', handleFocusOrVisible);
+    window.addEventListener('online', handleFocusOrVisible);
+
+    // Run active background polling every 5 seconds
+    const intervalId = setInterval(() => {
+      if (
+        document.visibilityState === 'visible' &&
+        settings.gasWebAppUrl &&
+        settings.realtimeSyncEnabled !== false &&
+        !isPushingRef.current &&
+        navigator.onLine !== false
+      ) {
+        fetchFromGas(false, true);
+      }
+    }, 5000);
 
     return () => {
-      window.removeEventListener('focus', handleFocus);
+      clearInterval(intervalId);
+      window.removeEventListener('focus', handleFocusOrVisible);
+      document.removeEventListener('visibilitychange', handleFocusOrVisible);
+      window.removeEventListener('online', handleFocusOrVisible);
     };
-  }, [settings.gasWebAppUrl]);
+  }, [settings.gasWebAppUrl, settings.realtimeSyncEnabled]);
 
   // Check Bluetooth and Storage Events
   useEffect(() => {

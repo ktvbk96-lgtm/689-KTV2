@@ -25,7 +25,9 @@ import {
   ArrowDownToLine,
   ArrowUpFromLine,
   Clock,
+  Download,
 } from 'lucide-react';
+import { exportStandaloneHtmlFile } from '../lib/exportSingleFile';
 import { BillRecord, Product, Room, RoomPackage, StaffMember, DebtRecord, AppSettings } from '../types';
 import {
   googleSignIn,
@@ -45,6 +47,7 @@ import {
   GOOGLE_APPS_SCRIPT_TEMPLATE,
   GasFullDataPayload,
 } from '../lib/gasSyncService';
+import { DEFAULT_GAS_WEBAPP_URL } from '../lib/initialData';
 
 interface GoogleSheetsSyncModalProps {
   settings: AppSettings;
@@ -392,9 +395,18 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
               {/* URL Input Form */}
               <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-200 mb-1">
-                    Google Apps Script Web App URL <span className="text-rose-400">*</span>:
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-bold text-slate-200">
+                      Google Apps Script Web App URL <span className="text-rose-400">*</span>:
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setGasUrlInput(DEFAULT_GAS_WEBAPP_URL)}
+                      className="text-[11px] text-amber-400 hover:text-amber-300 hover:underline font-semibold cursor-pointer"
+                    >
+                      ໃຊ້ URL ທີ່ຝັງມາ (Reset)
+                    </button>
+                  </div>
                   <input
                     type="url"
                     value={gasUrlInput}
@@ -402,9 +414,12 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
                     placeholder="https://script.google.com/macros/s/AKfycb.../exec"
                     className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-emerald-300 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
-                  <p className="text-[10px] text-slate-500 mt-1">
-                    * ນຳ URL ທີ່ໄດ້ຈາກການ Deploy Web App ໃນ Google Sheets ມາວາງໃສ່ນີ້
-                  </p>
+                  <div className="flex items-center justify-between text-[10px] text-slate-500 mt-1">
+                    <span>* ນຳ URL ທີ່ໄດ້ຈາກການ Deploy Web App ໃນ Google Sheets ມາວາງໃສ່ນີ້</span>
+                    {gasUrlInput === DEFAULT_GAS_WEBAPP_URL && (
+                      <span className="text-amber-400 font-semibold">✓ ໃຊ້ URL ທີ່ຝັງມາພ້ອມໃຊ້ງານ</span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Auto Real-time Sync Checkbox */}
@@ -699,13 +714,24 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
               : '• ຍັງບໍ່ໄດ້ກຳນົດ Web App URL'}
           </span>
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="py-2 px-5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer transition-colors"
-          >
-            ປິດໜ້າຕ່າງ
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => exportStandaloneHtmlFile()}
+              className="py-2 px-3.5 rounded-xl bg-teal-900/60 hover:bg-teal-800/80 border border-teal-500/40 text-teal-300 text-xs font-bold cursor-pointer transition-colors flex items-center gap-1.5"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Export index.html</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="py-2 px-5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer transition-colors"
+            >
+              ປິດໜ້າຕ່າງ
+            </button>
+          </div>
         </div>
       </div>
     </div>

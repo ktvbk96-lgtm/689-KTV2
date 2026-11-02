@@ -6,6 +6,7 @@ import {
   INITIAL_STAFF,
   INITIAL_SETTINGS,
   INITIAL_DEBTS,
+  DEFAULT_GAS_WEBAPP_URL,
 } from './initialData';
 
 const STORAGE_KEYS = {
@@ -113,7 +114,18 @@ export const getStoredSettings = (): AppSettings => {
     return INITIAL_SETTINGS;
   }
   try {
-    return { ...INITIAL_SETTINGS, ...JSON.parse(data) };
+    const parsed = JSON.parse(data);
+    // If gasWebAppUrl is empty or not set, auto-fill with the embedded DEFAULT_GAS_WEBAPP_URL
+    if (!parsed.gasWebAppUrl || parsed.gasWebAppUrl.trim() === '') {
+      parsed.gasWebAppUrl = DEFAULT_GAS_WEBAPP_URL;
+    }
+    if (parsed.realtimeSyncEnabled === undefined) {
+      parsed.realtimeSyncEnabled = true;
+    }
+    if (!parsed.receiptFontSize) {
+      parsed.receiptFontSize = 'large';
+    }
+    return { ...INITIAL_SETTINGS, ...parsed };
   } catch {
     return INITIAL_SETTINGS;
   }

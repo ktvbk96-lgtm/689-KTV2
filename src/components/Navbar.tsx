@@ -15,9 +15,11 @@ import {
   Sparkles,
   Palette,
   HandCoins,
+  Download,
 } from 'lucide-react';
 import { Role, StaffMember, AppSettings, AppThemeId } from '../types';
 import { THEMES } from '../lib/theme';
+import { exportStandaloneHtmlFile } from '../lib/exportSingleFile';
 
 interface NavbarProps {
   activeTab: 'pos' | 'rooms' | 'stock' | 'debts' | 'reports' | 'settings';
@@ -222,6 +224,16 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
               <span className="hidden sm:inline">Google Sheets</span>
+            </button>
+
+            {/* Export Single File index.html */}
+            <button
+              onClick={() => exportStandaloneHtmlFile()}
+              title="ດາວໂຫລດໄຟລ໌ Single-File (index.html) ເພື່ອນຳໄປ Push GitHub ຫຼື ອັບໂຫລດ Netlify"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold border border-teal-500/50 bg-teal-950/60 text-teal-300 hover:bg-teal-900/60 transition-all cursor-pointer shadow-sm"
+            >
+              <Download className="w-3.5 h-3.5 text-teal-400" />
+              <span className="hidden sm:inline">Export index.html</span>
             </button>
 
             {/* Theme Selector Button */}

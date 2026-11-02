@@ -33,6 +33,7 @@ import {
   Copy,
   ExternalLink,
   Code,
+  Download,
 } from 'lucide-react';
 import { AppSettings, StaffMember, RoomPackage, Room, Product, AppThemeId, ReceiptFontSize, ReceiptPaperWidth } from '../types';
 
@@ -44,6 +45,8 @@ import {
 import { formatCurrency } from '../lib/storage';
 import { THEMES } from '../lib/theme';
 import { GOOGLE_APPS_SCRIPT_TEMPLATE } from '../lib/gasSyncService';
+import { DEFAULT_GAS_WEBAPP_URL } from '../lib/initialData';
+import { exportStandaloneHtmlFile } from '../lib/exportSingleFile';
 
 interface SettingsModalProps {
   settings: AppSettings;
@@ -2001,10 +2004,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {/* URL Input and Real-time toggle */}
             <div className="p-4 rounded-2xl bg-slate-800/60 border border-slate-700 space-y-4">
               <div>
-                <label className="block text-xs font-bold text-slate-200 mb-1.5 flex items-center gap-2">
-                  <Zap className="w-4 h-4 text-amber-400" />
-                  <span>Google Apps Script Web App URL:</span>
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-bold text-slate-200 flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-amber-400" />
+                    <span>Google Apps Script Web App URL (ฝังพร้อมใช้งาน):</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, gasWebAppUrl: DEFAULT_GAS_WEBAPP_URL })}
+                    className="text-[11px] text-amber-400 hover:text-amber-300 hover:underline font-semibold cursor-pointer"
+                  >
+                    ໃຊ້ URL ທີ່ຝັງມາ (Reset)
+                  </button>
+                </div>
                 <input
                   type="url"
                   placeholder="https://script.google.com/macros/s/.../exec"
@@ -2012,8 +2024,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   onChange={(e) => setFormData({ ...formData, gasWebAppUrl: e.target.value.trim() })}
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
                 />
-                <p className="text-[11px] text-slate-400 mt-1.5">
-                  ວາງ URL ທີ່ໄດ້ຈາກການກົດ Deploy &gt; New deployment &gt; Web app ໃນ Google Sheets
+                <p className="text-[11px] text-slate-400 mt-1.5 flex items-center justify-between">
+                  <span>ວາງ URL ທີ່ໄດ້ຈາກການ Deploy Web App ຂອງທ່ານ ຫຼື ໃຊ້ URL ທີ່ຝັງມາພ້ອມໃຊ້ງານ</span>
+                  {formData.gasWebAppUrl && formData.gasWebAppUrl === DEFAULT_GAS_WEBAPP_URL && (
+                    <span className="text-amber-400 font-semibold">✓ ໃຊ້ URL ທີ່ຝັງມາໃນລະບົບ</span>
+                  )}
                 </p>
               </div>
 
@@ -2070,6 +2085,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <li>ເລືອກປະເພດ <strong className="text-slate-200">Web app</strong>, ຕັ້ງ Who has access ເປັນ <strong className="text-emerald-400">"Anyone (ທຸກຄົນ)"</strong></li>
                   <li>ກົດ Deploy ແລ້ວກັອບປີ້ Web App URL ມາໃສ່ໃນຊ່ອງດ້ານເທິງ ແລ້ວກົດ <strong className="text-slate-200">ບັນທຶກການຕັ້ງຄ່າ</strong></li>
                 </ol>
+              </div>
+            </div>
+
+            {/* Standalone Single-File index.html Export */}
+            <div className="p-4 rounded-2xl bg-gradient-to-r from-teal-950/60 to-emerald-950/60 border border-teal-500/40 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h4 className="font-bold text-xs text-teal-300 flex items-center gap-1.5">
+                    <Download className="w-4 h-4 text-teal-400" />
+                    <span>ສົ່ງອອກໄຟລ໌ດຽວຈົບ Single-File (index.html)</span>
+                  </h4>
+                  <p className="text-[11px] text-slate-300 mt-0.5">
+                    ລວມທັງໝົດ HTML, CSS, React ແລະ ລະບົບ Real-time Google Sheets Sync ໄວ້ໃນໄຟລ໌ດຽວ ພ້ອມ Push ຂຶ້ນ GitHub ຫຼື ນຳໄປໃຊ້ເທິງ Netlify ທັນທີ
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => exportStandaloneHtmlFile()}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shrink-0 cursor-pointer shadow-lg"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>ດາວໂຫລດ index.html</span>
+                </button>
               </div>
             </div>
           </div>

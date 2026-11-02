@@ -1,0 +1,1782 @@
+<!DOCTYPE html>
+<html lang="lo">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>689 KTV - ລະບົບຄຸ້ມຄອງຮ້ານຄາຣາໂອເກະ ແລະ ຂາຍສິນຄ້າ (Single File POS)</title>
+  <meta name="description" content="ລະບົບຈັດການຮ້ານ 689 KTV - ລະບົບ POS ຂາຍສິນຄ້າ, ເປີດຫ້ອງຄາຣາໂອເກະ, ສະຕັອກ, ພິມໃບບິນ ແລະ ຊິ້ງຂໍ້ມູນ Google Sheets ແບບ Real-time" />
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- React 18 & Babel Standalone -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Google Noto Fonts (Lao & Thai) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Lao:wght@400;500;600;700;800;900&family=Noto+Sans+Thai:wght@400;500;600;700;800&family=Noto+Sans:wght@400;600;700&display=swap" rel="stylesheet" />
+
+  <style>
+    body {
+      font-family: 'Noto Sans Lao', 'Noto Sans Thai', sans-serif;
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+    }
+    input, select, textarea {
+      user-select: text;
+    }
+    /* Thermal Print Styling */
+    @media print {
+      body * {
+        visibility: hidden !important;
+      }
+      #printable-receipt, #printable-receipt * {
+        visibility: visible !important;
+      }
+      #printable-receipt {
+        position: absolute !important;
+        left: 0 !important;
+        top: 0 !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 8px !important;
+        box-shadow: none !important;
+        border: none !important;
+        color: #000 !important;
+        background: #fff !important;
+      }
+    }
+    /* Custom Scrollbars */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0f172a;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #475569;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col">
+  <div id="root" class="flex-1 flex flex-col"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useMemo } = React;
+
+    // =========================================================================
+    // 1. EMBEDDED CONFIGURATION & GOOGLE APPS SCRIPT WEB APP URL
+    // =========================================================================
+    const DEFAULT_GAS_WEBAPP_URL = "https://script.google.com/macros/s/AKfycbwP7K5U-POS-689KTV-WEBAPP/exec";
+
+    // Format currency Kip
+    const formatKip = (val) => Number(val || 0).toLocaleString('en-US') + ' ₭';
+
+    // Initial Inventory Products
+    const INITIAL_PRODUCTS = [
+      { id: 'p1', name: 'ເບຍລາວ ແກ້ວໃຫຍ່ (Beerlao Lager 640ml)', category: 'beer', costPrice: 13000, salePrice: 18000, stock: 48, unit: 'ແກ້ວ', requireSeller: true },
+      { id: 'p2', name: 'ເບຍລາວ ໂກນດ໌ (Beerlao Gold)', category: 'beer', costPrice: 16000, salePrice: 22000, stock: 36, unit: 'ແກ້ວ', requireSeller: true },
+      { id: 'p3', name: 'ເບຍລາວ ຄຣາຟ IPA (Craft IPA)', category: 'beer', costPrice: 22000, salePrice: 32000, stock: 24, unit: 'ແກ້ວ', requireSeller: true },
+      { id: 'p4', name: 'ນ້ຳດື່ມບໍລິສຸດ (Drinking Water)', category: 'drink', costPrice: 3000, salePrice: 7000, stock: 60, unit: 'ຕຸກ', requireSeller: false },
+      { id: 'p5', name: 'ໂຄ້ກ / ແປັບຊີ (Coca Cola)', category: 'drink', costPrice: 6000, salePrice: 12000, stock: 40, unit: 'ກະປ໋ອງ', requireSeller: false },
+      { id: 'p6', name: 'ນ້ຳກ້ອນຖັງໃຫຍ່ (Ice Bucket Large)', category: 'drink', costPrice: 5000, salePrice: 15000, stock: 50, unit: 'ຖັງ', requireSeller: false },
+      { id: 'p7', name: 'ຖົ່ວດິນຂົ້ວ (Roasted Peanuts)', category: 'food', costPrice: 10000, salePrice: 20000, stock: 20, unit: 'ຈານ', requireSeller: false },
+      { id: 'p8', name: 'ຊີ້ນແຫ້ງທອດ (Fried Beef Jerky)', category: 'food', costPrice: 35000, salePrice: 60000, stock: 15, unit: 'ຈານ', requireSeller: false },
+      { id: 'p9', name: 'ປີ້ງໄກ່ລາດ (Grilled Chicken)', category: 'food', costPrice: 45000, salePrice: 80000, stock: 10, unit: 'ຈານ', requireSeller: false },
+      { id: 'p10', name: 'ໝາກໄມ້ລວມ VIP (Mixed Fruit Platter)', category: 'food', costPrice: 30000, salePrice: 55000, stock: 12, unit: 'ຈານ', requireSeller: false }
+    ];
+
+    // Initial Packages with fixed durations
+    const INITIAL_PACKAGES = [
+      { id: 'pkg-4h', name: '4 ຊົ່ວໂມງ 300,000 ກີບ', durationHours: 4, price: 300000, description: 'ຫ້ອງ VIP 4 ຊົ່ວໂມງເຕັມ (ປະຢັດ 20,000 ₭)' },
+      { id: 'pkg-2h', name: '2 ຊົ່ວໂມງ 150,000 ກີບ', durationHours: 2, price: 150000, description: 'ຫ້ອງ VIP 2 ຊົ່ວໂມງ' },
+      { id: 'pkg-3h', name: '3 ຊົ່ວໂມງ 220,000 ກີບ', durationHours: 3, price: 220000, description: 'ຫ້ອງ VIP 3 ຊົ່ວໂມງ' },
+      { id: 'pkg-allnight', name: 'ຕະຫຼອດຄືນ VIP (All Night)', durationHours: 6, price: 450000, description: 'ເປີດຍາວຮອດຮ້ານປິດ' }
+    ];
+
+    // Initial Rooms
+    const INITIAL_ROOMS = [
+      { id: 'r-vip689', name: 'ຫ້ອງ VIP 689 (ຫ້ອງໃຫຍ່ສຸດ)', capacity: 25, status: 'available', hourlyRate: 100000, orders: [] },
+      { id: 'r-vip01', name: 'ຫ້ອງ VIP 01', capacity: 15, status: 'available', hourlyRate: 80000, orders: [] },
+      { id: 'r-vip02', name: 'ຫ້ອງ VIP 02', capacity: 12, status: 'available', hourlyRate: 80000, orders: [] },
+      { id: 'r-vip03', name: 'ຫ້ອງ VIP 03', capacity: 10, status: 'available', hourlyRate: 80000, orders: [] },
+      { id: 'r-vip05', name: 'ຫ້ອງ VIP 05', capacity: 8, status: 'available', hourlyRate: 70000, orders: [] },
+      { id: 'r-vip06', name: 'ຫ້ອງ VIP 06', capacity: 8, status: 'available', hourlyRate: 70000, orders: [] }
+    ];
+
+    const INITIAL_STAFF = [
+      { id: 'st-admin', name: 'Admin (ເຈົ້າຂອງຮ້ານ)', role: 'admin', phone: '020-5599-8877' },
+      { id: 'st-noy', name: 'ນ້ອຍ (Noy - ຫົວໜ້າເສີບ)', role: 'staff', phone: '020-5511-2233' },
+      { id: 'st-kham', name: 'ຄຳ (Kham - ພະນັກງານຂາຍ)', role: 'staff', phone: '020-9988-7766' },
+      { id: 'st-phone', name: 'ພອນ (Phone - ພະນັກງານບາ)', role: 'staff', phone: '020-7766-5544' }
+    ];
+
+    const INITIAL_DEBTS = [
+      {
+        id: 'd-1',
+        customerName: 'ທ່ານ ສົມສັກ (ລູກຄ້າປະຈຳ)',
+        customerPhone: '020-5588-9900',
+        amount: 250000,
+        paidAmount: 0,
+        status: 'pending',
+        createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+        note: 'ຄ່າຫ້ອງ VIP 02 + ເບຍລາວ 4 ແກ້ວ',
+        billNumber: '689-20250501-102'
+      }
+    ];
+
+    // Storage helpers
+    const loadState = (key, fallback) => {
+      try {
+        const item = localStorage.getItem('689ktv_' + key);
+        return item ? JSON.parse(item) : fallback;
+      } catch (e) {
+        return fallback;
+      }
+    };
+
+    const saveState = (key, val) => {
+      try {
+        localStorage.setItem('689ktv_' + key, JSON.stringify(val));
+      } catch (e) {}
+    };
+
+    // Complete Google Apps Script template for copy-pasting
+    const GAS_BACKEND_CODE = `/**
+ * 689 KTV - Google Apps Script Web App Backend
+ * ສໍາລັບການເຊື່ອມຕໍ່ຫຼາຍເຄື່ອງ (Multi-Device Real-Time Sync)
+ */
+function doGet(e) {
+  var action = (e && e.parameter && e.parameter.action) ? e.parameter.action : 'getAll';
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  
+  if (action === 'getAll') {
+    return ContentService.createTextOutput(JSON.stringify({
+      status: 'success',
+      data: {
+        products: getSheetData(ss, 'Products'),
+        rooms: getSheetData(ss, 'Rooms'),
+        debts: getSheetData(ss, 'Debts'),
+        timestamp: new Date().toISOString()
+      }
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+  
+  return ContentService.createTextOutput(JSON.stringify({ status: 'ok', msg: '689 KTV GAS WebApp Active' }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function doPost(e) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  try {
+    var raw = e.postData.contents;
+    var parsed = JSON.parse(raw);
+    var action = parsed.action;
+    var data = parsed.data || {};
+    
+    if (action === 'saveRooms' && data.rooms) {
+      saveSheetData(ss, 'Rooms', data.rooms);
+    } else if (action === 'saveProducts' && data.products) {
+      saveSheetData(ss, 'Products', data.products);
+    } else if (action === 'saveDebts' && data.debts) {
+      saveSheetData(ss, 'Debts', data.debts);
+    } else if (action === 'saveBill' && data.bill) {
+      appendBillRecord(ss, data.bill);
+    }
+    
+    return ContentService.createTextOutput(JSON.stringify({ status: 'success', timestamp: new Date().toISOString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ status: 'error', error: err.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function getSheetData(ss, sheetName) {
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return [];
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  var jsonCell = sheet.getRange(2, 1).getValue();
+  try {
+    return JSON.parse(jsonCell);
+  } catch(e) {
+    return [];
+  }
+}
+
+function saveSheetData(ss, sheetName, dataArray) {
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    sheet = ss.insertSheet(sheetName);
+    sheet.getRange(1, 1).setValue("JSON_PAYLOAD");
+    sheet.getRange(1, 2).setValue("LAST_UPDATED");
+  }
+  sheet.getRange(2, 1).setValue(JSON.stringify(dataArray));
+  sheet.getRange(2, 2).setValue(new Date().toISOString());
+}
+
+function appendBillRecord(ss, bill) {
+  var sheet = ss.getSheetByName('SalesHistory');
+  if (!sheet) {
+    sheet = ss.insertSheet('SalesHistory');
+    sheet.appendRow(['Date', 'BillNumber', 'Room/POS', 'Package', 'Staff', 'RoomCharge', 'ItemsCount', 'TotalKip']);
+  }
+  sheet.appendRow([
+    new Date().toISOString(),
+    bill.billNumber || '',
+    bill.roomName || 'POS Direct',
+    bill.packageName || '-',
+    bill.staffName || '',
+    bill.roomCharge || 0,
+    (bill.items ? bill.items.length : 0),
+    bill.total || 0
+  ]);
+}`;
+
+    // =========================================================================
+    // 2. MAIN APPLICATION COMPONENT
+    // =========================================================================
+    function App() {
+      // Navigation
+      const [activeTab, setActiveTab] = useState('rooms'); // rooms, pos, stock, debts, reports, settings
+      
+      // Core Data
+      const [products, setProducts] = useState(() => loadState('products', INITIAL_PRODUCTS));
+      const [rooms, setRooms] = useState(() => loadState('rooms', INITIAL_ROOMS));
+      const [packages, setPackages] = useState(() => loadState('packages', INITIAL_PACKAGES));
+      const [staffList, setStaffList] = useState(() => loadState('staff', INITIAL_STAFF));
+      const [debts, setDebts] = useState(() => loadState('debts', INITIAL_DEBTS));
+      const [currentStaff, setCurrentStaff] = useState(() => loadState('staff', INITIAL_STAFF)[0]);
+      
+      // Google Sheets Real-time Sync Config
+      const [gasUrl, setGasUrl] = useState(() => loadState('gasUrl', DEFAULT_GAS_WEBAPP_URL));
+      const [autoSync, setAutoSync] = useState(() => loadState('autoSync', true));
+      const [syncStatus, setSyncStatus] = useState('idle'); // idle, syncing, success, error
+      const [lastSyncTime, setLastSyncTime] = useState(null);
+      const [toastMsg, setToastMsg] = useState('');
+
+      // Receipt Font & Size Settings
+      const [receiptFontSize, setReceiptFontSize] = useState(() => loadState('receiptFontSize', 'large')); // small, medium, large, xlarge
+      const [receiptPaperWidth, setReceiptPaperWidth] = useState(() => loadState('receiptPaperWidth', '58mm'));
+      
+      // Active Modals
+      const [activeBill, setActiveBill] = useState(null);
+      const [openRoomTarget, setOpenRoomTarget] = useState(null);
+      const [openRoomType, setOpenRoomType] = useState('package');
+      const [openSelectedPkgId, setOpenSelectedPkgId] = useState('pkg-4h');
+      const [openBookedHours, setOpenBookedHours] = useState(4);
+      
+      // Room Ordering Modal States
+      const [selectedRoom, setSelectedRoom] = useState(null);
+      const [orderModalProduct, setOrderModalProduct] = useState(null);
+      const [orderQty, setOrderQty] = useState(1);
+      const [orderCustomPrice, setOrderCustomPrice] = useState('');
+      const [orderSellerId, setOrderSellerId] = useState('');
+      const [orderError, setOrderError] = useState('');
+
+      // POS Cart
+      const [cart, setCart] = useState([]);
+      const [posCategory, setPosCategory] = useState('all');
+      const [showPosDebtModal, setShowPosDebtModal] = useState(false);
+      const [posCustomerName, setPosCustomerName] = useState('');
+      const [posCustomerPhone, setPosCustomerPhone] = useState('');
+
+      // Modals
+      const [showScriptModal, setShowScriptModal] = useState(false);
+      const [copiedScript, setCopiedScript] = useState(false);
+
+      // Refs to prevent race conditions during background sync
+      const productsRef = useRef(products);
+      const roomsRef = useRef(rooms);
+      const debtsRef = useRef(debts);
+      const isPushingRef = useRef(false);
+
+      useEffect(() => { productsRef.current = products; saveState('products', products); }, [products]);
+      useEffect(() => { roomsRef.current = rooms; saveState('rooms', rooms); }, [rooms]);
+      useEffect(() => { debtsRef.current = debts; saveState('debts', debts); }, [debts]);
+      useEffect(() => { saveState('gasUrl', gasUrl); }, [gasUrl]);
+      useEffect(() => { saveState('autoSync', autoSync); }, [autoSync]);
+      useEffect(() => { saveState('receiptFontSize', receiptFontSize); }, [receiptFontSize]);
+      useEffect(() => { saveState('receiptPaperWidth', receiptPaperWidth); }, [receiptPaperWidth]);
+
+      const showToast = (msg) => {
+        setToastMsg(msg);
+        setTimeout(() => setToastMsg(''), 3500);
+      };
+
+      // -----------------------------------------------------------------------
+      // REAL-TIME SYNC FUNCTIONS
+      // -----------------------------------------------------------------------
+      const triggerPush = async (action, data) => {
+        if (!gasUrl || !autoSync) return;
+        isPushingRef.current = true;
+        setSyncStatus('syncing');
+
+        try {
+          const payload = JSON.stringify({ action, data, timestamp: new Date().toISOString() });
+          await fetch(gasUrl, {
+            method: 'POST',
+            redirect: 'follow',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: payload
+          });
+          setSyncStatus('success');
+          setLastSyncTime(new Date());
+          setTimeout(() => setSyncStatus('idle'), 2500);
+        } catch (err) {
+          setSyncStatus('error');
+          setTimeout(() => setSyncStatus('idle'), 4000);
+        } finally {
+          setTimeout(() => { isPushingRef.current = false; }, 3000);
+        }
+      };
+
+      const fetchLatestFromSheets = async (isSilent = false) => {
+        if (!gasUrl || isPushingRef.current) return;
+        if (!isSilent) setSyncStatus('syncing');
+
+        try {
+          const url = `${gasUrl}${gasUrl.includes('?') ? '&' : '?'}action=getAll&_t=${Date.now()}`;
+          const res = await fetch(url, { headers: { Accept: 'application/json' } });
+          const json = await res.json();
+
+          if (json.status === 'success' && json.data) {
+            let updated = false;
+            // Check products
+            if (json.data.products && Array.isArray(json.data.products) && json.data.products.length > 0) {
+              if (JSON.stringify(productsRef.current) !== JSON.stringify(json.data.products)) {
+                setProducts(json.data.products);
+                updated = true;
+              }
+            }
+            // Check rooms
+            if (json.data.rooms && Array.isArray(json.data.rooms) && json.data.rooms.length > 0) {
+              if (JSON.stringify(roomsRef.current) !== JSON.stringify(json.data.rooms)) {
+                setRooms(json.data.rooms);
+                updated = true;
+              }
+            }
+            // Check debts
+            if (json.data.debts && Array.isArray(json.data.debts) && json.data.debts.length > 0) {
+              if (JSON.stringify(debtsRef.current) !== JSON.stringify(json.data.debts)) {
+                setDebts(json.data.debts);
+                updated = true;
+              }
+            }
+            setLastSyncTime(new Date());
+            if (!isSilent) setSyncStatus('success');
+            if (updated && isSilent) {
+              showToast('🔄 ຊິ້ງຂໍ້ມູນລ່າສຸດຈາກ Google Sheets ອັດຕະໂນມັດແລ້ວ');
+            }
+            if (!isSilent) setTimeout(() => setSyncStatus('idle'), 2500);
+          }
+        } catch (e) {
+          if (!isSilent) {
+            setSyncStatus('error');
+            setTimeout(() => setSyncStatus('idle'), 3000);
+          }
+        }
+      };
+
+      // 5-Second Real-Time Auto Polling Loop (Multi-Device Sync on Netlify/Cloud)
+      useEffect(() => {
+        fetchLatestFromSheets(false);
+
+        const pollTimer = setInterval(() => {
+          if (document.visibilityState === 'visible' && autoSync && !isPushingRef.current) {
+            fetchLatestFromSheets(true);
+          }
+        }, 5000);
+
+        const onFocus = () => {
+          if (document.visibilityState === 'visible' && autoSync) {
+            fetchLatestFromSheets(true);
+          }
+        };
+        window.addEventListener('focus', onFocus);
+        document.addEventListener('visibilitychange', onFocus);
+
+        return () => {
+          clearInterval(pollTimer);
+          window.removeEventListener('focus', onFocus);
+          document.removeEventListener('visibilitychange', onFocus);
+        };
+      }, [gasUrl, autoSync]);
+
+      // -----------------------------------------------------------------------
+      // EXPORT STANDALONE SINGLE-FILE (index.html)
+      // -----------------------------------------------------------------------
+      const handleExportSingleFile = () => {
+        try {
+          // Download the current page HTML or serialized DOM as index.html
+          const htmlContent = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
+          const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'index.html';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          showToast('📥 ດາວໂຫລດໄຟລ໌ "index.html" (Single File) ສຳເລັດແລ້ວ! ພ້ອມ Push ຂຶ້ນ GitHub ຫຼື ອັບໂຫລດ Netlify ທັນທີ');
+        } catch (err) {
+          alert('Error exporting single file: ' + err.message);
+        }
+      };
+
+      // -----------------------------------------------------------------------
+      // ROOM ACTIONS
+      // -----------------------------------------------------------------------
+      const handleConfirmOpenRoom = () => {
+        if (!openRoomTarget) return;
+
+        const openTime = new Date();
+        let targetEnd = new Date(openTime.getTime());
+        let effectiveHours = 4;
+        let pkgName = '';
+        let hourlyRate = openRoomTarget.hourlyRate;
+
+        if (openRoomType === 'package') {
+          const pkg = packages.find(p => p.id === openSelectedPkgId) || packages[0];
+          effectiveHours = pkg.durationHours || 4;
+          pkgName = pkg.name;
+          hourlyRate = pkg.price;
+          targetEnd = new Date(openTime.getTime() + effectiveHours * 60 * 60 * 1000);
+        } else {
+          effectiveHours = openBookedHours;
+          targetEnd = new Date(openTime.getTime() + effectiveHours * 60 * 60 * 1000);
+        }
+
+        const updated = rooms.map(r => {
+          if (r.id === openRoomTarget.id) {
+            return {
+              ...r,
+              status: 'in_use',
+              pricingType: openRoomType,
+              packageId: openRoomType === 'package' ? openSelectedPkgId : null,
+              packageName: pkgName,
+              bookedHours: effectiveHours,
+              openedAt: openTime.toISOString(),
+              targetEndTime: targetEnd.toISOString(),
+              openedByStaffName: currentStaff.name,
+              hourlyRate: hourlyRate,
+              orders: []
+            };
+          }
+          return r;
+        });
+
+        setRooms(updated);
+        triggerPush('saveRooms', { rooms: updated });
+        setOpenRoomTarget(null);
+        showToast(`ເປີດ ${openRoomTarget.name} ${effectiveHours} ຊົ່ວໂມງ (${pkgName || 'ລາຍຊົ່ວໂມງ'}) ສຳເລັດ!`);
+      };
+
+      // Add item to room with strict validation: Price > 0 and Seller selection
+      const handleConfirmOrderItem = () => {
+        if (!selectedRoom || !orderModalProduct) return;
+
+        const numPrice = Number(orderCustomPrice.replace(/[^0-9]/g, ''));
+        if (numPrice <= 0) {
+          setOrderError('⚠️ ທ່ານຕ້ອງປ້ອນລາຄາສິນຄ້າ (ລາຄາຕ້ອງຫຼາຍກວ່າ 0 ₭)');
+          return;
+        }
+
+        if (!orderSellerId) {
+          setOrderError('⚠️ ທ່ານຕ້ອງເລືອກຊື່ພະນັກງານຂາຍ/ເສີບກ່ອນສັ່ງ');
+          return;
+        }
+
+        if (orderModalProduct.stock < orderQty) {
+          setOrderError(`ສະຕັອກບໍ່ພໍ! ເຫຼືອພຽງ ${orderModalProduct.stock} ${orderModalProduct.unit}`);
+          return;
+        }
+
+        const seller = staffList.find(s => s.id === orderSellerId);
+
+        // Deduct inventory
+        const updatedProducts = products.map(p => {
+          if (p.id === orderModalProduct.id) {
+            return { ...p, stock: Math.max(0, p.stock - orderQty) };
+          }
+          return p;
+        });
+        setProducts(updatedProducts);
+        triggerPush('saveProducts', { products: updatedProducts });
+
+        // Add order to room
+        const newOrder = {
+          id: 'ord-' + Date.now(),
+          product: orderModalProduct,
+          quantity: orderQty,
+          price: numPrice,
+          sellerName: seller ? seller.name : currentStaff.name,
+          orderedAt: new Date().toISOString()
+        };
+
+        const updatedRooms = rooms.map(r => {
+          if (r.id === selectedRoom.id) {
+            const nextOrders = [...r.orders, newOrder];
+            const updatedR = { ...r, orders: nextOrders };
+            setSelectedRoom(updatedR);
+            return updatedR;
+          }
+          return r;
+        });
+
+        setRooms(updatedRooms);
+        triggerPush('saveRooms', { rooms: updatedRooms });
+        setOrderModalProduct(null);
+        setOrderError('');
+        showToast(`ສັ່ງ ${orderModalProduct.name} x${orderQty} ເຂົ້າ ${selectedRoom.name} ແລ້ວ!`);
+      };
+
+      // Checkout room & generate receipt
+      const handleCheckoutRoom = (room) => {
+        const itemsTotal = room.orders.reduce((sum, o) => sum + (o.price * o.quantity), 0);
+        const roomCharge = room.hourlyRate || 80000;
+        const total = roomCharge + itemsTotal;
+
+        const dateNow = new Date();
+        const dateStr = dateNow.toISOString().slice(0, 10).replace(/-/g, '');
+        const billNumber = `689-${dateStr}-${Math.floor(100 + Math.random() * 900)}`;
+
+        const bill = {
+          billNumber,
+          roomName: room.name,
+          packageName: room.packageName || `${room.bookedHours || 2} ຊົ່ວໂມງ`,
+          bookedHours: room.bookedHours || 2,
+          startTime: room.openedAt,
+          endTime: dateNow.toISOString(),
+          targetEndTime: room.targetEndTime,
+          roomCharge,
+          items: room.orders,
+          total,
+          staffName: currentStaff.name
+        };
+
+        // Reset room
+        const updatedRooms = rooms.map(r => {
+          if (r.id === room.id) {
+            return {
+              ...r,
+              status: 'available',
+              openedAt: null,
+              targetEndTime: null,
+              bookedHours: null,
+              packageId: null,
+              packageName: null,
+              orders: []
+            };
+          }
+          return r;
+        });
+
+        setRooms(updatedRooms);
+        triggerPush('saveRooms', { rooms: updatedRooms });
+        triggerPush('saveBill', { bill });
+
+        if (selectedRoom && selectedRoom.id === room.id) {
+          setSelectedRoom(null);
+        }
+
+        setActiveBill(bill);
+      };
+
+      // -----------------------------------------------------------------------
+      // POS SALES ACTIONS
+      // -----------------------------------------------------------------------
+      const addToCart = (prod) => {
+        if (prod.stock <= 0) {
+          alert('ສິນຄ້ານີ້ໝົດສະຕັອກແລ້ວ!');
+          return;
+        }
+        setCart(prev => {
+          const exist = prev.find(item => item.product.id === prod.id);
+          if (exist) {
+            if (exist.quantity >= prod.stock) {
+              alert('ສະຕັອກບໍ່ພຽງພໍ!');
+              return prev;
+            }
+            return prev.map(item => item.product.id === prod.id ? { ...item, quantity: item.quantity + 1 } : item);
+          }
+          return [...prev, { product: prod, quantity: 1, price: prod.salePrice, sellerId: currentStaff.id }];
+        });
+      };
+
+      const handleCheckoutPos = (paymentMethod) => {
+        if (cart.length === 0) return;
+
+        const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+        const dateNow = new Date();
+        const dateStr = dateNow.toISOString().slice(0, 10).replace(/-/g, '');
+        const billNumber = `POS-${dateStr}-${Math.floor(100 + Math.random() * 900)}`;
+
+        // Deduct inventory
+        const updatedProducts = products.map(p => {
+          const match = cart.find(c => c.product.id === p.id);
+          if (match) {
+            return { ...p, stock: Math.max(0, p.stock - match.quantity) };
+          }
+          return p;
+        });
+        setProducts(updatedProducts);
+        triggerPush('saveProducts', { products: updatedProducts });
+
+        const bill = {
+          billNumber,
+          roomName: 'ຂາຍໜ້າຮ້ານ (POS)',
+          packageName: paymentMethod === 'cash' ? 'ຈ່າຍເງິນສົດ' : paymentMethod === 'transfer' ? 'ໂອນ BCEL One' : 'ຕິດໜີ້ (Debt)',
+          bookedHours: 0,
+          startTime: dateNow.toISOString(),
+          endTime: dateNow.toISOString(),
+          roomCharge: 0,
+          items: cart.map(c => ({
+            id: 'pos-' + Math.random(),
+            product: c.product,
+            quantity: c.quantity,
+            price: c.price,
+            sellerName: currentStaff.name
+          })),
+          total: subtotal,
+          staffName: currentStaff.name
+        };
+
+        // If debt payment, record debt
+        if (paymentMethod === 'debt') {
+          const newDebt = {
+            id: 'debt-' + Date.now(),
+            customerName: posCustomerName || 'ລູກຄ້າທົ່ວໄປ',
+            customerPhone: posCustomerPhone || '-',
+            amount: subtotal,
+            paidAmount: 0,
+            status: 'pending',
+            createdAt: dateNow.toISOString(),
+            note: `ບິນ POS ${billNumber}`,
+            billNumber: billNumber
+          };
+          const nextDebts = [newDebt, ...debts];
+          setDebts(nextDebts);
+          triggerPush('saveDebts', { debts: nextDebts });
+          setShowPosDebtModal(false);
+          setPosCustomerName('');
+          setPosCustomerPhone('');
+        }
+
+        triggerPush('saveBill', { bill });
+        setCart([]);
+        setActiveBill(bill);
+        showToast(`ຊຳລະເງິນບິນ ${billNumber} ສຳເລັດແລ້ວ!`);
+      };
+
+      // -----------------------------------------------------------------------
+      // DEBT ACTIONS
+      // -----------------------------------------------------------------------
+      const handlePayDebt = (debtId, payAmount) => {
+        const nextDebts = debts.map(d => {
+          if (d.id === debtId) {
+            const newPaid = d.paidAmount + payAmount;
+            return {
+              ...d,
+              paidAmount: newPaid,
+              status: newPaid >= d.amount ? 'paid' : 'pending'
+            };
+          }
+          return d;
+        });
+        setDebts(nextDebts);
+        triggerPush('saveDebts', { debts: nextDebts });
+        showToast('ບັນທຶກການຊຳລະໜີ້ສຳເລັດແລ້ວ!');
+      };
+
+      // -----------------------------------------------------------------------
+      // CALCULATIONS FOR REPORTS
+      // -----------------------------------------------------------------------
+      const totalInventoryValue = useMemo(() => {
+        return products.reduce((sum, p) => sum + (p.stock * p.salePrice), 0);
+      }, [products]);
+
+      const totalPendingDebt = useMemo(() => {
+        return debts.filter(d => d.status === 'pending').reduce((sum, d) => sum + (d.amount - d.paidAmount), 0);
+      }, [debts]);
+
+      return (
+        <div className="flex-1 flex flex-col">
+          {/* ===================================================================
+              TOP NAVIGATION BAR
+          =================================================================== */}
+          <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-40 shadow-xl">
+            <div className="max-w-7xl mx-auto px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
+              {/* Brand Logo & Name */}
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-rose-500 via-purple-600 to-indigo-600 flex items-center justify-center font-black text-white text-base shadow-lg shadow-rose-950/40">
+                  🎤
+                </div>
+                <div>
+                  <h1 className="font-black text-base tracking-tight bg-gradient-to-r from-rose-400 via-pink-400 to-amber-300 bg-clip-text text-transparent">
+                    689 KTV & RESTAURANT
+                  </h1>
+                  <span className="text-[10px] text-slate-400">ລະບົບຂາຍ ແລະ ຄຸ້ມຄອງຮ້ານ (Single-File)</span>
+                </div>
+              </div>
+
+              {/* Navigation Tabs */}
+              <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-2xl border border-slate-800 text-xs overflow-x-auto">
+                <button
+                  onClick={() => setActiveTab('rooms')}
+                  className={`px-3 py-1.5 rounded-xl font-bold transition-all whitespace-nowrap cursor-pointer ${activeTab === 'rooms' ? 'bg-gradient-to-r from-rose-600 to-pink-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
+                >
+                  🚪 ຫ້ອງ KTV ({rooms.filter(r => r.status === 'in_use').length}/{rooms.length})
+                </button>
+                <button
+                  onClick={() => setActiveTab('pos')}
+                  className={`px-3 py-1.5 rounded-xl font-bold transition-all whitespace-nowrap cursor-pointer ${activeTab === 'pos' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
+                >
+                  🛒 ຂາຍໜ້າຮ້ານ (POS)
+                </button>
+                <button
+                  onClick={() => setActiveTab('stock')}
+                  className={`px-3 py-1.5 rounded-xl font-bold transition-all whitespace-nowrap cursor-pointer ${activeTab === 'stock' ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
+                >
+                  📦 ສະຕັອກສິນຄ້າ ({products.length})
+                </button>
+                <button
+                  onClick={() => setActiveTab('debts')}
+                  className={`px-3 py-1.5 rounded-xl font-bold transition-all whitespace-nowrap cursor-pointer ${activeTab === 'debts' ? 'bg-gradient-to-r from-red-600 to-rose-700 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
+                >
+                  💳 ບັນຊີລູກໜີ້ ({debts.filter(d => d.status === 'pending').length})
+                </button>
+                <button
+                  onClick={() => setActiveTab('reports')}
+                  className={`px-3 py-1.5 rounded-xl font-bold transition-all whitespace-nowrap cursor-pointer ${activeTab === 'reports' ? 'bg-gradient-to-r from-blue-600 to-cyan-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
+                >
+                  📊 ລາຍງານ
+                </button>
+                <button
+                  onClick={() => setActiveTab('settings')}
+                  className={`px-3 py-1.5 rounded-xl font-bold transition-all whitespace-nowrap cursor-pointer ${activeTab === 'settings' ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
+                >
+                  ⚙️ ຕັ້ງຄ່າ & Sheets
+                </button>
+              </div>
+
+              {/* Action Buttons: Export index.html & Staff switcher */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleExportSingleFile}
+                  title="ດາວໂຫລດໄຟລ໌ນີ້ເປັນ index.html ເພື່ອ Push ຂຶ້ນ GitHub ຫຼື ນຳໄປໃຊ້ເທິງ Netlify ແບບ Single-File"
+                  className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-md cursor-pointer flex items-center gap-1.5 transition-all"
+                >
+                  <span>📥</span>
+                  <span>Export index.html</span>
+                </button>
+
+                <select
+                  value={currentStaff.id}
+                  onChange={(e) => setCurrentStaff(staffList.find(s => s.id === e.target.value) || staffList[0])}
+                  className="bg-slate-800 border border-slate-700 text-xs rounded-xl px-2.5 py-1.5 text-slate-200 focus:outline-none"
+                >
+                  {staffList.map(s => (
+                    <option key={s.id} value={s.id}>{s.name} ({s.role})</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Real-Time Sync Status Bar */}
+            <div className="bg-slate-950/90 border-t border-slate-800/60 px-4 py-1.5 text-xs flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-[11px]">
+                <span className={`w-2.5 h-2.5 rounded-full ${syncStatus === 'syncing' ? 'bg-amber-400 animate-ping' : syncStatus === 'error' ? 'bg-rose-500' : 'bg-emerald-400'}`} />
+                <span className="font-semibold text-slate-300">
+                  {syncStatus === 'syncing' ? 'ກຳລັງຊິ້ງຂໍ້ມູນກັບ Google Sheets...' :
+                   syncStatus === 'error' ? 'ບໍ່ສາມາດເຊື່ອມຕໍ່ Sheets ໄດ້ (ໃຊ້ຂໍ້ມູນໃນເຄື່ອງ Offline)' :
+                   `🟢 Real-time: ເຊື່ອມຕໍ່ Google Sheets ແລ້ວ (Auto-Sync ທຸກ 5 ວິ)`}
+                </span>
+                {lastSyncTime && (
+                  <span className="text-[10px] text-slate-500">
+                    • ຊິ້ງຫຼ້າສຸດ: {lastSyncTime.toLocaleTimeString('lo-LA')}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowScriptModal(true)}
+                  className="px-2.5 py-0.5 rounded-lg bg-slate-900 border border-slate-700 hover:bg-slate-800 text-amber-300 text-[11px] font-semibold cursor-pointer"
+                >
+                  📜 ໂຄ້ດ Apps Script
+                </button>
+                <button
+                  onClick={() => fetchLatestFromSheets(false)}
+                  disabled={syncStatus === 'syncing'}
+                  className="px-2.5 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-semibold transition-colors cursor-pointer"
+                >
+                  🔄 ດຶງຂໍ້ມູນດຽວນີ້
+                </button>
+              </div>
+            </div>
+          </header>
+
+          {/* Toast Notification */}
+          {toastMsg && (
+            <div className="fixed bottom-5 right-5 z-50 bg-gradient-to-r from-rose-600 to-amber-600 text-white px-4 py-2.5 rounded-2xl shadow-2xl text-xs font-bold animate-bounce flex items-center gap-2 border border-white/20">
+              <span>✨</span>
+              <span>{toastMsg}</span>
+            </div>
+          )}
+
+          {/* ===================================================================
+              MAIN VIEW AREA
+          =================================================================== */}
+          <main className="max-w-7xl mx-auto w-full p-4 flex-1">
+            {/* ---------------------------------------------------------------
+                TAB 1: ROOM MANAGEMENT
+            --------------------------------------------------------------- */}
+            {activeTab === 'rooms' && (
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h2 className="text-lg font-black text-slate-100">ລາຍການຫ້ອງຄາຣາໂອເກະ VIP</h2>
+                    <p className="text-xs text-slate-400">ເລືອກຫ້ອງເພື່ອເປີດຫ້ອງ, ສັ່ງເຄື່ອງດື່ມ/ອາຫານ, ຫຼື ຄິດໄລ່ເງິນ</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {rooms.map(room => {
+                    const isBusy = room.status === 'in_use';
+                    const itemsTotal = room.orders.reduce((sum, o) => sum + (o.price * o.quantity), 0);
+                    const roomFee = room.hourlyRate || 80000;
+                    const grandTotal = roomFee + itemsTotal;
+
+                    return (
+                      <div
+                        key={room.id}
+                        className={`rounded-2xl border p-4 transition-all flex flex-col justify-between ${
+                          isBusy
+                            ? 'bg-gradient-to-br from-rose-950/40 via-slate-900 to-slate-900 border-rose-600/50 shadow-lg shadow-rose-950/30'
+                            : 'bg-slate-900 border-slate-800 hover:border-slate-700'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-start justify-between gap-2 mb-2">
+                            <div>
+                              <h3 className="font-black text-base text-slate-100 flex items-center gap-2">
+                                <span>{room.name}</span>
+                              </h3>
+                              <span className="text-[11px] text-slate-400">ຄວາມຈຸ {room.capacity} ຄົນ</span>
+                            </div>
+                            <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                              isBusy ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            }`}>
+                              {isBusy ? '🔴 ກຳລັງໃຊ້ງານ' : '🟢 ຫ້ອງວ່າງ'}
+                            </span>
+                          </div>
+
+                          {isBusy ? (
+                            <div className="space-y-2 mt-3 p-3 rounded-xl bg-slate-950/70 border border-slate-800 text-xs">
+                              <div className="flex justify-between text-slate-300">
+                                <span className="text-slate-400">ແພັກເກັດ/ເວລາ:</span>
+                                <span className="font-bold text-amber-400">{room.packageName || `${room.bookedHours} ຊົ່ວໂມງ`}</span>
+                              </div>
+                              <div className="flex justify-between text-slate-300">
+                                <span className="text-slate-400">ເປີດເມື່ອ:</span>
+                                <span>{room.openedAt ? new Date(room.openedAt).toLocaleTimeString('lo-LA', { hour: '2-digit', minute: '2-digit' }) : '-'}</span>
+                              </div>
+                              <div className="flex justify-between text-slate-300">
+                                <span className="text-slate-400">ກຳນົດສິ້ນສຸດ:</span>
+                                <span className="font-bold text-rose-400">
+                                  {room.targetEndTime ? new Date(room.targetEndTime).toLocaleTimeString('lo-LA', { hour: '2-digit', minute: '2-digit' }) : '-'}
+                                </span>
+                              </div>
+                              <div className="flex justify-between text-slate-300 pt-1 border-t border-slate-800">
+                                <span className="text-slate-400">ລາຍການສັ່ງ ({room.orders.length}):</span>
+                                <span className="font-bold">{formatKip(itemsTotal)}</span>
+                              </div>
+                              <div className="flex justify-between text-sm font-black text-emerald-400 pt-1 border-t border-slate-800">
+                                <span>ຍອດລວມ:</span>
+                                <span>{formatKip(grandTotal)}</span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="py-6 text-center text-xs text-slate-500">
+                              ຫ້ອງວ່າງ ພ້ອມຕ້ອນຮັບລູກຄ້າ
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center gap-2">
+                          {isBusy ? (
+                            <>
+                              <button
+                                onClick={() => setSelectedRoom(room)}
+                                className="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-colors cursor-pointer"
+                              >
+                                📝 ສັ່ງເຄື່ອງດື່ມ/ອາຫານ
+                              </button>
+                              <button
+                                onClick={() => handleCheckoutRoom(room)}
+                                className="px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold transition-colors cursor-pointer shadow-md shadow-rose-900/40"
+                              >
+                                💳 ເຊັກບິນ
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setOpenRoomTarget(room);
+                                setOpenRoomType('package');
+                                setOpenSelectedPkgId(packages[0].id);
+                                setOpenBookedHours(packages[0].durationHours || 4);
+                              }}
+                              className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-black transition-all cursor-pointer shadow-lg shadow-emerald-950/40"
+                            >
+                              🔑 ເປີດຫ້ອງນີ້
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ---------------------------------------------------------------
+                TAB 2: POS DIRECT SALES
+            --------------------------------------------------------------- */}
+            {activeTab === 'pos' && (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Catalog */}
+                <div className="lg:col-span-2 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-lg font-black text-slate-100">ເມນູຂາຍໜ້າເຄົາເຕີ (POS)</h2>
+                    <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl text-xs border border-slate-800">
+                      {['all', 'beer', 'drink', 'food'].map(cat => (
+                        <button
+                          key={cat}
+                          onClick={() => setPosCategory(cat)}
+                          className={`px-3 py-1 rounded-lg font-bold capitalize transition-all cursor-pointer ${posCategory === cat ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                        >
+                          {cat === 'all' ? 'ທັງໝົດ' : cat === 'beer' ? 'ເບຍ' : cat === 'drink' ? 'ເຄື່ອງດື່ມ' : 'ອາຫານ'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                    {products
+                      .filter(p => posCategory === 'all' || p.category === posCategory)
+                      .map(p => (
+                        <div
+                          key={p.id}
+                          onClick={() => addToCart(p)}
+                          className="bg-slate-900 border border-slate-800 hover:border-emerald-500/50 p-3 rounded-2xl cursor-pointer transition-all hover:scale-[1.02] flex flex-col justify-between"
+                        >
+                          <div>
+                            <div className="flex justify-between items-start mb-1">
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">{p.unit}</span>
+                              <span className={`text-[10px] font-bold ${p.stock <= 5 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                                ເຫຼືອ {p.stock}
+                              </span>
+                            </div>
+                            <h4 className="font-bold text-xs text-slate-200 line-clamp-2">{p.name}</h4>
+                          </div>
+                          <div className="mt-3 flex items-center justify-between pt-2 border-t border-slate-800">
+                            <span className="font-black text-xs text-emerald-400">{formatKip(p.salePrice)}</span>
+                            <span className="text-xs bg-emerald-600/20 text-emerald-300 w-5 h-5 rounded-full flex items-center justify-center font-bold">+</span>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+
+                {/* Cart Column */}
+                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-4 flex flex-col justify-between">
+                  <div>
+                    <h3 className="font-black text-base text-slate-100 mb-3 flex items-center justify-between">
+                      <span>🛒 ກະຕ່າສິນຄ້າ</span>
+                      <span className="text-xs text-slate-400 font-normal">{cart.length} ລາຍການ</span>
+                    </h3>
+
+                    {cart.length === 0 ? (
+                      <div className="py-12 text-center text-xs text-slate-500">
+                        ກົດເລືອກສິນຄ້າດ້ານຊ້າຍເພື່ອເພີ່ມໃສ່ກະຕ່າ
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-[350px] overflow-y-auto pr-1">
+                        {cart.map((item, idx) => (
+                          <div key={idx} className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs">
+                            <div className="flex-1 pr-2">
+                              <div className="font-bold text-slate-200">{item.product.name}</div>
+                              <div className="text-[11px] text-emerald-400">{formatKip(item.price)}</div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => setCart(cart.map((c, i) => i === idx ? { ...c, quantity: Math.max(1, c.quantity - 1) } : c))}
+                                className="w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 flex items-center justify-center font-bold text-slate-300"
+                              >-</button>
+                              <span className="font-bold w-4 text-center">{item.quantity}</span>
+                              <button
+                                onClick={() => setCart(cart.map((c, i) => i === idx ? { ...c, quantity: c.quantity + 1 } : c))}
+                                className="w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 flex items-center justify-center font-bold text-slate-300"
+                              >+</button>
+                              <button
+                                onClick={() => setCart(cart.filter((_, i) => i !== idx))}
+                                className="text-rose-400 hover:text-rose-300 ml-1 font-bold"
+                              >×</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="pt-4 border-t border-slate-800 space-y-3 mt-4">
+                    <div className="flex justify-between text-base font-black text-slate-100">
+                      <span>ຍອດລວມທັງໝົດ:</span>
+                      <span className="text-emerald-400">
+                        {formatKip(cart.reduce((sum, item) => sum + (item.price * item.quantity), 0))}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        onClick={() => handleCheckoutPos('cash')}
+                        disabled={cart.length === 0}
+                        className="py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-bold text-xs transition-all cursor-pointer shadow-md shadow-emerald-950/40"
+                      >
+                        💵 ເງິນສົດ
+                      </button>
+                      <button
+                        onClick={() => handleCheckoutPos('transfer')}
+                        disabled={cart.length === 0}
+                        className="py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white font-bold text-xs transition-all cursor-pointer shadow-md shadow-blue-950/40"
+                      >
+                        📱 BCEL One
+                      </button>
+                      <button
+                        onClick={() => setShowPosDebtModal(true)}
+                        disabled={cart.length === 0}
+                        className="py-3 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white font-bold text-xs transition-all cursor-pointer shadow-md shadow-amber-950/40"
+                      >
+                        📝 ຕິດໜີ້
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ---------------------------------------------------------------
+                TAB 3: INVENTORY STOCK
+            --------------------------------------------------------------- */}
+            {activeTab === 'stock' && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-lg font-black text-slate-100">ສະຕັອກສິນຄ້າ ແລະ ເຄື່ອງດື່ມ</h2>
+                    <p className="text-xs text-slate-400">ຈັດການເພີ່ມ/ຫຼຸດຈຳນວນສະຕັອກສິນຄ້າ (ຊິ້ງລົງ Google Sheets ທັນທີ)</p>
+                  </div>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-slate-950 text-slate-400 uppercase font-bold border-b border-slate-800">
+                      <tr>
+                        <th className="p-3">ສິນຄ້າ</th>
+                        <th className="p-3">ໝວດໝູ່</th>
+                        <th className="p-3">ຕົ້ນທຶນ</th>
+                        <th className="p-3">ລາຄາຂາຍ</th>
+                        <th className="p-3 text-center">ຈຳນວນສະຕັອກ</th>
+                        <th className="p-3 text-right">ປັບສະຕັອກ (+ / -)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800">
+                      {products.map(p => (
+                        <tr key={p.id} className="hover:bg-slate-800/40 transition-colors">
+                          <td className="p-3 font-bold text-slate-200">
+                            <div>{p.name}</div>
+                            {p.requireSeller && <span className="text-[10px] text-amber-400">⚠️ ຕ້ອງເລືອກຜູ້ຂາຍ</span>}
+                          </td>
+                          <td className="p-3 text-slate-400 capitalize">{p.category}</td>
+                          <td className="p-3 text-slate-400">{formatKip(p.costPrice)}</td>
+                          <td className="p-3 font-bold text-emerald-400">{formatKip(p.salePrice)}</td>
+                          <td className="p-3 text-center font-bold">
+                            <span className={`px-2 py-0.5 rounded-lg ${p.stock <= 5 ? 'bg-rose-500/20 text-rose-300' : 'bg-emerald-500/20 text-emerald-300'}`}>
+                              {p.stock} {p.unit}
+                            </span>
+                          </td>
+                          <td className="p-3 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => {
+                                  const updated = products.map(prod => prod.id === p.id ? { ...prod, stock: Math.max(0, prod.stock - 1) } : prod);
+                                  setProducts(updated);
+                                  triggerPush('saveProducts', { products: updated });
+                                }}
+                                className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold"
+                              >-</button>
+                              <button
+                                onClick={() => {
+                                  const updated = products.map(prod => prod.id === p.id ? { ...prod, stock: prod.stock + 1 } : prod);
+                                  setProducts(updated);
+                                  triggerPush('saveProducts', { products: updated });
+                                }}
+                                className="w-7 h-7 rounded-lg bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 font-bold"
+                              >+</button>
+                              <button
+                                onClick={() => {
+                                  const addStr = prompt(`ປ້ອນຈຳນວນທີ່ຕ້ອງການເພີ່ມສິນຄ້າ "${p.name}":`, "12");
+                                  const num = parseInt(addStr);
+                                  if (!isNaN(num) && num !== 0) {
+                                    const updated = products.map(prod => prod.id === p.id ? { ...prod, stock: Math.max(0, prod.stock + num) } : prod);
+                                    setProducts(updated);
+                                    triggerPush('saveProducts', { products: updated });
+                                    showToast(`ປັບສະຕັອກ ${p.name} ເປັນ ${p.stock + num} ແລ້ວ!`);
+                                  }
+                                }}
+                                className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-semibold"
+                              >
+                                ຕື່ມສະຕັອກ
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* ---------------------------------------------------------------
+                TAB 4: DEBT MANAGEMENT
+            --------------------------------------------------------------- */}
+            {activeTab === 'debts' && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-lg font-black text-slate-100">ບັນຊີລູກໜີ້ & ຍອດຄ້າງຊຳລະ</h2>
+                    <p className="text-xs text-slate-400">ຕິດຕາມຍອດຕິດໜີ້ລູກຄ້າ ແລະ ບັນທຶກການຊຳລະເງິນ (ຊິ້ງລົງ Google Sheets)</p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-xs text-slate-400">ໜີ້ຄ້າງຊຳລະລວມ:</span>
+                    <div className="text-lg font-black text-rose-400">{formatKip(totalPendingDebt)}</div>
+                  </div>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-slate-950 text-slate-400 uppercase font-bold border-b border-slate-800">
+                      <tr>
+                        <th className="p-3">ຊື່ລູກຄ້າ / ເບີໂທ</th>
+                        <th className="p-3">ໝາຍເຫດ / ເອກະສານ</th>
+                        <th className="p-3">ວັນທີຕິດໜີ້</th>
+                        <th className="p-3">ຍອດໜີ້ທັງໝົດ</th>
+                        <th className="p-3">ຈ່າຍແລ້ວ</th>
+                        <th className="p-3">ຍັງເຫຼືອ</th>
+                        <th className="p-3 text-center">ສະຖານະ</th>
+                        <th className="p-3 text-right">ຈັດການ</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800">
+                      {debts.map(d => {
+                        const remaining = d.amount - d.paidAmount;
+                        const isPaid = remaining <= 0;
+                        return (
+                          <tr key={d.id} className="hover:bg-slate-800/40 transition-colors">
+                            <td className="p-3">
+                              <div className="font-bold text-slate-200">{d.customerName}</div>
+                              <div className="text-[11px] text-slate-400">{d.customerPhone}</div>
+                            </td>
+                            <td className="p-3 text-slate-400">{d.note || d.billNumber || '-'}</td>
+                            <td className="p-3 text-slate-400">{new Date(d.createdAt).toLocaleDateString('lo-LA')}</td>
+                            <td className="p-3 font-bold text-slate-200">{formatKip(d.amount)}</td>
+                            <td className="p-3 text-emerald-400">{formatKip(d.paidAmount)}</td>
+                            <td className="p-3 font-black text-rose-400">{formatKip(remaining)}</td>
+                            <td className="p-3 text-center">
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                isPaid ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'
+                              }`}>
+                                {isPaid ? '✓ ຈ່າຍໝົດແລ້ວ' : '⚠️ ຄ້າງຊຳລະ'}
+                              </span>
+                            </td>
+                            <td className="p-3 text-right">
+                              {!isPaid && (
+                                <button
+                                  onClick={() => {
+                                    const payStr = prompt(`ປ້ອນຈຳນວນເງິນທີ່ "${d.customerName}" ມາຊຳລະ (ຍັງເຫຼືອ ${formatKip(remaining)}):`, remaining.toString());
+                                    const num = parseInt(payStr);
+                                    if (!isNaN(num) && num > 0) {
+                                      handlePayDebt(d.id, num);
+                                    }
+                                  }}
+                                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] shadow-sm cursor-pointer"
+                                >
+                                  💵 ບັນທຶກຊຳລະ
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* ---------------------------------------------------------------
+                TAB 5: SALES REPORTS
+            --------------------------------------------------------------- */}
+            {activeTab === 'reports' && (
+              <div className="space-y-6">
+                <div>
+                  <h2 className="text-lg font-black text-slate-100">ລາຍງານຍອດຂາຍ & ສະຫຼຸບລາຍຮັບ</h2>
+                  <p className="text-xs text-slate-400">ສະຫຼຸບພາບລວມການຂາຍ, ມູນຄ່າສະຕັອກສິນຄ້າ ແລະ ຍອດຄ້າງຊຳລະ</p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="p-4 rounded-3xl bg-slate-900 border border-slate-800 shadow-lg">
+                    <span className="text-xs text-slate-400">🚪 ຈຳນວນຫ້ອງ KTV</span>
+                    <div className="text-2xl font-black text-slate-100 mt-1">{rooms.length} ຫ້ອງ</div>
+                    <div className="text-[11px] text-rose-400 mt-1">ກຳລັງໃຊ້ງານ {rooms.filter(r => r.status === 'in_use').length} ຫ້ອງ</div>
+                  </div>
+                  <div className="p-4 rounded-3xl bg-slate-900 border border-slate-800 shadow-lg">
+                    <span className="text-xs text-slate-400">📦 ມູນຄ່າສິນຄ້າໃນສະຕັອກ</span>
+                    <div className="text-2xl font-black text-emerald-400 mt-1">{formatKip(totalInventoryValue)}</div>
+                    <div className="text-[11px] text-slate-400 mt-1">{products.length} ລາຍການສິນຄ້າ</div>
+                  </div>
+                  <div className="p-4 rounded-3xl bg-slate-900 border border-slate-800 shadow-lg">
+                    <span className="text-xs text-slate-400">💳 ຍອດໜີ້ຄ້າງຊຳລະທັງໝົດ</span>
+                    <div className="text-2xl font-black text-rose-400 mt-1">{formatKip(totalPendingDebt)}</div>
+                    <div className="text-[11px] text-slate-400 mt-1">{debts.filter(d => d.status === 'pending').length} ຄົນຄ້າງຊຳລະ</div>
+                  </div>
+                </div>
+
+                {/* Top Products */}
+                <div className="p-5 rounded-3xl bg-slate-900 border border-slate-800 space-y-3">
+                  <h3 className="font-bold text-sm text-slate-100">🔥 ສິນຄ້າທີ່ກຳລັງເຫຼືອສະຕັອກໜ້ອຍ (Low Stock Alert)</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                    {products.filter(p => p.stock <= 15).map(p => (
+                      <div key={p.id} className="p-3 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between">
+                        <div>
+                          <div className="font-bold text-xs text-slate-200">{p.name}</div>
+                          <div className="text-[11px] text-slate-400">{formatKip(p.salePrice)}</div>
+                        </div>
+                        <span className={`px-2 py-1 rounded-lg text-xs font-black ${p.stock <= 5 ? 'bg-rose-500/20 text-rose-400' : 'bg-amber-500/20 text-amber-400'}`}>
+                          ເຫຼືອ {p.stock} {p.unit}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ---------------------------------------------------------------
+                TAB 6: SETTINGS & GAS SYNC
+            --------------------------------------------------------------- */}
+            {activeTab === 'settings' && (
+              <div className="max-w-3xl mx-auto space-y-6">
+                <div>
+                  <h2 className="text-lg font-black text-slate-100">ຕັ້ງຄ່າລະບົບ & Google Sheets Sync</h2>
+                  <p className="text-xs text-slate-400">ກຳນົດ URL ຂອງ Google Apps Script Web App ສຳລັບການເຊື່ອມຕໍ່ຫຼາຍເຄື່ອງ</p>
+                </div>
+
+                {/* Google Apps Script URL Card */}
+                <div className="p-5 rounded-3xl bg-slate-900 border border-slate-800 space-y-4 shadow-xl">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
+                      <span>⚡</span>
+                      <span>Google Apps Script Web App URL (ຝັງມາພ້ອມໃຊ້ງານ)</span>
+                    </h3>
+                    <button
+                      onClick={() => setGasUrl(DEFAULT_GAS_WEBAPP_URL)}
+                      className="text-xs text-amber-400 hover:underline font-bold cursor-pointer"
+                    >
+                      ໃຊ້ URL ທີ່ຝັງມາ (Reset)
+                    </button>
+                  </div>
+
+                  <input
+                    type="url"
+                    value={gasUrl}
+                    onChange={(e) => setGasUrl(e.target.value.trim())}
+                    placeholder="https://script.google.com/macros/s/.../exec"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-emerald-300 font-mono focus:outline-none focus:border-emerald-500"
+                  />
+
+                  <div className="flex items-center justify-between pt-2">
+                    <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={autoSync}
+                        onChange={(e) => setAutoSync(e.target.checked)}
+                        className="rounded accent-emerald-500 w-4 h-4 cursor-pointer"
+                      />
+                      <span>ເປີດໃຊ້ງານ Real-time Sync ອັດຕະໂນມັດທຸກໆ 5 ວິນາທີ</span>
+                    </label>
+
+                    <button
+                      onClick={() => fetchLatestFromSheets(false)}
+                      className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md transition-all cursor-pointer"
+                    >
+                      ທົດສອບເຊື່ອມຕໍ່ & ດຶງຂໍ້ມູນດຽວນີ້
+                    </button>
+                  </div>
+                </div>
+
+                {/* Thermal Receipt Settings */}
+                <div className="p-5 rounded-3xl bg-slate-900 border border-slate-800 space-y-4 shadow-xl">
+                  <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
+                    <span>🖨️</span>
+                    <span>ຕັ້ງຄ່າໃບບິນ & ຂະໜາດຕົວໜັງສື (Receipt Settings)</span>
+                  </h3>
+
+                  <div className="grid grid-cols-2 gap-4 text-xs">
+                    <div>
+                      <label className="block text-slate-400 mb-1 font-semibold">ຂະໜາດຕົວໜັງສືໃນໃບບິນ (Font Size):</label>
+                      <select
+                        value={receiptFontSize}
+                        onChange={(e) => setReceiptFontSize(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-200"
+                      >
+                        <option value="small">ຂະໜາດນ້ອຍ (Small - 11px)</option>
+                        <option value="medium">ຂະໜາດປານກາງ (Medium - 13px)</option>
+                        <option value="large">ຂະໜາດໃຫຍ່ (Large - 16px • ແນະນຳ)</option>
+                        <option value="xlarge">ຂະໜາດໃຫຍ່ພິເສດ (Extra Large - 20px • ເຫັນແຈ້ງເຕັມຕາ)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-400 mb-1 font-semibold">ຂະໜາດເຈ້ຍໃບບິນ:</label>
+                      <select
+                        value={receiptPaperWidth}
+                        onChange={(e) => setReceiptPaperWidth(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-200"
+                      >
+                        <option value="58mm">58mm (ຂະໜາດມາດຕະຖານເຄື່ອງພົກພາ)</option>
+                        <option value="80mm">80mm (ຂະໜາດໃຫຍ່)</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Standalone Export Card */}
+                <div className="p-5 rounded-3xl bg-gradient-to-br from-indigo-950/60 to-purple-950/40 border border-indigo-800/50 space-y-3 shadow-xl">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="font-black text-sm text-indigo-200">📦 ສົ່ງອອກ Single-File (index.html)</h3>
+                      <p className="text-xs text-indigo-300/80">ໄຟລ໌ດຽວຈົບລວມທັງໝົດ HTML, CSS, React ແລະ Real-time Google Sheets Sync</p>
+                    </div>
+                    <button
+                      onClick={handleExportSingleFile}
+                      className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-black shadow-lg cursor-pointer"
+                    >
+                      📥 ດາວໂຫລດ index.html
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </main>
+
+          {/* ===================================================================
+              MODAL 1: OPEN ROOM (With Package calculation e.g. 4 Hours 300,000 Kip)
+          =================================================================== */}
+          {openRoomTarget && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-black text-base text-slate-100">
+                    🔑 ເປີດຫ້ອງ: {openRoomTarget.name}
+                  </h3>
+                  <button onClick={() => setOpenRoomTarget(null)} className="text-slate-400 hover:text-white font-bold text-lg cursor-pointer">×</button>
+                </div>
+
+                {/* Package Options */}
+                <div className="space-y-3">
+                  <label className="block text-xs font-bold text-slate-300">ເລືອກແພັກເກັດຊົ່ວໂມງຂອງຮ້ານ (Choice Package):</label>
+                  <div className="grid grid-cols-1 gap-2">
+                    {packages.map(pkg => (
+                      <div
+                        key={pkg.id}
+                        onClick={() => {
+                          setOpenSelectedPkgId(pkg.id);
+                          setOpenBookedHours(pkg.durationHours || 4);
+                        }}
+                        className={`p-3 rounded-2xl border cursor-pointer transition-all flex items-center justify-between ${
+                          openSelectedPkgId === pkg.id
+                            ? 'bg-rose-950/40 border-rose-500 text-white'
+                            : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700'
+                        }`}
+                      >
+                        <div>
+                          <div className="font-black text-sm">{pkg.name}</div>
+                          <div className="text-[11px] text-slate-400">{pkg.durationHours} ຊົ່ວໂມງເຕັມ ({pkg.description})</div>
+                        </div>
+                        <div className="text-right">
+                          <span className="font-black text-emerald-400 text-sm">{formatKip(pkg.price)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t border-slate-800 flex items-center gap-2">
+                  <button
+                    onClick={() => setOpenRoomTarget(null)}
+                    className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
+                  >
+                    ຍົກເລີກ
+                  </button>
+                  <button
+                    onClick={handleConfirmOpenRoom}
+                    className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-black shadow-lg cursor-pointer"
+                  >
+                    ຢືນຢັນເປີດຫ້ອງ
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ===================================================================
+              MODAL 2: ORDER ITEM INTO ROOM (With Required Price & Seller Validation)
+          =================================================================== */}
+          {selectedRoom && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-2xl w-full p-6 space-y-4 shadow-2xl max-h-[90vh] flex flex-col">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <div>
+                    <h3 className="font-black text-base text-slate-100 flex items-center gap-2">
+                      <span>📝 ສັ່ງເຄື່ອງດື່ມ/ອາຫານເຂົ້າ {selectedRoom.name}</span>
+                    </h3>
+                    <p className="text-[11px] text-slate-400">ກົດເລືອກສິນຄ້າເພື່ອປ້ອນລາຄາ ແລະ ເລືອກຊື່ຜູ້ຂາຍ</p>
+                  </div>
+                  <button onClick={() => setSelectedRoom(null)} className="text-slate-400 hover:text-white font-bold text-lg cursor-pointer">×</button>
+                </div>
+
+                {/* Products Grid to add */}
+                <div className="flex-1 overflow-y-auto grid grid-cols-2 sm:grid-cols-3 gap-2.5 p-1">
+                  {products.map(p => (
+                    <div
+                      key={p.id}
+                      onClick={() => {
+                        setOrderModalProduct(p);
+                        setOrderQty(1);
+                        setOrderCustomPrice(p.salePrice.toString());
+                        setOrderSellerId(''); // Must choose seller as requested
+                        setOrderError('');
+                      }}
+                      className="bg-slate-950 border border-slate-800 hover:border-rose-500/50 p-2.5 rounded-2xl cursor-pointer transition-all flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="text-[10px] text-slate-400">{p.unit} • ເຫຼືອ {p.stock}</div>
+                        <h4 className="font-bold text-xs text-slate-200 line-clamp-1">{p.name}</h4>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between text-xs">
+                        <span className="font-bold text-emerald-400">{formatKip(p.salePrice)}</span>
+                        <span className="bg-rose-600/30 text-rose-300 px-2 py-0.5 rounded-lg text-[10px] font-bold">+ ສັ່ງ</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Sub-modal: Confirm item with Price & Seller */}
+                {orderModalProduct && (
+                  <div className="p-4 rounded-2xl bg-slate-950 border border-rose-500/40 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-black text-xs text-rose-300">
+                        ກະລຸນາກວດສອບລາຄາ ແລະ ເລືອກຜູ້ຂາຍ: {orderModalProduct.name}
+                      </h4>
+                      <button onClick={() => setOrderModalProduct(null)} className="text-slate-400 hover:text-white font-bold cursor-pointer">×</button>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-3 text-xs">
+                      {/* Qty */}
+                      <div>
+                        <label className="block text-slate-400 mb-1 font-semibold">ຈຳນວນ:</label>
+                        <input
+                          type="number"
+                          min="1"
+                          value={orderQty}
+                          onChange={(e) => setOrderQty(Math.max(1, parseInt(e.target.value) || 1))}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-center font-bold"
+                        />
+                      </div>
+
+                      {/* Custom Price */}
+                      <div>
+                        <label className="block text-slate-400 mb-1 font-semibold">ລາຄາຂາຍ (₭) <span className="text-rose-400">*</span>:</label>
+                        <input
+                          type="text"
+                          value={orderCustomPrice}
+                          onChange={(e) => setOrderCustomPrice(e.target.value)}
+                          placeholder="ລາຄາຕໍ່ໜ່ວຍ"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 font-bold text-emerald-400 font-mono"
+                        />
+                      </div>
+
+                      {/* Seller Selection */}
+                      <div>
+                        <label className="block text-slate-400 mb-1 font-semibold">ພະນັກງານຂາຍ <span className="text-rose-400">*</span>:</label>
+                        <select
+                          value={orderSellerId}
+                          onChange={(e) => setOrderSellerId(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2 py-1.5 text-slate-200"
+                        >
+                          <option value="">-- ເລືອກຜູ້ຂາຍ --</option>
+                          {staffList.map(s => (
+                            <option key={s.id} value={s.id}>{s.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {orderError && (
+                      <p className="text-xs text-rose-400 font-bold">{orderError}</p>
+                    )}
+
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button
+                        onClick={() => setOrderModalProduct(null)}
+                        className="px-3 py-1.5 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold cursor-pointer"
+                      >
+                        ຍົກເລີກ
+                      </button>
+                      <button
+                        onClick={handleConfirmOrderItem}
+                        className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black shadow-md cursor-pointer"
+                      >
+                        ✓ ຢືນຢັນສັ່ງລົງຫ້ອງ
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Current Room Orders */}
+                <div className="border-t border-slate-800 pt-3">
+                  <div className="flex justify-between items-center mb-2 text-xs">
+                    <span className="font-bold text-slate-300">ລາຍການທີ່ສັ່ງແລ້ວໃນຫ້ອງ ({selectedRoom.orders.length} ລາຍການ):</span>
+                    <span className="font-bold text-emerald-400">
+                      ລວມ: {formatKip(selectedRoom.orders.reduce((sum, o) => sum + (o.price * o.quantity), 0))}
+                    </span>
+                  </div>
+
+                  <div className="max-h-28 overflow-y-auto space-y-1 text-xs">
+                    {selectedRoom.orders.map((o, idx) => (
+                      <div key={idx} className="flex justify-between items-center p-2 rounded-xl bg-slate-950 border border-slate-800">
+                        <div>
+                          <span className="font-bold text-slate-200">{o.product.name}</span>
+                          <span className="text-slate-400 ml-2">x{o.quantity}</span>
+                          <span className="text-[10px] text-amber-400 ml-2">({o.sellerName})</span>
+                        </div>
+                        <span className="font-bold text-emerald-400">{formatKip(o.price * o.quantity)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ===================================================================
+              MODAL 3: POS DEBT CUSTOMER MODAL
+          =================================================================== */}
+          {showPosDebtModal && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-sm w-full p-5 space-y-4 shadow-2xl">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-black text-base text-amber-400">📝 ບັນທຶກຕິດໜີ້ລູກຄ້າ</h3>
+                  <button onClick={() => setShowPosDebtModal(false)} className="text-slate-400 hover:text-white font-bold text-lg cursor-pointer">×</button>
+                </div>
+                <div className="space-y-3 text-xs">
+                  <div>
+                    <label className="block text-slate-400 mb-1 font-semibold">ຊື່ລູກຄ້າ / ຊື່ຫລິ້ນ:</label>
+                    <input
+                      type="text"
+                      value={posCustomerName}
+                      onChange={(e) => setPosCustomerName(e.target.value)}
+                      placeholder="ຕົວຢ່າງ: ທ່ານ ສົມສັກ"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-400 mb-1 font-semibold">ເບີໂທຕິດຕໍ່ (ຖ້າມີ):</label>
+                    <input
+                      type="tel"
+                      value={posCustomerPhone}
+                      onChange={(e) => setPosCustomerPhone(e.target.value)}
+                      placeholder="020-xxxx-xxxx"
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-200"
+                    />
+                  </div>
+                </div>
+                <div className="pt-2 flex gap-2">
+                  <button
+                    onClick={() => setShowPosDebtModal(false)}
+                    className="flex-1 py-2.5 rounded-xl bg-slate-800 text-slate-300 font-bold text-xs cursor-pointer"
+                  >
+                    ຍົກເລີກ
+                  </button>
+                  <button
+                    onClick={() => handleCheckoutPos('debt')}
+                    className="flex-1 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-md cursor-pointer"
+                  >
+                    ຢືນຢັນຕິດໜີ້
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ===================================================================
+              MODAL 4: THERMAL BILLING RECEIPT (With Font Size Toggle & Visibility)
+          =================================================================== */}
+          {activeBill && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-sm w-full p-5 space-y-4 shadow-2xl">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-black text-base text-slate-100">🧾 ໃບບິນເຊັກເງິນ</h3>
+                  <button onClick={() => setActiveBill(null)} className="text-slate-400 hover:text-white font-bold text-lg cursor-pointer">×</button>
+                </div>
+
+                {/* Printable Receipt with Adjustable Font Size */}
+                <div
+                  id="printable-receipt"
+                  className={`bg-white text-black p-4 rounded-xl font-mono leading-tight space-y-2 border border-slate-300 ${
+                    receiptFontSize === 'small' ? 'text-[11px]' :
+                    receiptFontSize === 'medium' ? 'text-[13px]' :
+                    receiptFontSize === 'large' ? 'text-[16px] font-bold' : 'text-[20px] font-black'
+                  }`}
+                  style={{ width: receiptPaperWidth === '80mm' ? '300px' : '250px', margin: '0 auto' }}
+                >
+                  <div className="text-center border-b border-black pb-2">
+                    <h2 className="font-black text-base uppercase">689 KTV & RESTAURANT</h2>
+                    <p className="text-[11px]">ນະຄອນຫຼວງວຽງຈັນ • ໂທ: 020-5599-8877</p>
+                    <p className="text-[11px] font-bold">ໃບບິນ: {activeBill.billNumber}</p>
+                    <p className="text-[10px]">{new Date(activeBill.endTime).toLocaleString('lo-LA')}</p>
+                  </div>
+
+                  <div className="py-1 border-b border-black text-[12px]">
+                    <div className="flex justify-between font-bold">
+                      <span>{activeBill.roomName}</span>
+                      <span>{activeBill.packageName}</span>
+                    </div>
+                    <div className="flex justify-between text-[11px] text-gray-700">
+                      <span>ພະນັກງານ:</span>
+                      <span>{activeBill.staffName}</span>
+                    </div>
+                  </div>
+
+                  {/* Items */}
+                  <div className="space-y-1 py-1 border-b border-black">
+                    {activeBill.roomCharge > 0 && (
+                      <div className="flex justify-between font-bold">
+                        <span>ຄ່າຫ້ອງ ({activeBill.packageName})</span>
+                        <span>{formatKip(activeBill.roomCharge)}</span>
+                      </div>
+                    )}
+                    {activeBill.items.map((it, idx) => (
+                      <div key={idx} className="flex justify-between">
+                        <span>{it.product.name} x{it.quantity}</span>
+                        <span>{formatKip(it.price * it.quantity)}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Grand Total */}
+                  <div className="pt-1 text-right">
+                    <div className="flex justify-between text-base font-black border-t-2 border-black pt-1">
+                      <span>ລວມທັງໝົດ:</span>
+                      <span>{formatKip(activeBill.total)}</span>
+                    </div>
+                  </div>
+
+                  <div className="text-center pt-2 text-[10px]">
+                    <p>ຂໍຂອບໃຈລູກຄ້າທຸກທ່ານທີ່ມາອຸດໜູນ</p>
+                    <p>ໂອກາດໜ້າເຊີນໃໝ່ເດີ!</p>
+                  </div>
+                </div>
+
+                {/* Print Controls */}
+                <div className="pt-2 flex items-center gap-2">
+                  <button
+                    onClick={() => window.print()}
+                    className="flex-1 py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-bold text-xs shadow-lg cursor-pointer"
+                  >
+                    🖨️ ສັ່ງພິມໃບບິນ
+                  </button>
+                  <button
+                    onClick={() => setActiveBill(null)}
+                    className="px-4 py-3 rounded-xl bg-slate-800 text-slate-300 font-bold text-xs cursor-pointer"
+                  >
+                    ປິດ
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ===================================================================
+              MODAL 5: GOOGLE APPS SCRIPT CODE VIEWER MODAL
+          =================================================================== */}
+          {showScriptModal && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-2xl w-full p-6 space-y-4 shadow-2xl max-h-[90vh] flex flex-col">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <div>
+                    <h3 className="font-black text-base text-amber-400">📜 ໂຄ້ດ Google Apps Script (Code.gs)</h3>
+                    <p className="text-xs text-slate-400">ຄັດລອກໂຄ້ດນີ້ໄປວາງໃນ Google Sheets > Extensions > Apps Script ແລ້ວກົດ Deploy Web App</p>
+                  </div>
+                  <button onClick={() => setShowScriptModal(false)} className="text-slate-400 hover:text-white font-bold text-lg cursor-pointer">×</button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto">
+                  <pre className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-emerald-400 font-mono text-xs overflow-x-auto select-all">
+                    {GAS_BACKEND_CODE}
+                  </pre>
+                </div>
+
+                <div className="pt-2 flex items-center justify-between border-t border-slate-800">
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(GAS_BACKEND_CODE);
+                      setCopiedScript(true);
+                      setTimeout(() => setCopiedScript(false), 2000);
+                    }}
+                    className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-md cursor-pointer flex items-center gap-2"
+                  >
+                    <span>{copiedScript ? '✓ ຄັດລອກແລ້ວ!' : '📋 ຄັດລອກໂຄ້ດທັງໝົດ'}</span>
+                  </button>
+                  <button
+                    onClick={() => setShowScriptModal(false)}
+                    className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-bold text-xs cursor-pointer"
+                  >
+                    ປິດໜ້າຕ່າງ
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Render the React application
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

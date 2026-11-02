@@ -299,9 +299,11 @@ export const INITIAL_SETTINGS: AppSettings = {
   receiptFontSize: 'large', // Default to Large font size so letters are easily readable
   receiptPaperWidth: '58mm',
   receiptBoldText: true,
-  gasWebAppUrl: '',
+  gasWebAppUrl: 'https://script.google.com/macros/s/AKfycbwP7K5U-POS-689KTV-WEBAPP/exec',
   realtimeSyncEnabled: true,
 };
+
+export const DEFAULT_GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbwP7K5U-POS-689KTV-WEBAPP/exec';
 
 
 export const INITIAL_DEBTS: DebtRecord[] = [
