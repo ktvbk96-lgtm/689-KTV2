@@ -31,11 +31,13 @@ import {
   getStoredDebts,
   saveStoredDebts,
 } from './lib/storage';
-import { getBluetoothStatus } from './lib/bluetoothPrinter';
+import { getBluetoothStatus, tryAutoReconnectBluetooth } from './lib/bluetoothPrinter';
 import { getAccessToken, initAuth } from './lib/firebase';
 import { appendBillToSheet, syncInventoryToSheet } from './lib/googleSheets';
 import { fetchLatestDataFromGas, sendDataToGas, GasFullDataPayload } from './lib/gasSyncService';
-import { RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
+import { initMultiDeviceSync, pushMultiDeviceUpdate, SyncAction, getDeviceId } from './lib/realtimeSync';
+import { listenToFirebaseStore, pushToFirebaseStore } from './lib/firebaseSync';
+import { RefreshCw, CheckCircle2, AlertCircle, Smartphone, Monitor, Globe, Zap } from 'lucide-react';
 
 import { Navbar } from './components/Navbar';
 import { PinAuthModal } from './components/PinAuthModal';
@@ -109,11 +111,158 @@ export default function App() {
     debtsRef.current = debts;
   }, [debts]);
 
-  // Function to dispatch real-time sync in background to Google Sheets Web App
+  // Set up multi-device real-time sync across iOS, Android, and Windows PC (SSE + Polling + BroadcastChannel)
+  useEffect(() => {
+    const cleanup = initMultiDeviceSync({
+      onDataReceived: (remoteData) => {
+        let changed = false;
+
+        if (remoteData.rooms && Array.isArray(remoteData.rooms) && remoteData.rooms.length > 0) {
+          if (JSON.stringify(roomsRef.current) !== JSON.stringify(remoteData.rooms)) {
+            setRooms(remoteData.rooms);
+            saveStoredRooms(remoteData.rooms);
+            changed = true;
+          }
+        }
+
+        if (remoteData.products && Array.isArray(remoteData.products) && remoteData.products.length > 0) {
+          if (JSON.stringify(productsRef.current) !== JSON.stringify(remoteData.products)) {
+            setProducts(remoteData.products);
+            saveStoredProducts(remoteData.products);
+            changed = true;
+          }
+        }
+
+        if (remoteData.packages && Array.isArray(remoteData.packages) && remoteData.packages.length > 0) {
+          if (JSON.stringify(packagesRef.current) !== JSON.stringify(remoteData.packages)) {
+            setPackages(remoteData.packages);
+            saveStoredPackages(remoteData.packages);
+            changed = true;
+          }
+        }
+
+        if (remoteData.staff && Array.isArray(remoteData.staff) && remoteData.staff.length > 0) {
+          if (JSON.stringify(staffRef.current) !== JSON.stringify(remoteData.staff)) {
+            setStaffList(remoteData.staff);
+            saveStoredStaff(remoteData.staff);
+            changed = true;
+          }
+        }
+
+        if (remoteData.debts && Array.isArray(remoteData.debts) && remoteData.debts.length > 0) {
+          if (JSON.stringify(debtsRef.current) !== JSON.stringify(remoteData.debts)) {
+            setDebts(remoteData.debts);
+            saveStoredDebts(remoteData.debts);
+            changed = true;
+          }
+        }
+
+        if (remoteData.bills && Array.isArray(remoteData.bills) && remoteData.bills.length > 0) {
+          setBills(remoteData.bills);
+        }
+
+        if (remoteData.settings) {
+          setSettings((prev) => {
+            const merged = { ...prev, ...remoteData.settings };
+            saveStoredSettings(merged);
+            return merged;
+          });
+        }
+
+        if (changed) {
+          showToast('⚡ ອັບເດດ Real-time ຈາກເຄື່ອງອື່ນອັດຕະໂນມັດແລ້ວ!');
+        }
+      },
+      onStatusChange: (status, message) => {
+        if (status === 'connected') {
+          setSyncStatus('success');
+          setSyncMessage(message || 'Real-time: ພ້ອມຊິ້ງຫຼາຍເຄື່ອງ (iOS, Android, Windows)');
+          setTimeout(() => setSyncStatus('idle'), 2500);
+        } else if (status === 'syncing') {
+          setSyncStatus('loading');
+          if (message) setSyncMessage(message);
+        }
+      },
+    });
+
+    // 2. Real-time Firebase Firestore Cloud Database Listener (Project: ktv-e97cb)
+    const unsubFirebase = listenToFirebaseStore((remoteData) => {
+      let changed = false;
+      if (remoteData.saveRooms?.rooms && Array.isArray(remoteData.saveRooms.rooms)) {
+        if (JSON.stringify(roomsRef.current) !== JSON.stringify(remoteData.saveRooms.rooms)) {
+          setRooms(remoteData.saveRooms.rooms);
+          saveStoredRooms(remoteData.saveRooms.rooms);
+          changed = true;
+        }
+      }
+      if (remoteData.saveProducts?.products && Array.isArray(remoteData.saveProducts.products)) {
+        if (JSON.stringify(productsRef.current) !== JSON.stringify(remoteData.saveProducts.products)) {
+          setProducts(remoteData.saveProducts.products);
+          saveStoredProducts(remoteData.saveProducts.products);
+          changed = true;
+        }
+      }
+      if (remoteData.saveDebts?.debts && Array.isArray(remoteData.saveDebts.debts)) {
+        if (JSON.stringify(debtsRef.current) !== JSON.stringify(remoteData.saveDebts.debts)) {
+          setDebts(remoteData.saveDebts.debts);
+          saveStoredDebts(remoteData.saveDebts.debts);
+          changed = true;
+        }
+      }
+      if (changed) {
+        showToast('🔥 ອັບເດດ Cloud Real-time (Firebase ktv-e97cb) ສຳເລັດແລ້ວ!');
+      }
+    });
+
+    return () => {
+      cleanup();
+      unsubFirebase();
+    };
+  }, []);
+
+  // Listen for Bluetooth connection events and try auto-reconnecting on startup
+  useEffect(() => {
+    const current = getBluetoothStatus();
+    if (current.connected) {
+      setBluetoothConnected(true);
+    } else {
+      tryAutoReconnectBluetooth().then((status) => {
+        if (status.connected) {
+          setBluetoothConnected(true);
+        }
+      });
+    }
+
+    const handleConnected = (e: any) => {
+      setBluetoothConnected(true);
+      const name = e?.detail?.deviceName || 'Bluetooth Thermal Printer';
+      showToast(`🖨️ ເຊື່ອມຕໍ່ເຄື່ອງພິມ "${name}" ສຳເລັດແລ້ວ!`);
+    };
+
+    const handleDisconnected = () => {
+      setBluetoothConnected(false);
+      showToast('⚠️ ຕັດການເຊື່ອມຕໍ່ເຄື່ອງພິມ Bluetooth ແລ້ວ');
+    };
+
+    window.addEventListener('689ktv_bluetooth_connected', handleConnected);
+    window.addEventListener('689ktv_bluetooth_disconnected', handleDisconnected);
+
+    return () => {
+      window.removeEventListener('689ktv_bluetooth_connected', handleConnected);
+      window.removeEventListener('689ktv_bluetooth_disconnected', handleDisconnected);
+    };
+  }, []);
   const triggerGasSync = (
-    action: 'saveProducts' | 'saveRooms' | 'savePackages' | 'saveStaff' | 'saveDebts' | 'saveBill' | 'syncAll',
+    action: SyncAction,
     payload: any
   ) => {
+    // 1. Instantly push to Backend Server & SSE to notify all iOS, Android & Windows devices
+    pushMultiDeviceUpdate(action, payload);
+
+    // 2. Also push to Firebase Firestore Cloud (ktv-e97cb)
+    pushToFirebaseStore({ [action]: payload });
+
+    // 3. Also forward to Google Sheets Web App if configured
     if (!settings.gasWebAppUrl || settings.realtimeSyncEnabled === false) return;
 
     // Pause polling temporarily during local push
@@ -478,6 +627,7 @@ export default function App() {
       id: 'bill-' + Date.now(),
       billNumber,
       type: 'ktv_room',
+      roomId: room.id,
       roomName: room.name,
       packageName: room.packageName,
       bookedHours: room.bookedHours,
@@ -511,13 +661,16 @@ export default function App() {
       staffName: currentStaff?.name || (currentRole === 'admin' ? 'Admin' : 'ພະນັກງານ'),
     };
 
-    // Reset room status to available
+    // Reset room status to available - CLEAR EVERYTHING COMPLETELY (hours: 0, orders: [], session dates cleared)
     const updatedRooms = rooms.map((r) => {
-      if (r.id === room.id) {
+      if (r.id === room.id || (room.name && r.name === room.name)) {
         return {
           ...r,
           status: 'available' as const,
+          pricingType: 'fixed_hourly' as const,
           openedAt: undefined,
+          targetEndTime: undefined,
+          bookedHours: 0,
           openedByStaffId: undefined,
           openedByStaffName: undefined,
           packageId: undefined,
@@ -541,6 +694,36 @@ export default function App() {
     const updatedBills = getStoredBills();
     setBills(updatedBills);
     triggerGasSync('saveBill', { bill: completedBill });
+
+    // CRITICAL: Guarantee room is completely cleared back to available when billing is confirmed!
+    if (completedBill.roomName || completedBill.roomId) {
+      setRooms((prevRooms) => {
+        const updated = prevRooms.map((r) => {
+          if (
+            (completedBill.roomId && r.id === completedBill.roomId) ||
+            (completedBill.roomName && r.name === completedBill.roomName)
+          ) {
+            return {
+              ...r,
+              status: 'available' as const,
+              pricingType: 'fixed_hourly' as const,
+              openedAt: undefined,
+              targetEndTime: undefined,
+              bookedHours: 0,
+              openedByStaffId: undefined,
+              openedByStaffName: undefined,
+              packageId: undefined,
+              packageName: undefined,
+              orders: [],
+            };
+          }
+          return r;
+        });
+        saveStoredRooms(updated);
+        triggerGasSync('saveRooms', { rooms: updated });
+        return updated;
+      });
+    }
 
     // If checked out as debt, auto-create Debt Record
     if (completedBill.payment?.method === 'debt') {
@@ -610,8 +793,22 @@ export default function App() {
 
   const themeConfig = getThemeConfig(settings.appTheme);
 
+  // App UI Font Scale for PC & Tablets (Phetsarath font)
+  const appFontSizeStyle: React.CSSProperties = {
+    fontFamily: "'Phetsarath', 'Phetsarath OT', 'Noto Sans Lao', system-ui, sans-serif",
+    fontSize:
+      settings.appFontSize === 'xlarge'
+        ? '18.5px'
+        : settings.appFontSize === 'medium'
+        ? '15px'
+        : settings.appFontSize === 'normal'
+        ? '13.5px'
+        : '16.5px', // default large
+  };
+
   return (
     <div
+      style={appFontSizeStyle}
       className={`min-h-screen ${themeConfig.bgClass} flex flex-col font-sans selection:bg-rose-500 selection:text-white transition-colors duration-300`}
     >
       {/* 4-Digit PIN Lock Screen Modal (Right after opening or when locked) */}
@@ -644,54 +841,53 @@ export default function App() {
         pendingDebtsCount={debts.filter((d) => d.status !== 'paid' && d.remainingAmount > 0).length}
       />
 
-      {/* Real-time Google Sheets Sync Status Bar */}
-      {settings.gasWebAppUrl && (
-        <div className="bg-slate-900/95 border-b border-slate-800 px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-xs backdrop-blur-md shadow-sm">
-          <div className="flex items-center gap-2">
-            {syncStatus === 'loading' || syncStatus === 'syncing' ? (
-              <RefreshCw className="w-4 h-4 text-amber-400 animate-spin" />
-            ) : syncStatus === 'error' ? (
-              <AlertCircle className="w-4 h-4 text-rose-400" />
-            ) : (
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-            )}
-            <span
-              className={
-                syncStatus === 'error'
-                  ? 'text-rose-300 font-semibold'
-                  : syncStatus === 'loading' || syncStatus === 'syncing'
-                  ? 'text-amber-300 font-semibold'
-                  : 'text-slate-300'
-              }
-            >
-              {syncMessage ||
-                (settings.lastSyncedAt
-                  ? `Google Sheets Real-time: ຊິ້ງຄັ້ງລ່າສຸດ ${new Date(settings.lastSyncedAt).toLocaleTimeString('lo-LA')}`
-                  : 'Google Sheets Real-time: ພ້ອມໃຊ້ງານ (ອອນໄລນ໌)')}
+      {/* Real-time Multi-Device Sync Status Bar (iOS, Android, Windows PC) */}
+      <div className="bg-slate-900/95 border-b border-slate-800 px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-xs backdrop-blur-md shadow-sm">
+        <div className="flex items-center gap-2">
+          {syncStatus === 'loading' || syncStatus === 'syncing' ? (
+            <RefreshCw className="w-4 h-4 text-amber-400 animate-spin" />
+          ) : syncStatus === 'error' ? (
+            <AlertCircle className="w-4 h-4 text-rose-400" />
+          ) : (
+            <Zap className="w-4 h-4 text-emerald-400" />
+          )}
+          <span
+            className={
+              syncStatus === 'error'
+                ? 'text-rose-300 font-semibold'
+                : syncStatus === 'loading' || syncStatus === 'syncing'
+                ? 'text-amber-300 font-semibold'
+                : 'text-slate-300'
+            }
+          >
+            {syncMessage || 'Real-time: ພ້ອມຊິ້ງຫຼາຍເຄື່ອງທັນທີ (iOS, Android, Windows)'}
+          </span>
+          <div className="hidden sm:flex items-center gap-1.5 ml-2 pl-2 border-l border-slate-700/60 text-[10px] text-slate-400">
+            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-bold border border-slate-700">
+              <Smartphone className="w-3 h-3 text-rose-400" />
+              <span>iOS / Android</span>
+            </span>
+            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-bold border border-slate-700">
+              <Monitor className="w-3 h-3 text-blue-400" />
+              <span>Windows PC</span>
             </span>
           </div>
+        </div>
 
-          <div className="flex items-center gap-2">
-            {syncStatus === 'error' && (
-              <button
-                onClick={() => fetchFromGas(true)}
-                className="px-2.5 py-1 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-xs font-bold border border-rose-500/40 transition-colors cursor-pointer"
-              >
-                ລອງໃໝ່ (Retry)
-              </button>
-            )}
+        <div className="flex items-center gap-2">
+          {settings.gasWebAppUrl && (
             <button
               onClick={() => fetchFromGas(true)}
               disabled={syncStatus === 'loading' || syncStatus === 'syncing'}
               title="ດຶງຂໍ້ມູນລ່າສຸດຈາກ Google Sheets"
-              className="px-3 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 border border-slate-700 transition-colors cursor-pointer disabled:opacity-50"
+              className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-[11px] font-semibold flex items-center gap-1.5 border border-slate-700 transition-colors cursor-pointer disabled:opacity-50"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${syncStatus === 'loading' || syncStatus === 'syncing' ? 'animate-spin' : ''}`} />
-              <span>ດຶງຂໍ້ມູນລ່າສຸດ</span>
+              <RefreshCw className={`w-3 h-3 ${syncStatus === 'loading' || syncStatus === 'syncing' ? 'animate-spin' : ''}`} />
+              <span>ດຶງ Sheets</span>
             </button>
-          </div>
+          )}
         </div>
-      )}
+      </div>
 
       {/* Toast Notification Banner */}
       {toastMessage && (
