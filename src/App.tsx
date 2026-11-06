@@ -1086,6 +1086,14 @@ export default function App() {
               triggerGasSync('saveBills', { bills: updated });
               showToast('ລຶບໃບບິນສຳເລັດແລ້ວ!');
             }}
+            onDeleteBills={(billIds) => {
+              const idSet = new Set(billIds);
+              const updated = bills.filter((b) => !idSet.has(b.id));
+              setBills(updated);
+              updateStoredBills(updated);
+              triggerGasSync('saveBills', { bills: updated });
+              showToast(`ລຶບຂໍ້ມູນ ${billIds.length} ໃບບິນສຳເລັດແລ້ວ!`);
+            }}
             onClearAllBills={() => {
               setBills([]);
               updateStoredBills([]);

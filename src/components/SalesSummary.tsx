@@ -19,6 +19,7 @@ import {
   Award,
   CheckCircle,
   Eye,
+  EyeOff,
   Search,
   X,
   TrendingUp,
@@ -29,6 +30,13 @@ import {
   Sparkles,
   ArrowRight,
   Trash2,
+  ShieldAlert,
+  AlertTriangle,
+  Lock,
+  KeyRound,
+  CheckSquare,
+  Square,
+  RotateCcw,
 } from 'lucide-react';
 import { BillRecord, Product, AppSettings, ProductCategory, Role } from '../types';
 import { formatCurrency } from '../lib/storage';
@@ -41,6 +49,7 @@ interface SalesSummaryProps {
   isSyncingSheets?: boolean;
   currentRole?: Role;
   onDeleteBill?: (billId: string) => void;
+  onDeleteBills?: (billIds: string[]) => void;
   onClearAllBills?: () => void;
 }
 
@@ -52,10 +61,11 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
   isSyncingSheets,
   currentRole,
   onDeleteBill,
+  onDeleteBills,
   onClearAllBills,
 }) => {
-  // Choice 1: Overall Summary vs Choice 2: Itemized & Profit Breakdown
-  const [activeChoice, setActiveChoice] = useState<'overall' | 'itemized'>('itemized');
+  // Choice 1: Overall Summary vs Choice 2: Itemized & Profit Breakdown vs Choice 3: Bills & Delete
+  const [activeChoice, setActiveChoice] = useState<'overall' | 'itemized' | 'bills'>('itemized');
 
   // Timeframe filter: daily, monthly, yearly, custom
   const [timeframe, setTimeframe] = useState<'daily' | 'monthly' | 'yearly' | 'custom'>('daily');
@@ -84,8 +94,37 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
     'profit_desc'
   );
 
+  // Bills Management & Bulk Actions
+  const [billsSearchQuery, setBillsSearchQuery] = useState<string>('');
+  const [billsTypeFilter, setBillsTypeFilter] = useState<'all' | 'ktv_room' | 'pos'>('all');
+  const [billsTimeScope, setBillsTimeScope] = useState<'filtered' | 'all'>('filtered');
+  const [selectedBillIds, setSelectedBillIds] = useState<Set<string>>(new Set());
+
   // Bill inspect modal
   const [inspectedBill, setInspectedBill] = useState<BillRecord | null>(null);
+
+  // In-App Admin Delete Confirmation Modal
+  const [deleteModal, setDeleteModal] = useState<{
+    isOpen: boolean;
+    mode: 'single' | 'filtered' | 'all' | 'selected';
+    targetBill?: BillRecord;
+    targetIds?: string[];
+    count: number;
+    totalAmount: number;
+    title: string;
+    description: string;
+  }>({
+    isOpen: false,
+    mode: 'single',
+    count: 0,
+    totalAmount: 0,
+    title: '',
+    description: '',
+  });
+
+  const [adminPinInput, setAdminPinInput] = useState<string>('');
+  const [pinError, setPinError] = useState<string>('');
+  const [showPinInput, setShowPinInput] = useState<boolean>(false);
 
   // Fast product lookup map by ID and normalized Name
   const productLookup = useMemo(() => {
@@ -111,40 +150,115 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
     setSelectedDate(yesterday);
   };
 
-  const handleDeleteBill = (bill: BillRecord) => {
-    if (currentRole !== 'admin') {
-      alert('ສະເພາະ Admin ເທົ່ານັ້ນທີ່ສາມາດລຶບໃບບິນໄດ້!');
+  const openDeleteSingleBill = (bill: BillRecord) => {
+    setAdminPinInput('');
+    setPinError('');
+    setShowPinInput(false);
+    setDeleteModal({
+      isOpen: true,
+      mode: 'single',
+      targetBill: bill,
+      targetIds: [bill.id],
+      count: 1,
+      totalAmount: bill.total,
+      title: `ລຶບໃບບິນ "${bill.billNumber}"`,
+      description: `ທ່ານກຳລັງຈະລຶບໃບບິນເລກທີ ${bill.billNumber} (${bill.roomName || 'POS'}) ຈຳນວນເງິນ ${formatCurrency(bill.total, settings.currencySymbol)} ອອກຈາກລະບົບ`,
+    });
+  };
+
+  const openDeleteFilteredBills = () => {
+    const ids = filteredBills.map((b) => b.id);
+    const sum = filteredBills.reduce((acc, b) => acc + b.total, 0);
+    setAdminPinInput('');
+    setPinError('');
+    setShowPinInput(false);
+    setDeleteModal({
+      isOpen: true,
+      mode: 'filtered',
+      targetIds: ids,
+      count: ids.length,
+      totalAmount: sum,
+      title: `ລຶບຍອດຂາຍຕາມຊ່ວງເວລາ (${timeframeLabel})`,
+      description: `ທ່ານກຳລັງຈະລຶບໃບບິນທັງໝົດ ${ids.length} ບິນ ໃນຊ່ວງເວລາ "${timeframeLabel}" ລວມຍອດຂາຍ ${formatCurrency(sum, settings.currencySymbol)} ອອກຈາກລະບົບ`,
+    });
+  };
+
+  const openDeleteAllBills = () => {
+    const ids = bills.map((b) => b.id);
+    const sum = bills.reduce((acc, b) => acc + b.total, 0);
+    setAdminPinInput('');
+    setPinError('');
+    setShowPinInput(false);
+    setDeleteModal({
+      isOpen: true,
+      mode: 'all',
+      targetIds: ids,
+      count: ids.length,
+      totalAmount: sum,
+      title: `⚠️ ລ້າງປະຫວັດບິນທັງໝົດໃນລະບົບ (${bills.length} ບິນ)`,
+      description: `ເຕືອນ: ການກະທຳນີ້ຈະລຶບປະຫວັດໃບບິນ ແລະ ຍອດຂາຍທັງໝົດ ${bills.length} ບິນ ລວມຍອດເງິນ ${formatCurrency(sum, settings.currencySymbol)} ອອກຈາກລະບົບແບບຖາວອນ!`,
+    });
+  };
+
+  const openDeleteSelectedBills = () => {
+    const ids = Array.from(selectedBillIds);
+    const selectedObjs = bills.filter((b) => selectedBillIds.has(b.id));
+    const sum = selectedObjs.reduce((acc, b) => acc + b.total, 0);
+    setAdminPinInput('');
+    setPinError('');
+    setShowPinInput(false);
+    setDeleteModal({
+      isOpen: true,
+      mode: 'selected',
+      targetIds: ids,
+      count: ids.length,
+      totalAmount: sum,
+      title: `ລຶບ ${ids.length} ໃບບິນທີ່ເລືອກ`,
+      description: `ທ່ານກຳລັງຈະລຶບ ${ids.length} ໃບບິນທີ່ໄດ້ຕິກເລືອກ ລວມຍອດຂາຍ ${formatCurrency(sum, settings.currencySymbol)} ອອກຈາກລະບົບ`,
+    });
+  };
+
+  const handleConfirmDelete = () => {
+    const validPin = settings.adminPin || '8888';
+    if (adminPinInput.trim() !== validPin && adminPinInput.trim() !== '8888') {
+      setPinError('ລະຫັດ Admin PIN ບໍ່ຖືກຕ້ອງ! (ເລີ່ມຕົ້ນ: 8888)');
       return;
     }
-    const pin = window.prompt(`🔒 ຢືນຢັນລຶບໃບບິນ "${bill.billNumber}"\nກະລຸນາປ້ອນລະຫັດ Admin PIN:`);
-    if (!pin) return;
-    if (pin !== settings.adminPin && pin !== '8888') {
-      alert('ລະຫັດ Admin PIN ບໍ່ຖືກຕ້ອງ!');
-      return;
-    }
-    if (window.confirm(`ທ່ານແນ່ໃຈແທ້ບໍ່ວ່າຕ້ອງການລຶບໃບບິນ "${bill.billNumber}" ອອກຈາກລະບົບ?`)) {
-      onDeleteBill?.(bill.id);
-      if (inspectedBill?.id === bill.id) {
+
+    if (deleteModal.mode === 'single' && deleteModal.targetBill) {
+      onDeleteBill?.(deleteModal.targetBill.id);
+      if (inspectedBill?.id === deleteModal.targetBill.id) {
         setInspectedBill(null);
       }
+    } else if (deleteModal.mode === 'filtered') {
+      if (onDeleteBills) {
+        onDeleteBills(deleteModal.targetIds || []);
+      } else if (deleteModal.targetIds) {
+        deleteModal.targetIds.forEach((id) => onDeleteBill?.(id));
+      }
+      setInspectedBill(null);
+    } else if (deleteModal.mode === 'all') {
+      onClearAllBills?.();
+      setInspectedBill(null);
+    } else if (deleteModal.mode === 'selected') {
+      if (onDeleteBills) {
+        onDeleteBills(deleteModal.targetIds || []);
+      } else if (deleteModal.targetIds) {
+        deleteModal.targetIds.forEach((id) => onDeleteBill?.(id));
+      }
+      setSelectedBillIds(new Set());
+      setInspectedBill(null);
     }
+
+    setDeleteModal((prev) => ({ ...prev, isOpen: false }));
+  };
+
+  const handleDeleteBill = (bill: BillRecord) => {
+    openDeleteSingleBill(bill);
   };
 
   const handleClearAllBills = () => {
-    if (currentRole !== 'admin') {
-      alert('ສະເພາະ Admin ເທົ່ານັ້ນທີ່ສາມາດລ້າງປະຫວັດບິນໄດ້!');
-      return;
-    }
-    const pin = window.prompt(`⚠️ ຢືນຢັນລ້າງປະຫວັດບິນທັງໝົດ (${bills.length} ບິນ)\nກະລຸນາປ້ອນລະຫັດ Admin PIN:`);
-    if (!pin) return;
-    if (pin !== settings.adminPin && pin !== '8888') {
-      alert('ລະຫັດ Admin PIN ບໍ່ຖືກຕ້ອງ!');
-      return;
-    }
-    if (window.confirm(`⚠️ ເຕືອນ: ການກະທຳນີ້ຈະລຶບປະຫວັດບິນທັງໝົດ ${bills.length} ບິນອອກຈາກລະບົບ!\nທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການລ້າງທັງໝົດ?`)) {
-      onClearAllBills?.();
-      setInspectedBill(null);
-    }
+    openDeleteAllBills();
   };
 
   // Filter bills by chosen timeframe
@@ -489,6 +603,28 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
     }
   }, [timeframe, selectedDate, selectedMonth, selectedYear, customStartDate, customEndDate]);
 
+  const totalAllStoreRevenue = useMemo(() => bills.reduce((acc, b) => acc + b.total, 0), [bills]);
+
+  // Filtered bills for the dedicated Bills Management View
+  const managedBills = useMemo(() => {
+    const sourceBills = billsTimeScope === 'filtered' ? filteredBills : bills;
+    return sourceBills.filter((b) => {
+      // Type filter
+      if (billsTypeFilter === 'ktv_room' && b.type !== 'ktv_room') return false;
+      if (billsTypeFilter === 'pos' && b.type === 'ktv_room') return false;
+      // Search query
+      if (billsSearchQuery.trim()) {
+        const q = billsSearchQuery.trim().toLowerCase();
+        const numMatch = b.billNumber.toLowerCase().includes(q);
+        const roomMatch = (b.roomName || '').toLowerCase().includes(q);
+        const staffMatch = (b.staffName || '').toLowerCase().includes(q);
+        const itemMatch = b.items.some((it) => it.productName.toLowerCase().includes(q));
+        if (!numMatch && !roomMatch && !staffMatch && !itemMatch) return false;
+      }
+      return true;
+    });
+  }, [bills, filteredBills, billsTimeScope, billsTypeFilter, billsSearchQuery]);
+
   // Export CSV of product sales, profit & sellers
   const handleExportCsv = () => {
     try {
@@ -600,29 +736,40 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
           </div>
         </div>
 
-        {/* Choice 1 vs Choice 2 Tabs */}
-        <div className="flex items-center gap-2 bg-slate-800/90 p-1.5 rounded-2xl border border-slate-700/80 w-full sm:w-auto">
+        {/* Choice 1, 2, 3 Tabs */}
+        <div className="flex flex-wrap items-center gap-1.5 bg-slate-800/90 p-1.5 rounded-2xl border border-slate-700/80 w-full sm:w-auto">
           <button
             onClick={() => setActiveChoice('itemized')}
-            className={`flex-1 sm:flex-none px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+            className={`flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
               activeChoice === 'itemized'
                 ? 'bg-gradient-to-r from-amber-500 to-emerald-500 text-slate-950 shadow-md font-black'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
             <TrendingUp className="w-3.5 h-3.5" />
-            <span>Choice 2: ສະຫຼຸບສິນຄ້າ & ກຳໄລ (Profit & Cost)</span>
+            <span>Choice 2: ສິນຄ້າ & ກຳໄລ</span>
           </button>
           <button
             onClick={() => setActiveChoice('overall')}
-            className={`flex-1 sm:flex-none px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+            className={`flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
               activeChoice === 'overall'
                 ? 'bg-rose-500 text-white shadow-md shadow-rose-500/25'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
             <Receipt className="w-3.5 h-3.5" />
-            <span>Choice 1: ສະຫຼຸບລວມທັງໝົດ & ຜູ້ຂາຍ (Overall)</span>
+            <span>Choice 1: ສະຫຼຸບລວມ & ຜູ້ຂາຍ</span>
+          </button>
+          <button
+            onClick={() => setActiveChoice('bills')}
+            className={`flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+              activeChoice === 'bills'
+                ? 'bg-gradient-to-r from-purple-600 to-rose-600 text-white shadow-md shadow-rose-600/30 font-black'
+                : 'text-rose-300 hover:text-white bg-rose-950/40 border border-rose-900/50'
+            }`}
+          >
+            <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+            <span>Choice 3: ປະຫວັດບິນ & ລຶບຂໍ້ມູນ ({bills.length})</span>
           </button>
         </div>
       </div>
@@ -799,6 +946,65 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
           <div className="text-slate-400 text-[11px]">
             ພົບທັງໝົດ <span className="font-mono font-bold text-amber-300">{filteredBills.length}</span> ໃບບິນ
           </div>
+        </div>
+      </div>
+
+      {/* Admin Sales Deletion Control Bar (Always accessible to Admin) */}
+      <div className="bg-gradient-to-r from-slate-900 via-rose-950/25 to-slate-900 border border-rose-900/40 rounded-3xl p-4 sm:p-5 shadow-xl flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+        <div className="flex items-start sm:items-center gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-rose-950/90 border border-rose-700/60 flex items-center justify-center text-rose-400 shadow-md shrink-0">
+            <ShieldAlert className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-sm font-black text-slate-100 flex items-center gap-1.5">
+                <span>ສູນຈັດການລຶບຂໍ້ມູນຍອດຂາຍ (Admin Sales Deletion)</span>
+              </h3>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                🔒 Admin PIN
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mt-0.5">
+              ທຸກບິນໃນລະບົບ: <span className="font-bold text-amber-300 font-mono">{bills.length} ບິນ</span> ({formatCurrency(totalAllStoreRevenue, settings.currencySymbol)}) | ຊ່ວງເວລານີ້: <span className="font-bold text-rose-300 font-mono">{filteredBills.length} ບິນ</span> ({formatCurrency(totalRevenue, settings.currencySymbol)})
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
+          <button
+            type="button"
+            onClick={openDeleteFilteredBills}
+            disabled={filteredBills.length === 0}
+            className="flex-1 sm:flex-none px-3.5 py-2.5 rounded-2xl bg-rose-950/70 hover:bg-rose-900 border border-rose-800 text-rose-200 hover:text-white text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
+            title={`ລຶບ ${filteredBills.length} ໃບບິນໃນຊ່ວງເວລານີ້`}
+          >
+            <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+            <span>ລຶບຍອດຂາຍຊ່ວງເວລານີ້ ({filteredBills.length} ບິນ)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={openDeleteAllBills}
+            disabled={bills.length === 0}
+            className="flex-1 sm:flex-none px-3.5 py-2.5 rounded-2xl bg-red-600 hover:bg-red-500 text-white text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-red-600/25 disabled:opacity-40 disabled:cursor-not-allowed"
+            title="ລຶບປະຫວັດບິນທັງໝົດໃນລະບົບ"
+          >
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-300" />
+            <span>ລ້າງປະຫວັດບິນທັງໝົດ</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveChoice('bills')}
+            className={`flex-1 sm:flex-none px-3.5 py-2.5 rounded-2xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer border ${
+              activeChoice === 'bills'
+                ? 'bg-amber-500 text-slate-950 border-amber-400 font-black shadow-md'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+            }`}
+          >
+            <Receipt className="w-3.5 h-3.5" />
+            <span>ຈັດການລາຍບິນ ({bills.length})</span>
+          </button>
         </div>
       </div>
 
@@ -1505,17 +1711,30 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                 <span>ປະຫວັດໃບບິນໃນຊ່ວງເວລານີ້ ({filteredBills.length} ບິນ)</span>
               </h3>
 
-              {currentRole === 'admin' && onClearAllBills && filteredBills.length > 0 && (
-                <button
-                  type="button"
-                  onClick={handleClearAllBills}
-                  className="px-3 py-1.5 rounded-xl bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 hover:text-white text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
-                  title="Admin ລ້າງປະຫວັດບິນທັງໝົດ"
-                >
-                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                  <span>ລ້າງປະຫວັດບິນທັງໝົດ</span>
-                </button>
-              )}
+              <div className="flex items-center gap-2">
+                {filteredBills.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={openDeleteFilteredBills}
+                    className="px-3 py-1.5 rounded-xl bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 hover:text-white text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+                    title={`Admin ລຶບ ${filteredBills.length} ບິນໃນຊ່ວງເວລານີ້`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                    <span>ລຶບຊ່ວງເວລານີ້ ({filteredBills.length})</span>
+                  </button>
+                )}
+                {onClearAllBills && bills.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={openDeleteAllBills}
+                    className="px-3 py-1.5 rounded-xl bg-red-950/80 hover:bg-red-900 border border-red-800 text-red-300 hover:text-white text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+                    title="Admin ລ້າງປະຫວັດບິນທັງໝົດ"
+                  >
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                    <span>ລ້າງທັງໝົດ</span>
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="overflow-x-auto">
@@ -1584,16 +1803,271 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                               >
                                 <Eye className="w-3.5 h-3.5" />
                               </button>
-                              {currentRole === 'admin' && onDeleteBill && (
+                              {onDeleteBill && (
                                 <button
                                   type="button"
-                                  onClick={() => handleDeleteBill(b)}
+                                  onClick={() => openDeleteSingleBill(b)}
                                   className="p-1.5 rounded-lg bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 hover:text-white cursor-pointer transition-all"
                                   title="Admin ລຶບໃບບິນນີ້"
                                 >
                                   <Trash2 className="w-3.5 h-3.5 text-rose-400" />
                                 </button>
                               )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CHOICE 3: DEDICATED BILLS HISTORY & ADMIN DELETION CENTER */}
+      {activeChoice === 'bills' && (
+        <div className="space-y-6">
+          {/* Filters & Bulk Actions Toolbar */}
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-lg space-y-4">
+            <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+              {/* Search Box */}
+              <div className="relative flex-1 w-full lg:max-w-md">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="ຄົ້ນຫາເລກບິນ, ຊື່ຫ້ອງ, ຊື່ພະນັກງານ, ຊື່ສິນຄ້າ..."
+                  value={billsSearchQuery}
+                  onChange={(e) => setBillsSearchQuery(e.target.value)}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-2xl pl-10 pr-10 py-2.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-rose-500"
+                />
+                {billsSearchQuery && (
+                  <button
+                    onClick={() => setBillsSearchQuery('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+
+              {/* Scope & Type Filters */}
+              <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
+                {/* Scope: Current Filtered vs All Bills */}
+                <div className="flex items-center bg-slate-800 p-1 rounded-xl border border-slate-700 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setBillsTimeScope('filtered')}
+                    className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                      billsTimeScope === 'filtered'
+                        ? 'bg-rose-500 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    ຊ່ວງເວລານີ້ ({filteredBills.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBillsTimeScope('all')}
+                    className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                      billsTimeScope === 'all'
+                        ? 'bg-rose-500 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    ທັງໝົດໃນຮ້ານ ({bills.length})
+                  </button>
+                </div>
+
+                {/* Type Filter */}
+                <select
+                  value={billsTypeFilter}
+                  onChange={(e) => setBillsTypeFilter(e.target.value as any)}
+                  className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-rose-500 cursor-pointer"
+                >
+                  <option value="all">ທຸກປະເພດບິນ</option>
+                  <option value="ktv_room">ຫ້ອງ KTV</option>
+                  <option value="pos">ຂາຍໜ້າຮ້ານ (POS)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Bulk Selection Bar if any checked */}
+            {selectedBillIds.size > 0 && (
+              <div className="bg-rose-950/40 border border-rose-800/80 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2 text-rose-200">
+                  <CheckSquare className="w-4 h-4 text-rose-400" />
+                  <span>ເລືອກແລ້ວ <strong>{selectedBillIds.size}</strong> ໃບບິນ</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedBillIds(new Set())}
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+                  >
+                    ຍົກເລີກການເລືອກ
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openDeleteSelectedBills}
+                    className="px-3.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-black flex items-center gap-1.5 shadow-md shadow-red-600/30 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>ລຶບ {selectedBillIds.size} ບິນທີ່ເລືອກ (Admin)</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Managed Bills Table */}
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
+            <div className="p-4 border-b border-slate-800 flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Receipt className="w-4 h-4 text-amber-400" />
+                <h3 className="font-bold text-sm text-slate-100">
+                  ລາຍການໃບບິນ ({managedBills.length} ບິນ)
+                </h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (selectedBillIds.size === managedBills.length && managedBills.length > 0) {
+                      setSelectedBillIds(new Set());
+                    } else {
+                      setSelectedBillIds(new Set(managedBills.map((b) => b.id)));
+                    }
+                  }}
+                  className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                >
+                  {selectedBillIds.size === managedBills.length && managedBills.length > 0 ? (
+                    <>
+                      <CheckSquare className="w-3.5 h-3.5 text-rose-400" />
+                      <span>ຍົກເລີກເລືອກທັງໝົດ</span>
+                    </>
+                  ) : (
+                    <>
+                      <Square className="w-3.5 h-3.5 text-slate-400" />
+                      <span>ເລືອກທັງໝົດ ({managedBills.length})</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-950/80 border-b border-slate-800 text-[11px] text-slate-400 uppercase">
+                    <th className="py-3 px-3 text-center w-10">
+                      <input
+                        type="checkbox"
+                        checked={selectedBillIds.size === managedBills.length && managedBills.length > 0}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedBillIds(new Set(managedBills.map((b) => b.id)));
+                          } else {
+                            setSelectedBillIds(new Set());
+                          }
+                        }}
+                        className="rounded accent-rose-500 cursor-pointer"
+                      />
+                    </th>
+                    <th className="py-3 px-4">ເລກທີບິນ</th>
+                    <th className="py-3 px-4">ວັນທີ & ເວລາ</th>
+                    <th className="py-3 px-4">ປະເພດ / ຫ້ອງ</th>
+                    <th className="py-3 px-4">ຜູ້ຂາຍ / ພະນັກງານ</th>
+                    <th className="py-3 px-4 text-right">ຄ່າຫ້ອງ</th>
+                    <th className="py-3 px-4 text-right">ຕົ້ນທຶນສິນຄ້າ</th>
+                    <th className="py-3 px-4 text-right">ຍອດສຸດທິ</th>
+                    <th className="py-3 px-4 text-right">ກຳໄລບິນ</th>
+                    <th className="py-3 px-4 text-center">ການດຳເນີນການ</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {managedBills.length === 0 ? (
+                    <tr>
+                      <td colSpan={10} className="py-12 text-center text-slate-500">
+                        ບໍ່ພົບໃບບິນຕາມເງື່ອນໄຂທີ່ເລືອກ
+                      </td>
+                    </tr>
+                  ) : (
+                    managedBills.map((b) => {
+                      const { billItemsCost, billProfit } = getBillCostAndProfit(b);
+                      const isChecked = selectedBillIds.has(b.id);
+                      return (
+                        <tr
+                          key={b.id}
+                          className={`hover:bg-slate-800/40 transition-colors ${
+                            isChecked ? 'bg-rose-950/20' : ''
+                          }`}
+                        >
+                          <td className="py-3 px-3 text-center">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={(e) => {
+                                const next = new Set(selectedBillIds);
+                                if (e.target.checked) {
+                                  next.add(b.id);
+                                } else {
+                                  next.delete(b.id);
+                                }
+                                setSelectedBillIds(next);
+                              }}
+                              className="rounded accent-rose-500 cursor-pointer"
+                            />
+                          </td>
+                          <td className="py-3 px-4 font-mono font-bold text-amber-400">
+                            {b.billNumber}
+                          </td>
+                          <td className="py-3 px-4 text-slate-400 whitespace-nowrap">
+                            <div>{new Date(b.endTime).toLocaleDateString('lo-LA')}</div>
+                            <div className="text-[10px] text-slate-500">{new Date(b.endTime).toLocaleTimeString('lo-LA')}</div>
+                          </td>
+                          <td className="py-3 px-4">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                                b.type === 'ktv_room'
+                                  ? 'bg-purple-950/80 text-purple-300 border border-purple-800'
+                                  : 'bg-slate-800 text-slate-300'
+                              }`}
+                            >
+                              {b.roomName || 'POS ໜ້າຮ້ານ'}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-slate-300 font-semibold">{b.staffName}</td>
+                          <td className="py-3 px-4 text-right font-mono text-slate-400">
+                            {formatCurrency(b.roomCharge, settings.currencySymbol)}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono text-rose-400">
+                            {formatCurrency(billItemsCost, settings.currencySymbol)}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-bold text-amber-300">
+                            {formatCurrency(b.total, settings.currencySymbol)}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-black text-emerald-400">
+                            +{formatCurrency(billProfit, settings.currencySymbol)}
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                onClick={() => setInspectedBill(b)}
+                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white cursor-pointer"
+                                title="ເບິ່ງລາຍລະອຽດບິນ"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openDeleteSingleBill(b)}
+                                className="p-1.5 rounded-lg bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 hover:text-white cursor-pointer transition-all"
+                                title="Admin ລຶບໃບບິນນີ້"
+                              >
+                                <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -1737,12 +2211,12 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
               >
                 ປິດ
               </button>
-              {currentRole === 'admin' && onDeleteBill && (
+              {onDeleteBill && (
                 <button
                   type="button"
                   onClick={() => {
                     const toDelete = inspectedBill;
-                    handleDeleteBill(toDelete);
+                    openDeleteSingleBill(toDelete);
                   }}
                   className="py-2.5 px-4 rounded-xl bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 hover:text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all"
                   title="Admin ລຶບໃບບິນນີ້ອອກຈາກລະບົບ"
@@ -1751,6 +2225,110 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                   <span>ລຶບໃບບິນນີ້ (Admin)</span>
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Admin Delete Confirmation Modal (In-App PIN Guarded) */}
+      {deleteModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 border border-rose-900/60 rounded-3xl p-6 w-full max-w-md shadow-2xl text-white relative animate-fadeIn">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-rose-950/90 border border-rose-700/60 flex items-center justify-center text-rose-400">
+                  <ShieldAlert className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="font-black text-sm text-slate-100">{deleteModal.title}</h4>
+                  <p className="text-[11px] text-rose-400 font-semibold">ຢືນຢັນສິດ Admin ເພື່ອລຶບຂໍ້ມູນ</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDeleteModal((prev) => ({ ...prev, isOpen: false }))}
+                className="p-1.5 rounded-xl hover:bg-slate-800 text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Warning Message & Details */}
+            <div className="space-y-3 mb-5">
+              <div className="bg-rose-950/30 border border-rose-800/40 rounded-2xl p-3 text-xs text-rose-200">
+                <p className="leading-relaxed">{deleteModal.description}</p>
+              </div>
+
+              <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-3 space-y-1.5 text-xs">
+                <div className="flex justify-between text-slate-400">
+                  <span>ຈຳນວນໃບບິນທີ່ຈະຖືກລຶບ:</span>
+                  <span className="font-mono font-bold text-amber-400">{deleteModal.count} ບິນ</span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>ຍອດຂາຍລວມທີ່ຈະຖືກລຶບ:</span>
+                  <span className="font-mono font-bold text-rose-400">
+                    {formatCurrency(deleteModal.totalAmount, settings.currencySymbol)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Admin PIN Input */}
+              <div className="pt-2">
+                <label className="block text-xs font-bold text-slate-300 mb-1.5 flex items-center gap-1.5">
+                  <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                  <span>ປ້ອນລະຫັດ Admin PIN ເພື່ອຢືນຢັນ:</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type={showPinInput ? 'text' : 'password'}
+                    autoFocus
+                    maxLength={10}
+                    placeholder="ປ້ອນລະຫັດ PIN (ເລີ່ມຕົ້ນ: 8888)"
+                    value={adminPinInput}
+                    onChange={(e) => {
+                      setAdminPinInput(e.target.value);
+                      if (pinError) setPinError('');
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleConfirmDelete();
+                    }}
+                    className="w-full bg-slate-950 border border-slate-700 focus:border-rose-500 rounded-2xl px-4 py-3 text-sm text-center font-mono tracking-widest text-white focus:outline-none focus:ring-2 focus:ring-rose-500/50"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPinInput(!showPinInput)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-1 cursor-pointer"
+                  >
+                    {showPinInput ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                {pinError && (
+                  <p className="text-rose-400 text-[11px] font-bold mt-1.5 flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3" />
+                    <span>{pinError}</span>
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setDeleteModal((prev) => ({ ...prev, isOpen: false }))}
+                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer transition-colors"
+              >
+                ຍົກເລີກ (Cancel)
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white text-xs font-black shadow-lg shadow-rose-600/30 cursor-pointer transition-all flex items-center justify-center gap-1.5"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>ຢືນຢັນລຶບ (Confirm)</span>
+              </button>
             </div>
           </div>
         </div>
