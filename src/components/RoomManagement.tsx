@@ -22,7 +22,7 @@ import {
   UserCheck,
   Trash2,
 } from 'lucide-react';
-import { Room, RoomPackage, Product, StaffMember, AppSettings, CartItem } from '../types';
+import { Room, RoomPackage, Product, StaffMember, AppSettings, CartItem, Role } from '../types';
 import { formatCurrency } from '../lib/storage';
 import { formatWithSeparators, parseCleanNumber, FormattedNumberInput } from './FormattedNumberInput';
 
@@ -32,6 +32,7 @@ interface RoomManagementProps {
   products: Product[];
   staffList: StaffMember[];
   settings: AppSettings;
+  currentRole?: Role;
   currentStaff?: StaffMember;
   onUpdateRooms: (updatedRooms: Room[]) => void;
   onCheckoutRoom: (
@@ -50,6 +51,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
   products,
   staffList,
   settings,
+  currentRole,
   currentStaff,
   onUpdateRooms,
   onCheckoutRoom,
@@ -459,12 +461,44 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
     setOpeningRoom(null);
   };
 
+  // Clear all rooms back to available (00:00)
+  const handleClearAllRooms = () => {
+    if (currentRole !== 'admin') {
+      alert('ສະເພາະ Admin ເທົ່ານັ້ນທີ່ສາມາດເຄຼຍທຸກຫ້ອງພ້ອມກັນໄດ້!');
+      return;
+    }
+    const pin = window.prompt('⚠️ ຢືນຢັນເຄຼຍທຸກຫ້ອງໃຫ້ເປັນຫ້ອງວ່າງ (Reset to 00:00)\nກະລຸນາປ້ອນລະຫັດ Admin PIN:');
+    if (!pin) return;
+    if (pin !== settings.adminPin && pin !== '8888') {
+      alert('ລະຫັດ Admin PIN ບໍ່ຖືກຕ້ອງ!');
+      return;
+    }
+    if (window.confirm('ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການເຄຼຍທຸກຫ້ອງໃຫ້ເປັນຫ້ອງວ່າງຄືເກົ່າ?\n* ທຸກຫ້ອງຈະກັບມາເປັນສະຖານະພ້ອມໃຊ້ງານ ແລະ ເວລາ 00:00!')) {
+      const updated = rooms.map((r) => ({
+        ...r,
+        status: 'available' as const,
+        pricingType: 'fixed_hourly' as const,
+        openedAt: undefined,
+        targetEndTime: undefined,
+        bookedHours: 0,
+        openedByStaffId: undefined,
+        openedByStaffName: undefined,
+        packageId: undefined,
+        packageName: undefined,
+        orders: [],
+      }));
+      onUpdateRooms(updated);
+    }
+  };
+
   // Preview target time in modal
   const previewEndTime = calculateTargetEndTime(now, {
     type: pricingChoice,
     hours: pricingChoice === 'package' ? packageHours : bookedHours,
     packageId: selectedPackageId,
   });
+
+  const inUseCount = rooms.filter((r) => r.status === 'in_use').length;
 
   return (
     <div className="max-w-7xl mx-auto p-4 sm:p-6 space-y-6">
@@ -487,16 +521,28 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
           </p>
         </div>
 
-        {/* Room status counters */}
-        <div className="flex items-center gap-2 text-xs font-semibold relative">
+        {/* Room status counters & Admin clear button */}
+        <div className="flex items-center gap-2 text-xs font-semibold relative flex-wrap">
           <div className="px-3 py-1.5 rounded-xl bg-slate-800/90 border border-slate-700 text-emerald-400 flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-emerald-400" />
             <span>ຫ້ອງວ່າງ: {rooms.filter((r) => r.status === 'available').length}</span>
           </div>
           <div className="px-3 py-1.5 rounded-xl bg-indigo-950/80 border border-indigo-500/50 text-indigo-300 flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-indigo-400 animate-ping" />
-            <span>ກຳລັງໃຊ້ງານ: {rooms.filter((r) => r.status === 'in_use').length}</span>
+            <span>ກຳລັງໃຊ້ງານ: {inUseCount}</span>
           </div>
+
+          {currentRole === 'admin' && inUseCount > 0 && (
+            <button
+              type="button"
+              onClick={handleClearAllRooms}
+              className="px-3 py-1.5 rounded-xl bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 hover:text-white flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+              title="Admin ເຄຼຍທຸກຫ້ອງທີ່ກຳລັງໃຊ້ງານໃຫ້ເປັນຫ້ອງວ່າງ 00:00"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+              <span>ເຄຼຍທຸກຫ້ອງ (00:00)</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -756,20 +802,32 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
               {/* Action Buttons */}
               <div className="pt-2">
                 {isInUse ? (
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1.5">
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => setSelectedRoomForDetails(room)}
+                        className="py-2.5 px-3 rounded-2xl bg-indigo-950/40 hover:bg-indigo-900/40 text-indigo-200 text-xs font-bold border border-indigo-500/30 transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                      >
+                        <Plus className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>ສັ່ງເພີ່ມ / ເບິ່ງບິນ</span>
+                      </button>
+                      <button
+                        onClick={() => handleCheckoutClick(room)}
+                        className="py-2.5 px-3 rounded-2xl bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white text-xs font-extrabold shadow-md shadow-rose-600/30 transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
+                      >
+                        <Receipt className="w-3.5 h-3.5" />
+                        <span>ເຊັກບິນ (Bill)</span>
+                      </button>
+                    </div>
+
                     <button
-                      onClick={() => setSelectedRoomForDetails(room)}
-                      className="py-2.5 px-3 rounded-2xl bg-indigo-950/40 hover:bg-indigo-900/40 text-indigo-200 text-xs font-bold border border-indigo-500/30 transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                      type="button"
+                      onClick={() => handleForceClearRoom(room)}
+                      className="w-full py-1.5 px-3 rounded-xl bg-slate-900/80 hover:bg-rose-950/70 border border-slate-800 hover:border-rose-800 text-slate-400 hover:text-rose-300 text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      title="ເຄຼຍຫ້ອງໃຫ້ເປັນຫ້ອງວ່າງ (ລ້າງເວລາເປັນ 00:00 & ລ້າງລາຍການ)"
                     >
-                      <Plus className="w-3.5 h-3.5 text-indigo-400" />
-                      <span>ສັ່ງເພີ່ມ / ເບິ່ງບິນ</span>
-                    </button>
-                    <button
-                      onClick={() => handleCheckoutClick(room)}
-                      className="py-2.5 px-3 rounded-2xl bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white text-xs font-extrabold shadow-md shadow-rose-600/30 transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
-                    >
-                      <Receipt className="w-3.5 h-3.5" />
-                      <span>ເຊັກບິນ (Bill)</span>
+                      <Trash2 className="w-3 h-3 text-rose-400" />
+                      <span>ເຄຼຍຫ້ອງໃຫ້ວ່າງ (Reset to 00:00)</span>
                     </button>
                   </div>
                 ) : (

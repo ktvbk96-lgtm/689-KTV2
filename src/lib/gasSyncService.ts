@@ -24,6 +24,7 @@ export interface GasFullDataPayload {
   staff?: StaffMember[];
   settings?: Partial<AppSettings>;
   debts?: DebtRecord[];
+  bills?: BillRecord[];
   timestamp?: string;
 }
 
@@ -575,7 +576,7 @@ export const fetchLatestDataFromGas = async (
  */
 export const sendDataToGas = async (
   gasUrl: string,
-  action: 'saveProducts' | 'saveRooms' | 'savePackages' | 'saveStaff' | 'saveDebts' | 'saveBill' | 'syncAll' | 'saveSettings',
+  action: 'saveProducts' | 'saveRooms' | 'savePackages' | 'saveStaff' | 'saveDebts' | 'saveBill' | 'saveBills' | 'syncAll' | 'saveSettings' | 'clearAll' | 'resetAll' | string,
   data: any,
   timeoutMs: number = 9000
 ): Promise<GasSyncResponse> => {

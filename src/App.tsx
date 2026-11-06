@@ -28,9 +28,17 @@ import {
   saveStoredSettings,
   getStoredBills,
   saveStoredBill,
+  updateStoredBills,
   getStoredDebts,
   saveStoredDebts,
 } from './lib/storage';
+import {
+  INITIAL_PRODUCTS,
+  INITIAL_ROOMS,
+  INITIAL_PACKAGES,
+  INITIAL_STAFF,
+  INITIAL_SETTINGS,
+} from './lib/initialData';
 import { getBluetoothStatus, tryAutoReconnectBluetooth } from './lib/bluetoothPrinter';
 import { getAccessToken, initAuth } from './lib/firebase';
 import { appendBillToSheet, syncInventoryToSheet } from './lib/googleSheets';
@@ -117,7 +125,8 @@ export default function App() {
       onDataReceived: (remoteData) => {
         let changed = false;
 
-        if (remoteData.rooms && Array.isArray(remoteData.rooms) && remoteData.rooms.length > 0) {
+        // 1. Rooms
+        if (Array.isArray(remoteData.rooms)) {
           if (JSON.stringify(roomsRef.current) !== JSON.stringify(remoteData.rooms)) {
             setRooms(remoteData.rooms);
             saveStoredRooms(remoteData.rooms);
@@ -125,7 +134,8 @@ export default function App() {
           }
         }
 
-        if (remoteData.products && Array.isArray(remoteData.products) && remoteData.products.length > 0) {
+        // 2. Products
+        if (Array.isArray(remoteData.products)) {
           if (JSON.stringify(productsRef.current) !== JSON.stringify(remoteData.products)) {
             setProducts(remoteData.products);
             saveStoredProducts(remoteData.products);
@@ -133,7 +143,8 @@ export default function App() {
           }
         }
 
-        if (remoteData.packages && Array.isArray(remoteData.packages) && remoteData.packages.length > 0) {
+        // 3. Packages
+        if (Array.isArray(remoteData.packages)) {
           if (JSON.stringify(packagesRef.current) !== JSON.stringify(remoteData.packages)) {
             setPackages(remoteData.packages);
             saveStoredPackages(remoteData.packages);
@@ -141,7 +152,8 @@ export default function App() {
           }
         }
 
-        if (remoteData.staff && Array.isArray(remoteData.staff) && remoteData.staff.length > 0) {
+        // 4. Staff
+        if (Array.isArray(remoteData.staff)) {
           if (JSON.stringify(staffRef.current) !== JSON.stringify(remoteData.staff)) {
             setStaffList(remoteData.staff);
             saveStoredStaff(remoteData.staff);
@@ -149,7 +161,8 @@ export default function App() {
           }
         }
 
-        if (remoteData.debts && Array.isArray(remoteData.debts) && remoteData.debts.length > 0) {
+        // 5. Debts
+        if (Array.isArray(remoteData.debts)) {
           if (JSON.stringify(debtsRef.current) !== JSON.stringify(remoteData.debts)) {
             setDebts(remoteData.debts);
             saveStoredDebts(remoteData.debts);
@@ -157,11 +170,25 @@ export default function App() {
           }
         }
 
-        if (remoteData.bills && Array.isArray(remoteData.bills) && remoteData.bills.length > 0) {
+        // 6. Bills
+        if (Array.isArray(remoteData.bills)) {
           setBills(remoteData.bills);
+          updateStoredBills(remoteData.bills);
+          changed = true;
+        } else if (remoteData.bill) {
+          setBills((prev) => {
+            if (!prev.some((b) => b.id === remoteData.bill!.id)) {
+              const updated = [remoteData.bill!, ...prev];
+              updateStoredBills(updated);
+              return updated;
+            }
+            return prev;
+          });
+          changed = true;
         }
 
-        if (remoteData.settings) {
+        // 7. Settings
+        if (remoteData.settings && typeof remoteData.settings === 'object') {
           setSettings((prev) => {
             const merged = { ...prev, ...remoteData.settings };
             saveStoredSettings(merged);
@@ -187,28 +214,92 @@ export default function App() {
 
     // 2. Real-time Firebase Firestore Cloud Database Listener (Project: ktv-e97cb)
     const unsubFirebase = listenToFirebaseStore((remoteData) => {
+      // Ignore if this update was pushed by this exact device
+      if (remoteData.lastSenderId && remoteData.lastSenderId === getDeviceId()) {
+        return;
+      }
+
       let changed = false;
-      if (remoteData.saveRooms?.rooms && Array.isArray(remoteData.saveRooms.rooms)) {
-        if (JSON.stringify(roomsRef.current) !== JSON.stringify(remoteData.saveRooms.rooms)) {
-          setRooms(remoteData.saveRooms.rooms);
-          saveStoredRooms(remoteData.saveRooms.rooms);
+
+      // 1. Rooms
+      const rRooms = remoteData.rooms ?? remoteData.saveRooms?.rooms;
+      if (Array.isArray(rRooms)) {
+        if (JSON.stringify(roomsRef.current) !== JSON.stringify(rRooms)) {
+          setRooms(rRooms);
+          saveStoredRooms(rRooms);
           changed = true;
         }
       }
-      if (remoteData.saveProducts?.products && Array.isArray(remoteData.saveProducts.products)) {
-        if (JSON.stringify(productsRef.current) !== JSON.stringify(remoteData.saveProducts.products)) {
-          setProducts(remoteData.saveProducts.products);
-          saveStoredProducts(remoteData.saveProducts.products);
+
+      // 2. Products
+      const rProducts = remoteData.products ?? remoteData.saveProducts?.products;
+      if (Array.isArray(rProducts)) {
+        if (JSON.stringify(productsRef.current) !== JSON.stringify(rProducts)) {
+          setProducts(rProducts);
+          saveStoredProducts(rProducts);
           changed = true;
         }
       }
-      if (remoteData.saveDebts?.debts && Array.isArray(remoteData.saveDebts.debts)) {
-        if (JSON.stringify(debtsRef.current) !== JSON.stringify(remoteData.saveDebts.debts)) {
-          setDebts(remoteData.saveDebts.debts);
-          saveStoredDebts(remoteData.saveDebts.debts);
+
+      // 3. Packages
+      const rPackages = remoteData.packages ?? remoteData.savePackages?.packages;
+      if (Array.isArray(rPackages)) {
+        if (JSON.stringify(packagesRef.current) !== JSON.stringify(rPackages)) {
+          setPackages(rPackages);
+          saveStoredPackages(rPackages);
           changed = true;
         }
       }
+
+      // 4. Staff
+      const rStaff = remoteData.staff ?? remoteData.saveStaff?.staff;
+      if (Array.isArray(rStaff)) {
+        if (JSON.stringify(staffRef.current) !== JSON.stringify(rStaff)) {
+          setStaffList(rStaff);
+          saveStoredStaff(rStaff);
+          changed = true;
+        }
+      }
+
+      // 5. Debts
+      const rDebts = remoteData.debts ?? remoteData.saveDebts?.debts;
+      if (Array.isArray(rDebts)) {
+        if (JSON.stringify(debtsRef.current) !== JSON.stringify(rDebts)) {
+          setDebts(rDebts);
+          saveStoredDebts(rDebts);
+          changed = true;
+        }
+      }
+
+      // 6. Bills
+      const rBills = remoteData.bills ?? remoteData.saveBills?.bills;
+      if (Array.isArray(rBills)) {
+        setBills(rBills);
+        updateStoredBills(rBills);
+        changed = true;
+      } else if (remoteData.bill ?? remoteData.saveBill?.bill) {
+        const singleBill = remoteData.bill ?? remoteData.saveBill?.bill;
+        setBills((prev) => {
+          if (!prev.some((b) => b.id === singleBill.id)) {
+            const updated = [singleBill, ...prev];
+            updateStoredBills(updated);
+            return updated;
+          }
+          return prev;
+        });
+        changed = true;
+      }
+
+      // 7. Settings
+      const rSettings = remoteData.settings ?? remoteData.saveSettings?.settings;
+      if (rSettings && typeof rSettings === 'object') {
+        setSettings((prev) => {
+          const merged = { ...prev, ...rSettings };
+          saveStoredSettings(merged);
+          return merged;
+        });
+      }
+
       if (changed) {
         showToast('🔥 ອັບເດດ Cloud Real-time (Firebase ktv-e97cb) ສຳເລັດແລ້ວ!');
       }
@@ -252,6 +343,7 @@ export default function App() {
       window.removeEventListener('689ktv_bluetooth_disconnected', handleDisconnected);
     };
   }, []);
+
   const triggerGasSync = (
     action: SyncAction,
     payload: any
@@ -260,7 +352,15 @@ export default function App() {
     pushMultiDeviceUpdate(action, payload);
 
     // 2. Also push to Firebase Firestore Cloud (ktv-e97cb)
-    pushToFirebaseStore({ [action]: payload });
+    const deviceId = getDeviceId();
+    const firestoreData: any = {
+      lastSenderId: deviceId,
+      lastAction: action,
+      lastUpdated: new Date().toISOString(),
+      ...payload,
+      [action]: payload,
+    };
+    pushToFirebaseStore(firestoreData);
 
     // 3. Also forward to Google Sheets Web App if configured
     if (!settings.gasWebAppUrl || settings.realtimeSyncEnabled === false) return;
@@ -307,7 +407,7 @@ export default function App() {
         let hasAnyUpdates = false;
 
         // 1. Sync Products if remote changed
-        if (res.data.products && Array.isArray(res.data.products) && res.data.products.length > 0) {
+        if (res.data.products && Array.isArray(res.data.products)) {
           const currentStr = JSON.stringify(productsRef.current);
           const newStr = JSON.stringify(res.data.products);
           if (currentStr !== newStr) {
@@ -318,7 +418,7 @@ export default function App() {
         }
 
         // 2. Sync Rooms if remote changed
-        if (res.data.rooms && Array.isArray(res.data.rooms) && res.data.rooms.length > 0) {
+        if (res.data.rooms && Array.isArray(res.data.rooms)) {
           const currentStr = JSON.stringify(roomsRef.current);
           const newStr = JSON.stringify(res.data.rooms);
           if (currentStr !== newStr) {
@@ -329,7 +429,7 @@ export default function App() {
         }
 
         // 3. Sync Packages if remote changed
-        if (res.data.packages && Array.isArray(res.data.packages) && res.data.packages.length > 0) {
+        if (res.data.packages && Array.isArray(res.data.packages)) {
           const currentStr = JSON.stringify(packagesRef.current);
           const newStr = JSON.stringify(res.data.packages);
           if (currentStr !== newStr) {
@@ -340,7 +440,7 @@ export default function App() {
         }
 
         // 4. Sync Staff if remote changed
-        if (res.data.staff && Array.isArray(res.data.staff) && res.data.staff.length > 0) {
+        if (res.data.staff && Array.isArray(res.data.staff)) {
           const currentStr = JSON.stringify(staffRef.current);
           const newStr = JSON.stringify(res.data.staff);
           if (currentStr !== newStr) {
@@ -351,12 +451,23 @@ export default function App() {
         }
 
         // 5. Sync Debts if remote changed
-        if (res.data.debts && Array.isArray(res.data.debts) && res.data.debts.length > 0) {
+        if (res.data.debts && Array.isArray(res.data.debts)) {
           const currentStr = JSON.stringify(debtsRef.current);
           const newStr = JSON.stringify(res.data.debts);
           if (currentStr !== newStr) {
             setDebts(res.data.debts);
             saveStoredDebts(res.data.debts);
+            hasAnyUpdates = true;
+          }
+        }
+
+        // 6. Sync Bills if remote changed
+        if (res.data.bills && Array.isArray(res.data.bills)) {
+          const currentStr = JSON.stringify(bills);
+          const newStr = JSON.stringify(res.data.bills);
+          if (currentStr !== newStr) {
+            setBills(res.data.bills);
+            updateStoredBills(res.data.bills);
             hasAnyUpdates = true;
           }
         }
@@ -919,6 +1030,7 @@ export default function App() {
             staffList={staffList}
             settings={settings}
             currentStaff={currentStaff}
+            currentRole={currentRole}
             onUpdateRooms={(updated) => {
               setRooms(updated);
               saveStoredRooms(updated);
@@ -964,8 +1076,22 @@ export default function App() {
             bills={bills}
             products={products}
             settings={settings}
+            currentRole={currentRole}
             onSyncAllToSheets={handleBulkSyncAllToSheets}
             isSyncingSheets={isSyncingAllSheets}
+            onDeleteBill={(billId) => {
+              const updated = bills.filter((b) => b.id !== billId);
+              setBills(updated);
+              updateStoredBills(updated);
+              triggerGasSync('saveBills', { bills: updated });
+              showToast('ລຶບໃບບິນສຳເລັດແລ້ວ!');
+            }}
+            onClearAllBills={() => {
+              setBills([]);
+              updateStoredBills([]);
+              triggerGasSync('saveBills', { bills: [] });
+              showToast('ລ້າງປະຫວັດບິນທັງໝົດສຳເລັດແລ້ວ!');
+            }}
           />
         )}
 
@@ -976,9 +1102,12 @@ export default function App() {
             packages={packages}
             rooms={rooms}
             products={products}
+            bills={bills}
+            debts={debts}
             onSaveSettings={(newSettings) => {
               setSettings(newSettings);
               saveStoredSettings(newSettings);
+              triggerGasSync('saveSettings', { settings: newSettings });
               showToast('ບັນທຶກການຕັ້ງຄ່າຮ້ານສຳເລັດແລ້ວ!');
             }}
             onSaveStaff={(newStaff) => {
@@ -1001,6 +1130,42 @@ export default function App() {
               setProducts(newProducts);
               saveStoredProducts(newProducts);
               triggerGasSync('saveProducts', { products: newProducts });
+            }}
+            onSaveBills={(newBills) => {
+              setBills(newBills);
+              updateStoredBills(newBills);
+              triggerGasSync('saveBills', { bills: newBills });
+            }}
+            onSaveDebts={(newDebts) => {
+              setDebts(newDebts);
+              saveStoredDebts(newDebts);
+              triggerGasSync('saveDebts', { debts: newDebts });
+            }}
+            onMasterReset={() => {
+              setProducts(INITIAL_PRODUCTS);
+              saveStoredProducts(INITIAL_PRODUCTS);
+              setRooms(INITIAL_ROOMS);
+              saveStoredRooms(INITIAL_ROOMS);
+              setPackages(INITIAL_PACKAGES);
+              saveStoredPackages(INITIAL_PACKAGES);
+              setStaffList(INITIAL_STAFF);
+              saveStoredStaff(INITIAL_STAFF);
+              setBills([]);
+              updateStoredBills([]);
+              setDebts([]);
+              saveStoredDebts([]);
+              setSettings(INITIAL_SETTINGS);
+              saveStoredSettings(INITIAL_SETTINGS);
+              triggerGasSync('resetAll', {
+                products: INITIAL_PRODUCTS,
+                rooms: INITIAL_ROOMS,
+                packages: INITIAL_PACKAGES,
+                staff: INITIAL_STAFF,
+                bills: [],
+                debts: [],
+                settings: INITIAL_SETTINGS,
+              });
+              showToast('💥 ລ້າງລະບົບ ແລະ ຄືນຄ່າເລີ່ມຕົ້ນທຸກຟັງຊັນສຳເລັດແລ້ວ!');
             }}
             bluetoothConnected={bluetoothConnected}
             onRefreshBluetoothStatus={() => {

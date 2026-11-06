@@ -28,6 +28,9 @@ export type SyncAction =
   | 'saveDebts'
   | 'saveSettings'
   | 'saveBill'
+  | 'saveBills'
+  | 'clearAll'
+  | 'resetAll'
   | 'syncAll';
 
 export interface SyncCallbacks {

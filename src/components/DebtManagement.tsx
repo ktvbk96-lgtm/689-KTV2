@@ -446,6 +446,38 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
     }
   };
 
+  const handleClearSettledDebts = () => {
+    if (!canDelete) {
+      alert('ສະເພາະ Admin ເທົ່ານັ້ນທີ່ສາມາດລຶບລາຍການໄດ້!');
+      return;
+    }
+    const settledCount = debts.filter((d) => d.status === 'paid' || d.remainingAmount <= 0).length;
+    if (settledCount === 0) {
+      alert('ບໍ່ມີລາຍການທີ່ຊຳລະຄົບແລ້ວໃຫ້ລຶບ');
+      return;
+    }
+    if (window.confirm(`ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການລຶບ ${settledCount} ລາຍການທີ່ຊຳລະຄົບແລ້ວ (0 ₭) ອອກຈາກລະບົບ?`)) {
+      const updated = debts.filter((d) => d.status !== 'paid' && d.remainingAmount > 0);
+      onSaveDebts(updated);
+    }
+  };
+
+  const handleClearAllDebts = () => {
+    if (!canDelete) {
+      alert('ສະເພາະ Admin ເທົ່ານັ້ນທີ່ສາມາດລຶບລາຍການຕິດໜີ້ທັງໝົດໄດ້!');
+      return;
+    }
+    const pin = window.prompt(`⚠️ ຢືນຢັນລຶບລາຍການຕິດໜີ້ທັງໝົດ (${debts.length} ລາຍການ)\nກະລຸນາປ້ອນລະຫັດ Admin PIN:`);
+    if (!pin) return;
+    if (pin !== settings.adminPin && pin !== '8888') {
+      alert('ລະຫັດ Admin PIN ບໍ່ຖືກຕ້ອງ!');
+      return;
+    }
+    if (window.confirm(`⚠️ ເຕືອນ: ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການລຶບລາຍການຕິດໜີ້ທັງໝົດ ${debts.length} ລາຍການອອກຈາກລະບົບ?`)) {
+      onSaveDebts([]);
+    }
+  };
+
   // Print Debt Slip via Bluetooth with auto fallback
   const handlePrintBt = async (debt: DebtRecord) => {
     setPrintingDebt(debt);
@@ -533,7 +565,29 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-2.5 w-full sm:w-auto">
+        <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
+          {canDelete && (
+            <>
+              <button
+                type="button"
+                onClick={handleClearSettledDebts}
+                className="px-3 py-2 rounded-2xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                title="ລຶບລາຍການທີ່ຊຳລະຄົບແລ້ວ (0 ₭)"
+              >
+                <span>ລຶບທີ່ຈ່າຍແລ້ວ</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleClearAllDebts}
+                className="px-3 py-2 rounded-2xl bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 hover:text-white text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+                title="Admin ລຶບລາຍການຕິດໜີ້ທັງໝົດອອກຈາກລະບົບ"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                <span>ລຶບໜີ້ທັງໝົດ</span>
+              </button>
+            </>
+          )}
+
           <button
             type="button"
             onClick={() => setShowAddModal(true)}

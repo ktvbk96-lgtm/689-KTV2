@@ -176,19 +176,19 @@ async function startServer() {
 
       let hasChanged = false;
 
-      if (action === 'saveRooms' && data?.rooms) {
+      if (action === 'saveRooms' && Array.isArray(data?.rooms)) {
         store.rooms = data.rooms;
         hasChanged = true;
-      } else if (action === 'saveProducts' && data?.products) {
+      } else if (action === 'saveProducts' && Array.isArray(data?.products)) {
         store.products = data.products;
         hasChanged = true;
-      } else if (action === 'savePackages' && data?.packages) {
+      } else if (action === 'savePackages' && Array.isArray(data?.packages)) {
         store.packages = data.packages;
         hasChanged = true;
-      } else if (action === 'saveStaff' && data?.staff) {
+      } else if (action === 'saveStaff' && Array.isArray(data?.staff)) {
         store.staff = data.staff;
         hasChanged = true;
-      } else if (action === 'saveDebts' && data?.debts) {
+      } else if (action === 'saveDebts' && Array.isArray(data?.debts)) {
         store.debts = data.debts;
         hasChanged = true;
       } else if (action === 'saveSettings' && data?.settings) {
@@ -197,14 +197,17 @@ async function startServer() {
       } else if (action === 'saveBill' && data?.bill) {
         store.bills = [data.bill, ...(store.bills || [])];
         hasChanged = true;
-      } else if (action === 'syncAll' && data) {
-        if (data.rooms) store.rooms = data.rooms;
-        if (data.products) store.products = data.products;
-        if (data.packages) store.packages = data.packages;
-        if (data.staff) store.staff = data.staff;
-        if (data.debts) store.debts = data.debts;
+      } else if (action === 'saveBills' && Array.isArray(data?.bills)) {
+        store.bills = data.bills;
+        hasChanged = true;
+      } else if ((action === 'syncAll' || action === 'clearAll' || action === 'resetAll') && data) {
+        if (Array.isArray(data.rooms)) store.rooms = data.rooms;
+        if (Array.isArray(data.products)) store.products = data.products;
+        if (Array.isArray(data.packages)) store.packages = data.packages;
+        if (Array.isArray(data.staff)) store.staff = data.staff;
+        if (Array.isArray(data.debts)) store.debts = data.debts;
         if (data.settings) store.settings = { ...store.settings, ...data.settings };
-        if (data.bills) store.bills = data.bills;
+        if (Array.isArray(data.bills)) store.bills = data.bills;
         hasChanged = true;
       }
 

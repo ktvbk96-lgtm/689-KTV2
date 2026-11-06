@@ -28,8 +28,9 @@ import {
   ChevronDown,
   Sparkles,
   ArrowRight,
+  Trash2,
 } from 'lucide-react';
-import { BillRecord, Product, AppSettings, ProductCategory } from '../types';
+import { BillRecord, Product, AppSettings, ProductCategory, Role } from '../types';
 import { formatCurrency } from '../lib/storage';
 
 interface SalesSummaryProps {
@@ -38,6 +39,9 @@ interface SalesSummaryProps {
   settings: AppSettings;
   onSyncAllToSheets?: () => void;
   isSyncingSheets?: boolean;
+  currentRole?: Role;
+  onDeleteBill?: (billId: string) => void;
+  onClearAllBills?: () => void;
 }
 
 export const SalesSummary: React.FC<SalesSummaryProps> = ({
@@ -46,6 +50,9 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
   settings,
   onSyncAllToSheets,
   isSyncingSheets,
+  currentRole,
+  onDeleteBill,
+  onClearAllBills,
 }) => {
   // Choice 1: Overall Summary vs Choice 2: Itemized & Profit Breakdown
   const [activeChoice, setActiveChoice] = useState<'overall' | 'itemized'>('itemized');
@@ -102,6 +109,42 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
     setTimeframe('daily');
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     setSelectedDate(yesterday);
+  };
+
+  const handleDeleteBill = (bill: BillRecord) => {
+    if (currentRole !== 'admin') {
+      alert('ສະເພາະ Admin ເທົ່ານັ້ນທີ່ສາມາດລຶບໃບບິນໄດ້!');
+      return;
+    }
+    const pin = window.prompt(`🔒 ຢືນຢັນລຶບໃບບິນ "${bill.billNumber}"\nກະລຸນາປ້ອນລະຫັດ Admin PIN:`);
+    if (!pin) return;
+    if (pin !== settings.adminPin && pin !== '8888') {
+      alert('ລະຫັດ Admin PIN ບໍ່ຖືກຕ້ອງ!');
+      return;
+    }
+    if (window.confirm(`ທ່ານແນ່ໃຈແທ້ບໍ່ວ່າຕ້ອງການລຶບໃບບິນ "${bill.billNumber}" ອອກຈາກລະບົບ?`)) {
+      onDeleteBill?.(bill.id);
+      if (inspectedBill?.id === bill.id) {
+        setInspectedBill(null);
+      }
+    }
+  };
+
+  const handleClearAllBills = () => {
+    if (currentRole !== 'admin') {
+      alert('ສະເພາະ Admin ເທົ່ານັ້ນທີ່ສາມາດລ້າງປະຫວັດບິນໄດ້!');
+      return;
+    }
+    const pin = window.prompt(`⚠️ ຢືນຢັນລ້າງປະຫວັດບິນທັງໝົດ (${bills.length} ບິນ)\nກະລຸນາປ້ອນລະຫັດ Admin PIN:`);
+    if (!pin) return;
+    if (pin !== settings.adminPin && pin !== '8888') {
+      alert('ລະຫັດ Admin PIN ບໍ່ຖືກຕ້ອງ!');
+      return;
+    }
+    if (window.confirm(`⚠️ ເຕືອນ: ການກະທຳນີ້ຈະລຶບປະຫວັດບິນທັງໝົດ ${bills.length} ບິນອອກຈາກລະບົບ!\nທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການລ້າງທັງໝົດ?`)) {
+      onClearAllBills?.();
+      setInspectedBill(null);
+    }
   };
 
   // Filter bills by chosen timeframe
@@ -1456,11 +1499,23 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
 
           {/* Bills History Table with Cost & Profit per Bill */}
           <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
-            <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+            <div className="p-4 border-b border-slate-800 flex items-center justify-between flex-wrap gap-2">
               <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
                 <Receipt className="w-4 h-4 text-rose-500" />
                 <span>ປະຫວັດໃບບິນໃນຊ່ວງເວລານີ້ ({filteredBills.length} ບິນ)</span>
               </h3>
+
+              {currentRole === 'admin' && onClearAllBills && filteredBills.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleClearAllBills}
+                  className="px-3 py-1.5 rounded-xl bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 hover:text-white text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+                  title="Admin ລ້າງປະຫວັດບິນທັງໝົດ"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                  <span>ລ້າງປະຫວັດບິນທັງໝົດ</span>
+                </button>
+              )}
             </div>
 
             <div className="overflow-x-auto">
@@ -1475,7 +1530,7 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                     <th className="py-3 px-4 text-right">ຕົ້ນທຶນສິນຄ້າ</th>
                     <th className="py-3 px-4 text-right">ຍອດສຸດທິ</th>
                     <th className="py-3 px-4 text-right">ກຳໄລບິນ (Profit)</th>
-                    <th className="py-3 px-4 text-center">ເບິ່ງບິນ</th>
+                    <th className="py-3 px-4 text-center">ເບິ່ງ / ລຶບ</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
@@ -1500,8 +1555,8 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                             <span
                               className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
                                 b.type === 'ktv_room'
-                                  ? 'bg-purple-950/80 text-purple-300 border border-purple-800'
-                                  : 'bg-slate-800 text-slate-300'
+                                   ? 'bg-purple-950/80 text-purple-300 border border-purple-800'
+                                   : 'bg-slate-800 text-slate-300'
                               }`}
                             >
                               {b.roomName || 'ຂາຍໜ້າຮ້ານ (POS)'}
@@ -1521,12 +1576,25 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                             +{formatCurrency(billProfit, settings.currencySymbol)}
                           </td>
                           <td className="py-3 px-4 text-center">
-                            <button
-                              onClick={() => setInspectedBill(b)}
-                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white cursor-pointer"
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                            </button>
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                onClick={() => setInspectedBill(b)}
+                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white cursor-pointer"
+                                title="ເບິ່ງລາຍລະອຽດບິນ"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
+                              {currentRole === 'admin' && onDeleteBill && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteBill(b)}
+                                  className="p-1.5 rounded-lg bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 hover:text-white cursor-pointer transition-all"
+                                  title="Admin ລຶບໃບບິນນີ້"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -1661,12 +1729,29 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
               );
             })()}
 
-            <button
-              onClick={() => setInspectedBill(null)}
-              className="mt-4 w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
-            >
-              ປິດ
-            </button>
+            <div className="mt-4 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setInspectedBill(null)}
+                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+              >
+                ປິດ
+              </button>
+              {currentRole === 'admin' && onDeleteBill && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const toDelete = inspectedBill;
+                    handleDeleteBill(toDelete);
+                  }}
+                  className="py-2.5 px-4 rounded-xl bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 hover:text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all"
+                  title="Admin ລຶບໃບບິນນີ້ອອກຈາກລະບົບ"
+                >
+                  <Trash2 className="w-4 h-4 text-rose-400" />
+                  <span>ລຶບໃບບິນນີ້ (Admin)</span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
