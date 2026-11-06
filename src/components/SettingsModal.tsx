@@ -41,6 +41,8 @@ import {
   connectBluetoothPrinter,
   disconnectBluetoothPrinter,
   isWebBluetoothSupported,
+  isBluetoothBlockedError,
+  isRunningInIframe,
 } from '../lib/bluetoothPrinter';
 import { formatCurrency } from '../lib/storage';
 import { THEMES } from '../lib/theme';
@@ -138,11 +140,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       if (res.connected) {
         setBtMessage(`ເຊື່ອມຕໍ່ສຳເລັດ: ${res.deviceName}`);
         onRefreshBluetoothStatus();
+      } else if (res.isBlocked) {
+        setBtMessage(
+          '⚠️ Web Bluetooth ຖືກຈຳກັດ (Permissions Policy / iframe). ທ່ານສາມາດສັ່ງພິມໃບບິນຜ່ານ Standard Print (window.print()) ໄດ້ທັນທີ ໂດຍບໍ່ຕ້ອງໃຊ້ Bluetooth'
+        );
       } else {
         setBtMessage(`ບໍ່ສາມາດເຊື່ອມຕໍ່ໄດ້: ${res.error}`);
       }
     } catch (err: any) {
-      setBtMessage(`ຂໍ້ຜິດພາດ: ${err.message}`);
+      if (isBluetoothBlockedError(err)) {
+        setBtMessage(
+          '⚠️ Web Bluetooth ຖືກຈຳກັດ (Permissions Policy / iframe). ທ່ານສາມາດສັ່ງພິມໃບບິນຜ່ານ Standard Print (window.print()) ໄດ້ທັນທີ ໂດຍບໍ່ຕ້ອງໃຊ້ Bluetooth'
+        );
+      } else {
+        setBtMessage(`ຂໍ້ຜິດພາດ: ${err.message}`);
+      }
     } finally {
       setBtLoading(false);
     }
@@ -309,35 +321,93 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         )}
       </div>
 
-      {/* Tabs */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-        {[
-          { id: 'theme', label: 'ໂທນສີແອັບ (Theme)', icon: Palette },
-          { id: 'sellers', label: 'ຜູ້ຂາຍ & ພະນັກງານ', icon: Users },
-          { id: 'rooms', label: 'ຈັດການເບີຫ້ອງ (Rooms)', icon: DoorOpen },
-          { id: 'receipt', label: 'ຫົວໃບບິນ / ຮ້ານ', icon: Store },
-          { id: 'printer', label: 'Bluetooth Printer', icon: Bluetooth },
-          { id: 'security', label: 'ລະຫັດ PIN', icon: KeyRound },
-          { id: 'packages', label: 'ແພັກເກັດຫ້ອງ', icon: Package },
-          { id: 'sheets', label: 'Google Sheets Real-time', icon: FileSpreadsheet },
-        ].map((tab) => {
-          const Icon = tab.icon;
-          const isActive = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
-                isActive
-                  ? 'bg-gradient-to-r from-amber-500 to-rose-500 text-slate-950 shadow-md font-black'
-                  : 'bg-slate-900 border border-slate-800 text-slate-300 hover:bg-slate-800'
-              }`}
-            >
-              <Icon className="w-4 h-4" />
-              <span>{tab.label}</span>
-            </button>
-          );
-        })}
+      {/* 2-Row Responsive Tabs Navigation (ຈັດຮຽງ 2 ແຖວສະອາດຕາ ເບິ່ງເຫັນຄົບທຸກເມນູທັງ PC, Android, iOS) */}
+      <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-3 sm:p-4 shadow-xl space-y-2.5">
+        <div className="flex items-center justify-between px-1 text-xs pb-1 border-b border-slate-800/80">
+          <span className="font-bold text-slate-300 flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-gradient-to-r from-amber-400 to-rose-500 animate-pulse" />
+            <span>ເມນູຕັ້ງຄ່າລະບົບ (2 ແຖວ ຄົບທຸກຟັງຊັນ - PC, Android & iOS):</span>
+          </span>
+          <span className="text-[11px] text-amber-400 font-mono font-bold">
+            {activeTab === 'theme' && '🎨 ໂທນສີ & ຂະໜາດ Font (PC)'}
+            {activeTab === 'sellers' && '👥 ຜູ້ຂາຍ & ພະນັກງານ (Sellers)'}
+            {activeTab === 'rooms' && '🚪 ຈັດການເບີຫ້ອງ (Rooms)'}
+            {activeTab === 'packages' && '📦 ແພັກເກັດຫ້ອງ (Packages)'}
+            {activeTab === 'receipt' && '🏪 ຫົວໃບບິນ & ໂລໂກ້ຮ້ານ'}
+            {activeTab === 'printer' && '🖨️ Bluetooth Printer'}
+            {activeTab === 'security' && '🔑 ລະຫັດ PIN & ປອດໄພ'}
+            {activeTab === 'sheets' && '☁️ Cloud, Firebase & Sheets'}
+          </span>
+        </div>
+
+        {/* 2-Row Grid: exactly 4 columns on sm/md/lg = 2 rows, and 2 columns on mobile */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-2.5">
+          {[
+            // Row 1
+            { id: 'theme', label: 'ໂທນສີ & Font', sub: 'ຂະໜາດ Font PC & ໂທນສີ', icon: Palette, badge: 'PC' },
+            { id: 'sellers', label: 'ຜູ້ຂາຍ & ພະນັກງານ', sub: 'ຈັດການຜູ້ຂາຍ/ເສີບ', icon: Users },
+            { id: 'rooms', label: 'ຈັດການເບີຫ້ອງ', sub: 'ເພີ່ມ/ແກ້ໄຂຫ້ອງ KTV', icon: DoorOpen },
+            { id: 'packages', label: 'ແພັກເກັດຫ້ອງ', sub: 'ກຳນົດຊົ່ວໂມງ & ລາຄາ', icon: Package },
+            // Row 2
+            { id: 'receipt', label: 'ຫົວໃບບິນ & ຮ້ານ', sub: 'ໂລໂກ້, ຊື່ຮ້ານ & ທີ່ຢູ່', icon: Store },
+            { id: 'printer', label: 'Bluetooth Printer', sub: '58mm / 80mm ESC/POS', icon: Bluetooth },
+            { id: 'security', label: 'ລະຫັດ PIN', sub: 'PIN Admin & ພະນັກງານ', icon: KeyRound },
+            { id: 'sheets', label: 'Cloud & Sheets', sub: 'Firebase & Real-time', icon: FileSpreadsheet, badge: 'Cloud' },
+          ].map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id as any)}
+                className={`p-2.5 sm:p-3 rounded-2xl flex items-center gap-2.5 transition-all cursor-pointer text-left relative overflow-hidden group ${
+                  isActive
+                    ? 'bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 text-white shadow-lg shadow-rose-500/25 ring-2 ring-amber-400 font-black'
+                    : 'bg-slate-850 hover:bg-slate-800 border border-slate-750 text-slate-300 hover:text-white hover:border-slate-600'
+                }`}
+              >
+                <div
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-colors ${
+                    isActive
+                      ? 'bg-black/25 text-white'
+                      : 'bg-slate-800 text-slate-400 group-hover:text-amber-400 group-hover:bg-slate-700'
+                  }`}
+                >
+                  <Icon className="w-4 h-4 sm:w-5 sm:h-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold truncate leading-snug">
+                      {tab.label}
+                    </span>
+                    {tab.badge && (
+                      <span
+                        className={`text-[9px] px-1.5 py-0.2 rounded font-extrabold uppercase shrink-0 ${
+                          isActive
+                            ? 'bg-white/20 text-white'
+                            : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                        }`}
+                      >
+                        {tab.badge}
+                      </span>
+                    )}
+                  </div>
+                  <div
+                    className={`text-[10px] truncate leading-tight mt-0.5 ${
+                      isActive ? 'text-white/80' : 'text-slate-400'
+                    }`}
+                  >
+                    {tab.sub}
+                  </div>
+                </div>
+                {isActive && (
+                  <span className="w-2 h-2 rounded-full bg-white shrink-0 shadow-sm animate-pulse" />
+                )}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Tab Contents */}
@@ -419,6 +489,134 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 );
               })}
+            </div>
+
+            {/* ========================================================================= */}
+            {/* APP UI FONT SIZE & LAO PHETSARATH FONT (ປັບຂະໜາດຟອນລະບົບ & ໜ້າຈໍ PC)      */}
+            {/* ========================================================================= */}
+            <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-slate-850 via-slate-850 to-indigo-950/20 border border-indigo-500/30 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-700/60 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
+                    <Type className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-black text-sm text-slate-100 flex items-center gap-1.5">
+                      <span>ຕັ້ງຄ່າຂະໜາດຕົວໜັງສືໜ້າຈໍ / PC (App UI Font Size)</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 font-bold border border-indigo-500/40">
+                        ຟອນເພັດຊະຣາດ Phetsarath
+                      </span>
+                    </h4>
+                    <p className="text-[11px] text-slate-400">
+                      ປັບຂະໜາດຕົວໜັງສືຂອງລະບົບໃຫ້ໃຫຍ່ຂຶ້ນ ເພື່ອໃຫ້ສະບາຍຕາເວລາໃຊ້ງານເທິງຄອມພິວເຕີ PC ຫຼື Tablet
+                    </p>
+                  </div>
+                </div>
+
+                <span className="text-xs font-bold font-mono px-2.5 py-1 rounded-xl bg-slate-900 border border-slate-700 text-indigo-300">
+                  {formData.appFontSize === 'xlarge'
+                    ? 'ໃຫຍ່ພິເສດ (19px)'
+                    : formData.appFontSize === 'medium'
+                    ? 'ຂະໜາດກາງ (15.5px)'
+                    : formData.appFontSize === 'normal'
+                    ? 'ປົກກະຕິ (14px)'
+                    : 'ໃຫຍ່ (17px - ແນະນຳ)'}
+                </span>
+              </div>
+
+              {/* Font Size Presets */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                {[
+                  {
+                    id: 'normal',
+                    name: 'ປົກກະຕິ (Normal)',
+                    size: '14px',
+                    desc: 'ຂະໜາດມາດຕະຖານ',
+                  },
+                  {
+                    id: 'medium',
+                    name: 'ປານກາງ (Medium)',
+                    size: '15.5px',
+                    desc: 'ອ່ານສະບາຍຕາ',
+                  },
+                  {
+                    id: 'large',
+                    name: 'ໃຫຍ່ (Large)',
+                    size: '17px',
+                    desc: 'ແນະນຳສຳລັບ PC / Tablet',
+                    isRecommended: true,
+                  },
+                  {
+                    id: 'xlarge',
+                    name: 'ໃຫຍ່ພິເສດ (Extra Large)',
+                    size: '19px',
+                    desc: 'ໃຫຍ່ເຕັມຕາ ເຫັນຊັດເຈນໄກ',
+                  },
+                ].map((item) => {
+                  const isSelected = (formData.appFontSize || 'large') === item.id;
+                  return (
+                    <div
+                      key={item.id}
+                      onClick={() =>
+                        setFormData({
+                          ...formData,
+                          appFontSize: item.id as any,
+                        })
+                      }
+                      className={`p-3 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between ${
+                        isSelected
+                          ? 'bg-indigo-500/15 border-indigo-500 shadow-lg shadow-indigo-500/10'
+                          : 'bg-slate-900/70 border-slate-750 hover:border-slate-600'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <span
+                            className={`text-xs font-black ${
+                              isSelected ? 'text-indigo-300' : 'text-slate-200'
+                            }`}
+                          >
+                            {item.name}
+                          </span>
+                          {item.isRecommended && (
+                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-indigo-500 text-slate-950 font-black">
+                              ແນະນຳ
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-slate-400 block font-mono">
+                          ຂະໜາດ: {item.size}
+                        </span>
+                        <p className="text-[10px] text-slate-400 mt-1">{item.desc}</p>
+                      </div>
+
+                      <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-center justify-between">
+                        <span
+                          className="font-bold text-slate-100"
+                          style={{
+                            fontFamily: "'Phetsarath', 'Phetsarath OT', sans-serif",
+                            fontSize:
+                              item.id === 'xlarge'
+                                ? '16px'
+                                : item.id === 'large'
+                                ? '14px'
+                                : item.id === 'medium'
+                                ? '12.5px'
+                                : '11px',
+                          }}
+                        >
+                          689 KTV ເພັດຊະຣາດ
+                        </span>
+                        {isSelected ? (
+                          <span className="text-[10px] font-black text-indigo-400">✓ ເລືອກແລ້ວ</span>
+                        ) : (
+                          <span className="text-[10px] text-slate-500">ກົດເລືອກ</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Print Auto-close Toggle */}
@@ -1021,6 +1219,116 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               )}
             </div>
 
+            {/* Login Screen Brand Image / Logo Upload Section */}
+            <div className="p-4 rounded-2xl bg-slate-850 border border-slate-700/80 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                    <ImageIcon className="w-4 h-4 text-amber-400" />
+                    <span>ຮູບພາບໜ້າ Login / ປ້ອນ PIN (Login Brand Logo / Cover Image)</span>
+                  </span>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    ຮູບນີ້ຈະສະແດງຢູ່ເທິງສຸດຂອງໜ້າ Login / ໜ້າປ້ອນລະຫັດ PIN ແທນໄອຄອນລັອກປົກກະຕິ
+                  </p>
+                </div>
+                {formData.loginLogoUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, loginLogoUrl: '' })}
+                    className="text-xs text-rose-400 hover:text-rose-300 font-bold cursor-pointer"
+                  >
+                    ລຶບຮູບ Login ອອກ
+                  </button>
+                )}
+              </div>
+
+              {formData.loginLogoUrl ? (
+                <div className="flex items-center gap-4 p-3 bg-slate-900 rounded-xl border border-slate-700">
+                  <div className="w-24 h-20 bg-slate-950 rounded-lg p-1.5 flex items-center justify-center shrink-0 border border-slate-700 shadow overflow-hidden">
+                    <img
+                      src={formData.loginLogoUrl}
+                      alt="Login Brand Logo"
+                      className="max-w-full max-h-full object-contain rounded"
+                    />
+                  </div>
+                  <div className="space-y-1.5 flex-1">
+                    <span className="text-xs text-emerald-400 font-bold block">✓ ຕິດຕັ້ງຮູບພາບໜ້າ Login ສຳເລັດແລ້ວ</span>
+                    <p className="text-[11px] text-slate-400">
+                      ຮູບນີ້ພ້ອມສະແດງໃນໜ້າປ້ອນ PIN 4 ຫຼັກ ເມື່ອເປີດລະບົບ ຫຼື ກົດລັອກໜ້າຈໍ
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <label className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-200 border border-slate-700 cursor-pointer transition-all">
+                        <Upload className="w-3.5 h-3.5 text-amber-400" />
+                        <span>ປ່ຽນຮູບໃໝ່</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onload = (ev) => {
+                                setFormData({
+                                  ...formData,
+                                  loginLogoUrl: ev.target?.result as string,
+                                });
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col sm:flex-row items-center gap-3">
+                  <label className="flex-1 w-full p-4 rounded-xl border-2 border-dashed border-slate-700 hover:border-amber-500 bg-slate-900/60 hover:bg-slate-900 flex flex-col items-center justify-center gap-1.5 cursor-pointer transition-all group">
+                    <Upload className="w-6 h-6 text-slate-400 group-hover:text-amber-400 transition-colors" />
+                    <span className="text-xs font-bold text-slate-200 group-hover:text-white">
+                      + ອັບໂຫຼດຮູບພາບໜ້າ Login / ປ້ອນ PIN
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      ຮອງຮັບ PNG, JPG, WebP, SVG (ແນະນຳໂລໂກ້ຮ້ານ ຫຼື ປ້າຍຊື່ຮ້ານ 689 KTV)
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onload = (ev) => {
+                            setFormData({
+                              ...formData,
+                              loginLogoUrl: ev.target?.result as string,
+                            });
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                    />
+                  </label>
+                </div>
+              )}
+
+              {/* Or paste Image URL directly */}
+              <div className="pt-1">
+                <label className="block text-[11px] text-slate-400 mb-1">
+                  ຫຼື ປ້ອນ URL ລິ້ງຮູບພາບ (Image URL):
+                </label>
+                <input
+                  type="text"
+                  value={formData.loginLogoUrl || ''}
+                  onChange={(e) => setFormData({ ...formData, loginLogoUrl: e.target.value })}
+                  placeholder="https://example.com/logo-689ktv.png"
+                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs text-slate-400 mb-1">
@@ -1241,16 +1549,155 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 })}
               </div>
 
-              {/* Additional Options: Paper Width & High Contrast / Extra Bold */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              {/* Custom Font Size Control & Lao Font Family (Phetsarath) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                {/* Custom Font Size (PX / ขนาดฟอนต์ตามใจ) */}
+                <div className="p-3 rounded-xl bg-slate-900 border border-slate-750 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-bold text-amber-300 block">
+                        ກຳນົດຂະໜາດ Font ຕົວເລກ (Custom Font Size):
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        ເລືອກ ຫຼື ປ້ອນຕົວເລກຂະໜາດທີ່ຕ້ອງການ (10px - 36px)
+                      </span>
+                    </div>
+                    <span className="text-xs font-mono font-black text-amber-400 px-2 py-0.5 rounded bg-slate-800 border border-slate-700">
+                      {formData.receiptCustomFontSize || 16} px
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {[12, 14, 16, 18, 20, 22, 24, 28, 32].map((sz) => (
+                      <button
+                        key={sz}
+                        type="button"
+                        onClick={() =>
+                          setFormData({
+                            ...formData,
+                            receiptCustomFontSize: sz,
+                          })
+                        }
+                        className={`px-2 py-1 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
+                          (formData.receiptCustomFontSize || 16) === sz
+                            ? 'bg-amber-500 text-slate-950 font-black shadow-sm'
+                            : 'bg-slate-800 text-slate-300 hover:bg-slate-750'
+                        }`}
+                      >
+                        {sz}px
+                      </button>
+                    ))}
+                  </div>
+
+                  <input
+                    type="range"
+                    min="10"
+                    max="36"
+                    step="1"
+                    value={formData.receiptCustomFontSize || 16}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        receiptCustomFontSize: parseInt(e.target.value) || 16,
+                      })
+                    }
+                    className="w-full accent-amber-500 cursor-pointer mt-1"
+                  />
+                </div>
+
+                {/* Lao Font Family Selection (ฟอนต์เพชรรัตน์ Phetsarath OT) */}
+                <div className="p-3 rounded-xl bg-slate-900 border border-slate-750 space-y-2">
+                  <div>
+                    <span className="text-xs font-bold text-slate-200 block flex items-center gap-1.5">
+                      <span>ຟອນພາສາລາວ (PC & ໃບບິນ):</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/40">
+                        ເພັດຊະຣາດ
+                      </span>
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      ເລືອກຟອນມາດຕະຖານສຳລັບ PC ແລະ ໃບບິນຄວາມຮ້ອນ
+                    </span>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    {[
+                      {
+                        id: 'phetsarath',
+                        name: 'ຟອນເພັດຊະຣາດ (Phetsarath OT)',
+                        desc: 'ຟອນມາດຕະຖານທາງການລາວ • ອ່ານງ່າຍຄົມຊັດ (ແນະນຳ)',
+                        fontStyle: "'Phetsarath', 'Phetsarath OT', sans-serif",
+                      },
+                      {
+                        id: 'noto_sans',
+                        name: 'Noto Sans Lao',
+                        desc: 'ຟອນ Google ທັນສະໄໝ ບໍ່ມີຫົວ',
+                        fontStyle: "'Noto Sans Lao', sans-serif",
+                      },
+                    ].map((fontItem) => {
+                      const isChosen = (formData.receiptFontFamily || 'phetsarath') === fontItem.id;
+                      return (
+                        <div
+                          key={fontItem.id}
+                          onClick={() =>
+                            setFormData({
+                              ...formData,
+                              receiptFontFamily: fontItem.id as any,
+                            })
+                          }
+                          className={`p-2 rounded-xl border cursor-pointer transition-all flex items-center justify-between ${
+                            isChosen
+                              ? 'bg-amber-500/15 border-amber-500 text-white font-bold'
+                              : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700'
+                          }`}
+                        >
+                          <div>
+                            <div className="text-xs" style={{ fontFamily: fontItem.fontStyle }}>
+                              {fontItem.name}
+                            </div>
+                            <span className="text-[10px] text-slate-400 block">{fontItem.desc}</span>
+                          </div>
+                          {isChosen && <span className="text-xs font-bold text-amber-400">✓</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Additional Options: Net Total Row Label Toggle, Paper Width & High Contrast */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                {/* Toggle: Hide text on Net Total Line (เอาข้อความที่มีอยู่ในบรรทัดยอดสุทธิออก ไม่ต้องใส่) */}
+                <div className="p-3 rounded-xl bg-slate-900 border border-amber-500/40 flex items-center justify-between">
+                  <div className="pr-2">
+                    <span className="text-xs font-bold text-amber-300 block">
+                      ເອົາຂໍ້ຄວາມແຖວຍອດສຸດທິອອກ:
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      ບໍ່ຕ້ອງໃສ່ຂໍ້ຄວາມ ສະແດງສະເພາະຕົວເລກຍອດເງິນໃຫຍ່ເຕັມຕາ
+                    </span>
+                  </div>
+
+                  <input
+                    type="checkbox"
+                    checked={formData.receiptHideTotalText !== false}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        receiptHideTotalText: e.target.checked,
+                      })
+                    }
+                    className="w-5 h-5 accent-amber-500 cursor-pointer shrink-0"
+                  />
+                </div>
+
                 {/* Paper Width (58mm vs 80mm) */}
                 <div className="p-3 rounded-xl bg-slate-900 border border-slate-750 flex items-center justify-between">
                   <div>
                     <span className="text-xs font-bold text-slate-200 block">
-                      ຂະໜາດເຈ້ຍເຄື່ອງພິມ (Thermal Paper Width):
+                      ຂະໜາດເຈ້ຍ (Width):
                     </span>
                     <span className="text-[10px] text-slate-400">
-                      ເລືອກຕາມຂະໜາດເຈ້ຍຂອງ Bluetooth Thermal Printer
+                      58mm ຫຼື 80mm
                     </span>
                   </div>
 
@@ -1263,13 +1710,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           receiptPaperWidth: '58mm',
                         })
                       }
-                      className={`px-2.5 py-1 rounded-md text-xs font-bold cursor-pointer transition-all ${
+                      className={`px-2 py-1 rounded-md text-xs font-bold cursor-pointer transition-all ${
                         (formData.receiptPaperWidth || '58mm') === '58mm'
                           ? 'bg-rose-500 text-white font-black shadow-sm'
                           : 'text-slate-400 hover:text-white'
                       }`}
                     >
-                      58 ມມ (Mini)
+                      58 ມມ
                     </button>
                     <button
                       type="button"
@@ -1279,13 +1726,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           receiptPaperWidth: '80mm',
                         })
                       }
-                      className={`px-2.5 py-1 rounded-md text-xs font-bold cursor-pointer transition-all ${
+                      className={`px-2 py-1 rounded-md text-xs font-bold cursor-pointer transition-all ${
                         formData.receiptPaperWidth === '80mm'
                           ? 'bg-rose-500 text-white font-black shadow-sm'
                           : 'text-slate-400 hover:text-white'
                       }`}
                     >
-                      80 ມມ (Wide)
+                      80 ມມ
                     </button>
                   </div>
                 </div>
@@ -1294,10 +1741,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="p-3 rounded-xl bg-slate-900 border border-slate-750 flex items-center justify-between">
                   <div>
                     <span className="text-xs font-bold text-slate-200 block">
-                      ເນັ້ນຕົວໜັງສືໜາເຂັ້ມ (High Contrast / Extra Bold):
+                      ເນັ້ນຕົວໜັງສືໜາເຂັ້ມ (Bold):
                     </span>
                     <span className="text-[10px] text-slate-400">
-                      ຊ່ວຍໃຫ້ຫົວພິມຄວາມຮ້ອນເຜົາສີດຳເຂັ້ມຊັດເຈນ ບໍ່ຈາງ
+                      ສີດຳເຂັ້ມຊັດເຈນ ບໍ່ຈາງ
                     </span>
                   </div>
 
@@ -1316,7 +1763,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
 
               {/* Live Mini Preview Box */}
-              <div className="p-3 bg-white text-slate-950 rounded-xl shadow border border-slate-300 font-mono">
+              <div
+                className="p-3 bg-white text-slate-950 rounded-xl shadow border border-slate-300"
+                style={{
+                  fontFamily: (formData.receiptFontFamily || 'phetsarath') === 'phetsarath'
+                    ? "'Phetsarath', 'Phetsarath OT', sans-serif"
+                    : "'Noto Sans Lao', sans-serif",
+                }}
+              >
                 <span className="text-[10px] text-slate-500 font-sans block mb-1 font-bold">
                   [ ຕົວຢ່າງໃບບິນຈິງຕາມຂະໜາດທີ່ເລືອກ / Live Sample Receipt ]:
                 </span>
@@ -1365,20 +1819,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 </div>
                 <div
-                  className="pt-1.5 flex justify-between font-black text-slate-950"
+                  className={`pt-1.5 flex ${formData.receiptHideTotalText !== false ? 'justify-end' : 'justify-between'} font-black text-slate-950`}
                   style={{
-                    fontSize:
-                      formData.receiptFontSize === 'xlarge'
-                        ? '18px'
-                        : formData.receiptFontSize === 'large'
-                        ? '16px'
-                        : formData.receiptFontSize === 'medium'
-                        ? '13.5px'
-                        : '12px',
+                    fontSize: formData.receiptCustomFontSize
+                      ? `${Math.round(formData.receiptCustomFontSize * 1.15)}px`
+                      : formData.receiptFontSize === 'xlarge'
+                      ? '18px'
+                      : formData.receiptFontSize === 'large'
+                      ? '16px'
+                      : formData.receiptFontSize === 'medium'
+                      ? '13.5px'
+                      : '12px',
                   }}
                 >
-                  <span>ຍອດສຸດທິ (TOTAL):</span>
-                  <span>155,000 ₭</span>
+                  {formData.receiptHideTotalText !== false ? (
+                    <span className="font-black text-right w-full text-slate-950">155,000 ₭</span>
+                  ) : (
+                    <>
+                      <span>ຍອດສຸດທິ:</span>
+                      <span>155,000 ₭</span>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -1392,6 +1853,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <h3 className="font-bold text-sm text-slate-200 border-b border-slate-800 pb-2">
               ເຊື່ອມຕໍ່ Bluetooth Mini Thermal Printer
             </h3>
+
+            {isRunningInIframe() && (
+              <div className="p-3.5 rounded-2xl bg-gradient-to-r from-blue-950/90 via-indigo-950/80 to-slate-900 border border-blue-500/50 space-y-2 shadow-lg">
+                <div className="flex items-center gap-2 text-xs font-bold text-blue-300">
+                  <ExternalLink className="w-4 h-4 text-blue-400 shrink-0" />
+                  <span>ວິທີໃຊ້ Bluetooth Printer ໃນ Google AI Studio:</span>
+                </div>
+                <p className="text-[11px] text-slate-300 leading-relaxed">
+                  ເນື່ອງຈາກ Google AI ສະແດງຜົນໃນ iframe ລະບົບບຣາວເຊີຈະຈຳກັດ Web Bluetooth. ເພື່ອໃຫ້ສາມາດຈັບຄູ່ເຄື່ອງພິມ Bluetooth ໃດກໍໄດ້ທີ່ຢູ່ໃກ້ຄຽງ ໄດ້ທັນທີແບບບໍ່ມີຫຍັງບລັອກ:
+                </p>
+                <a
+                  href={typeof window !== 'undefined' ? window.location.href : '#'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-600/30 transition-all cursor-pointer"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>🚀 ເປີດແອັບໃນແທັບໃໝ່ (ປົດລັອກ Bluetooth 100%)</span>
+                </a>
+              </div>
+            )}
 
             <p className="text-xs text-slate-400">
               ຮອງຮັບ Bluetooth Thermal Printer ຂະໜາດ 58mm ແລະ 80mm ທຸກລຸ້ນ ທຸກຍີ່ຫໍ້ (ESC/POS)
@@ -1548,8 +2030,96 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {activeTab === 'security' && (
           <div className="space-y-4">
             <h3 className="font-bold text-sm text-slate-200 border-b border-slate-800 pb-2">
-              ປ່ຽນລະຫັດ PIN 4 ຫຼັກ ສຳລັບເຂົ້າສູ່ລະບົບ
+              ລະຫັດ PIN ແລະ ຮູບພາບໜ້າເຂົ້າສູ່ລະບົບ (PIN & Login Screen)
             </h3>
+
+            {/* Login Brand Image / Logo in Security Tab */}
+            <div className="p-4 rounded-2xl bg-slate-850 border border-slate-700/80 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                    <ImageIcon className="w-4 h-4 text-amber-400" />
+                    <span>ຮູບພາບໜ້າ Login / ປ້ອນ PIN (Login Brand Image / Logo)</span>
+                  </span>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    ໃສ່ ຫຼື ປ່ຽນຮູບພາບໂລໂກ້ຮ້ານທີ່ຈະປະກົດຢູ່ເທິງສຸດຂອງໜ້າປ້ອນລະຫັດ PIN
+                  </p>
+                </div>
+                {formData.loginLogoUrl && (
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, loginLogoUrl: '' })}
+                    className="text-xs text-rose-400 hover:text-rose-300 font-bold cursor-pointer"
+                  >
+                    ລຶບຮູບ Login ອອກ
+                  </button>
+                )}
+              </div>
+
+              {formData.loginLogoUrl ? (
+                <div className="flex items-center gap-3 p-3 bg-slate-900 rounded-xl border border-slate-700">
+                  <div className="w-20 h-16 bg-slate-950 rounded-lg p-1 flex items-center justify-center shrink-0 border border-slate-750">
+                    <img
+                      src={formData.loginLogoUrl}
+                      alt="Login Logo"
+                      className="max-w-full max-h-full object-contain rounded"
+                    />
+                  </div>
+                  <div className="space-y-1 flex-1 min-w-0">
+                    <span className="text-xs text-emerald-400 font-bold block truncate">✓ ຕິດຕັ້ງຮູບພາບໜ້າ Login ສຳເລັດ</span>
+                    <label className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-750 text-xs font-bold text-slate-200 border border-slate-700 cursor-pointer transition-all">
+                      <Upload className="w-3.5 h-3.5 text-amber-400" />
+                      <span>ປ່ຽນຮູບໃໝ່</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const reader = new FileReader();
+                            reader.onload = (ev) => {
+                              setFormData({
+                                ...formData,
+                                loginLogoUrl: ev.target?.result as string,
+                              });
+                            };
+                            reader.readAsDataURL(file);
+                          }
+                        }}
+                      />
+                    </label>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <label className="flex-1 p-3.5 rounded-xl border-2 border-dashed border-slate-700 hover:border-amber-500 bg-slate-900/60 hover:bg-slate-900 flex items-center justify-center gap-2 cursor-pointer transition-all group">
+                    <Upload className="w-5 h-5 text-slate-400 group-hover:text-amber-400 transition-colors" />
+                    <span className="text-xs font-bold text-slate-200 group-hover:text-white">
+                      + ອັບໂຫຼດຮູບພາບໜ້າ Login / ປ້ອນ PIN
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onload = (ev) => {
+                            setFormData({
+                              ...formData,
+                              loginLogoUrl: ev.target?.result as string,
+                            });
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="p-4 rounded-2xl bg-amber-950/20 border border-amber-800/40 space-y-2">
@@ -2085,6 +2655,49 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <li>ເລືອກປະເພດ <strong className="text-slate-200">Web app</strong>, ຕັ້ງ Who has access ເປັນ <strong className="text-emerald-400">"Anyone (ທຸກຄົນ)"</strong></li>
                   <li>ກົດ Deploy ແລ້ວກັອບປີ້ Web App URL ມາໃສ່ໃນຊ່ອງດ້ານເທິງ ແລ້ວກົດ <strong className="text-slate-200">ບັນທຶກການຕັ້ງຄ່າ</strong></li>
                 </ol>
+              </div>
+            </div>
+
+            {/* Real-time Firebase Cloud Database Card */}
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-950/40 via-slate-900 to-rose-950/30 border border-amber-500/40 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 font-bold">
+                    🔥
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-xs text-amber-300">
+                      Firebase Cloud Database (Project: ktv-e97cb)
+                    </h4>
+                    <p className="text-[11px] text-slate-400">
+                      ລະບົບຖານຂໍ້ມູນ Cloud Database ຂອງຮ້ານ 689 KTV ເຊື່ອມຕໍ່ສຳເລັດແລ້ວ
+                    </p>
+                  </div>
+                </div>
+
+                <span className="text-[10px] px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span>Cloud Active</span>
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] font-mono">
+                <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-0.5">
+                  <span className="text-slate-400 text-[10px] block">Project ID:</span>
+                  <span className="text-amber-300 font-bold">ktv-e97cb</span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-0.5">
+                  <span className="text-slate-400 text-[10px] block">Auth Domain:</span>
+                  <span className="text-slate-200">ktv-e97cb.firebaseapp.com</span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-0.5">
+                  <span className="text-slate-400 text-[10px] block">Storage Bucket:</span>
+                  <span className="text-slate-200">ktv-e97cb.firebasestorage.app</span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-0.5">
+                  <span className="text-slate-400 text-[10px] block">Measurement ID:</span>
+                  <span className="text-emerald-300 font-bold">G-72JC9HP909</span>
+                </div>
               </div>
             </div>
 

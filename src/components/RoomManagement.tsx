@@ -404,7 +404,59 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
       ? `${startStr} - ${endStr} (ກຳນົດ: ${startStr} - ${targetStr || endStr})`
       : undefined;
 
+    // Immediately reset room state back to available with 00:00 time and 0 hours
+    const clearedRoom: Room = {
+      ...room,
+      status: 'available',
+      pricingType: 'fixed_hourly',
+      openedAt: undefined,
+      targetEndTime: undefined,
+      bookedHours: 0,
+      openedByStaffId: undefined,
+      openedByStaffName: undefined,
+      packageId: undefined,
+      packageName: undefined,
+      orders: [],
+    };
+    const updated = rooms.map((r) =>
+      r.id === room.id || (room.name && r.name === room.name) ? clearedRoom : r
+    );
+    onUpdateRooms(updated);
+
+    setSelectedRoomForDetails(null);
+    setOpeningRoom(null);
     onCheckoutRoom(room, roomFee, duration, startStr, endStr, timeRangeStr);
+  };
+
+  // Force Clear Room back to available (ເຄຼຍຫ້ອງວ່າງ & ລ້າງຂໍ້ມູນທຸກຢ່າງ)
+  const handleForceClearRoom = (room: Room) => {
+    const confirmed = window.confirm(
+      `ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການເຄຼຍ "${room.name}" ໃຫ້ເປັນຫ້ອງວ່າງຄືເກົ່າ? \n\n* ລາຍການສັ່ງ ແລະ ເວລາທັງໝົດຈະຖືກລ້າງອອກ!`
+    );
+    if (!confirmed) return;
+
+    const updatedRooms = rooms.map((r) => {
+      if (r.id === room.id || (room.name && r.name === room.name)) {
+        return {
+          ...r,
+          status: 'available' as const,
+          pricingType: 'fixed_hourly' as const,
+          openedAt: undefined,
+          targetEndTime: undefined,
+          bookedHours: 0,
+          openedByStaffId: undefined,
+          openedByStaffName: undefined,
+          packageId: undefined,
+          packageName: undefined,
+          orders: [],
+        };
+      }
+      return r;
+    });
+
+    onUpdateRooms(updatedRooms);
+    setSelectedRoomForDetails(null);
+    setOpeningRoom(null);
   };
 
   // Preview target time in modal
@@ -636,9 +688,67 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                     </div>
                   </div>
                 ) : (
-                  <div className="py-6 text-center text-slate-500 text-xs">
-                    <Sparkles className="w-8 h-8 mx-auto mb-2 opacity-30 text-rose-400" />
-                    <span>ຫ້ອງພ້ອມໃຫ້ບໍລິການ</span>
+                  <div className="space-y-3 bg-slate-950/40 border border-slate-800/80 p-3.5 rounded-2xl mb-4">
+                    {/* Status badge */}
+                    <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-800/70">
+                      <span className="text-slate-400 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>ສະຖານະຫ້ອງ:</span>
+                      </span>
+                      <span className="font-bold text-emerald-400 flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                        <span>ຫ້ອງວ່າງ (ພ້ອມໃຊ້ງານ)</span>
+                      </span>
+                    </div>
+
+                    {/* Time Window Banner showing 00:00 ຫາ 00:00 as requested */}
+                    <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-400 flex items-center gap-1">
+                          <Clock className="w-3.5 h-3.5 text-slate-500" />
+                          <span>ຊ່ວງເວລາ (ໂມງ):</span>
+                        </span>
+                        <span className="font-bold text-slate-200 font-mono">
+                          00:00 ຫາ 00:00
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-[11px] text-slate-400">
+                        <span>ໄລຍະເວລາ:</span>
+                        <span className="text-emerald-400 font-semibold font-mono">
+                          00:00 (0 ຊົ່ວໂມງ)
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Cleared Timer & Hours (00:00:00 & 00:00:00) */}
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div className="bg-slate-900/50 p-2 rounded-xl border border-slate-800/70">
+                        <span className="text-[10px] text-slate-500 block mb-0.5">ເວລາໃຊ້ງານ:</span>
+                        <span className="font-mono font-bold text-slate-400">
+                          00:00:00
+                        </span>
+                      </div>
+                      <div className="bg-slate-900/50 p-2 rounded-xl border border-slate-800/70">
+                        <span className="text-[10px] text-slate-500 block mb-0.5">ເຫຼືອເວລາ:</span>
+                        <span className="font-mono font-bold text-slate-400">
+                          00:00:00
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Cleared Orders & Hourly Fee (0 ລາຍການ & 0 ₭) */}
+                    <div className="flex items-center justify-between text-xs pt-1">
+                      <span className="text-slate-500">ລາຍການສັ່ງເພີ່ມ:</span>
+                      <span className="font-mono font-semibold text-slate-400">
+                        0 ລາຍການ
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs pt-1.5 border-t border-slate-800/60 font-bold">
+                      <span className="text-slate-400">ຄ່າຊົ່ວໂມງ / ຍອດ:</span>
+                      <span className="font-mono text-sm font-extrabold text-emerald-400">
+                        0 {settings.currencySymbol}
+                      </span>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1230,13 +1340,24 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
             </div>
 
             {/* Modal Footer */}
-            <div className="pt-3 border-t border-slate-800 flex items-center justify-between">
-              <button
-                onClick={() => setSelectedRoomForDetails(null)}
-                className="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
-              >
-                ປິດໜ້າຕ່າງ
-              </button>
+            <div className="pt-3 border-t border-slate-800 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setSelectedRoomForDetails(null)}
+                  className="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+                >
+                  ປິດໜ້າຕ່າງ
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleForceClearRoom(selectedRoomForDetails)}
+                  className="py-2.5 px-3 rounded-xl bg-slate-800/80 hover:bg-rose-950 border border-slate-700 hover:border-rose-700 text-slate-400 hover:text-rose-300 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                  title="ເຄຼຍຫ້ອງໃຫ້ເປັນຫ້ອງວ່າງຄືເກົ່າ (ລ້າງລາຍການທັງໝົດ)"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                  <span className="hidden sm:inline">ເຄຼຍຫ້ອງວ່າງ</span>
+                </button>
+              </div>
 
               <button
                 onClick={() => {

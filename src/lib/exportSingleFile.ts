@@ -2,13 +2,16 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * 
- * Helper to export/download the complete single-file standalone index.html
- * for 689 KTV POS directly from the UI.
+ * Helper to export/download the complete single-file standalone Index.html
+ * for 689 KTV POS directly from the UI, ready for Google Apps Script deployment.
  */
 
-export async function exportStandaloneHtmlFile(): Promise<void> {
+export async function exportStandaloneHtmlFile(fileName: string = 'Index.html'): Promise<void> {
   try {
-    const res = await fetch('/single_file_689ktv_pos.html');
+    let res = await fetch('/Index.html');
+    if (!res.ok) {
+      res = await fetch('/single_file_689ktv_pos.html');
+    }
     if (!res.ok) {
       throw new Error(`Failed to load standalone HTML template (${res.status})`);
     }
@@ -17,13 +20,13 @@ export async function exportStandaloneHtmlFile(): Promise<void> {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'index.html';
+    link.download = fileName;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   } catch (error) {
-    console.error('Error exporting standalone index.html:', error);
-    alert('ເກີດຂໍ້ຜິດພາດໃນການດາວໂຫລດ index.html: ' + (error instanceof Error ? error.message : String(error)));
+    console.error('Error exporting standalone Index.html:', error);
+    alert('ເກີດຂໍ້ຜິດພາດໃນການດາວໂຫລດ Index.html: ' + (error instanceof Error ? error.message : String(error)));
   }
 }

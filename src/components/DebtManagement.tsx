@@ -38,6 +38,7 @@ import {
   printDebtSlipAsImageViaBluetooth,
   getDebtSlipImageDataUrl,
   getBluetoothStatus,
+  isBluetoothBlockedError,
 } from '../lib/bluetoothPrinter';
 import { FormattedNumberInput } from './FormattedNumberInput';
 
@@ -81,6 +82,10 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
   const [isPrintingBt, setIsPrintingBt] = useState<boolean>(false);
   const [printSuccess, setPrintSuccess] = useState<boolean>(false);
   const [printError, setPrintError] = useState<string>('');
+  const [btFallbackNotice, setBtFallbackNotice] = useState<{
+    show: boolean;
+    message: string;
+  }>({ show: false, message: '' });
 
   // Add Debt Form State
   const [newCustomerName, setNewCustomerName] = useState<string>('');
@@ -441,8 +446,9 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
     }
   };
 
-  // Print Debt Slip via Bluetooth
+  // Print Debt Slip via Bluetooth with auto fallback
   const handlePrintBt = async (debt: DebtRecord) => {
+    setPrintingDebt(debt);
     setIsPrintingBt(true);
     setPrintError('');
     setPrintSuccess(false);
@@ -451,7 +457,24 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
       setPrintSuccess(true);
       setTimeout(() => setPrintSuccess(false), 3500);
     } catch (err: any) {
-      setPrintError(err.message || 'ບໍ່ສາມາດພິມໃບຕິດໜີ້ຜ່ານ Bluetooth ໄດ້');
+      console.warn('Debt Bluetooth print error:', err);
+      if (isBluetoothBlockedError(err)) {
+        // DO NOT show red error bar!
+        setPrintError('');
+        setBtFallbackNotice({
+          show: true,
+          message:
+            'Web Bluetooth ຖືກຈຳກັດ (Permissions Policy / iframe). ລະບົບກຳລັງສະຫຼັບໄປສັ່ງພິມໃບຕິດໜີ້ຜ່ານ Standard Print ໃຫ້ອັດຕະໂນມັດ...',
+        });
+        setTimeout(() => {
+          handleBrowserPrint();
+          setTimeout(() => {
+            setBtFallbackNotice({ show: false, message: '' });
+          }, 2000);
+        }, 450);
+      } else {
+        setPrintError(err.message || 'ບໍ່ສາມາດພິມໃບຕິດໜີ້ຜ່ານ Bluetooth ໄດ້');
+      }
     } finally {
       setIsPrintingBt(false);
     }
@@ -1786,6 +1809,118 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Printable Debt Slip (Auto 58mm / 80mm with thermal cutter spacer) */}
+      {printingDebt && (
+        <div
+          className={`hidden print:block print-receipt-container ${
+            settings.receiptPaperWidth === '58mm' ? 'paper-58mm' : 'paper-80mm'
+          } receipt-font-${settings.receiptFontSize || 'medium'}`}
+          style={{
+            fontFamily: "'Phetsarath', 'Phetsarath OT', 'Noto Sans Lao', monospace",
+          }}
+        >
+          <div className="text-center pb-2 border-b border-dashed border-slate-400">
+            <h2 className="receipt-title font-black text-slate-950 text-base">{settings.shopName}</h2>
+            <p className="font-bold text-slate-800">ໃບຕິດໜີ້ / ໃບຮັບຮູ້ໜີ້ສິນ (DEBT SLIP)</p>
+            {settings.shopPhone && <p className="text-slate-600">Tel: {settings.shopPhone}</p>}
+          </div>
+
+          <div className="py-2 border-b border-dashed border-slate-400 space-y-1 text-xs">
+            <div className="flex justify-between">
+              <span>ຊື່ລູກຄ້າ:</span>
+              <span className="font-bold">{printingDebt.customerName}</span>
+            </div>
+            {printingDebt.customerPhone && (
+              <div className="flex justify-between">
+                <span>ເບີໂທ:</span>
+                <span>{printingDebt.customerPhone}</span>
+              </div>
+            )}
+            {printingDebt.roomName && (
+              <div className="flex justify-between">
+                <span>ຫ້ອງ KTV:</span>
+                <span>{printingDebt.roomName}</span>
+              </div>
+            )}
+            {printingDebt.billNumber && (
+              <div className="flex justify-between">
+                <span>ເລກທີບິນອ້າງອີງ:</span>
+                <span>{printingDebt.billNumber}</span>
+              </div>
+            )}
+            <div className="flex justify-between">
+              <span>ວັນທີບັນທຶກ:</span>
+              <span>{new Date(printingDebt.createdAt).toLocaleString('lo-LA')}</span>
+            </div>
+          </div>
+
+          <div className="py-2 border-b border-dashed border-slate-400 space-y-1 text-xs">
+            <div className="flex justify-between">
+              <span>ຍອດໜີ້ທັງໝົດ:</span>
+              <span className="font-bold">{formatCurrency(printingDebt.totalAmount, settings.currencySymbol)}</span>
+            </div>
+            <div className="flex justify-between text-emerald-800">
+              <span>ຊຳລະແລ້ວ:</span>
+              <span>{formatCurrency(printingDebt.paidAmount, settings.currencySymbol)}</span>
+            </div>
+            <div className="flex justify-between receipt-total font-black text-sm pt-1 border-t border-slate-400 text-slate-950">
+              <span>ຍອດຄ້າງຊຳລະ:</span>
+              <span>{formatCurrency(printingDebt.remainingAmount, settings.currencySymbol)}</span>
+            </div>
+          </div>
+
+          <div className="pt-2 text-center text-xs text-slate-600 space-y-0.5">
+            <p>ກະລຸນາກວດສອບຄວາມຖືກຕ້ອງ ແລະ ເກັບຮັກສາໃບບິນນີ້ໄວ້</p>
+            <p className="font-black text-slate-900">*** 689 KTV ***</p>
+          </div>
+
+          {/* Thermal printer paper cutter spacer to ensure footer is not clipped */}
+          <div className="receipt-cut-spacer hidden print:block" style={{ height: '14mm' }} />
+        </div>
+      )}
+
+      {/* Bluetooth Fallback Modal in Debt Management */}
+      {btFallbackNotice.show && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-amber-500/50 rounded-3xl p-5 w-full max-w-sm shadow-2xl text-center space-y-4">
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+              <Printer className="w-7 h-7 animate-bounce" />
+            </div>
+            <div className="space-y-1.5">
+              <h4 className="font-black text-base text-slate-100">
+                ສະຫຼັບໄປພິມແບບມາດຕະຖານ (Standard Print)
+              </h4>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                {btFallbackNotice.message}
+              </p>
+            </div>
+            <div className="p-2.5 rounded-xl bg-slate-800/80 border border-slate-700 text-[11px] text-amber-300/90 font-medium">
+              💡 ລະບົບປັບຂະໜາດເຈ້ຍຄວາມຮ້ອນ 58mm / 80mm ແລະ ຕັດຂອບອັດຕະໂນມັດ ສຳລັບ Windows Thermal Printer
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setBtFallbackNotice({ show: false, message: '' })}
+                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
+              >
+                ປິດ
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setBtFallbackNotice({ show: false, message: '' });
+                  handleBrowserPrint();
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black shadow-lg shadow-amber-500/25 flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Printer className="w-4 h-4" />
+                <span>ພິມດຽວນີ້ (Print)</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

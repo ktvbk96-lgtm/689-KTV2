@@ -9,6 +9,7 @@ import {
   Power,
   Sliders,
   HelpCircle,
+  ExternalLink,
 } from 'lucide-react';
 import { AppSettings, BillRecord, ReceiptFontSize } from '../types';
 import { saveStoredSettings } from '../lib/storage';
@@ -16,6 +17,8 @@ import {
   connectBluetoothPrinter,
   disconnectBluetoothPrinter,
   isWebBluetoothSupported,
+  isBluetoothBlockedError,
+  isRunningInIframe,
   printViaBluetooth,
 } from '../lib/bluetoothPrinter';
 
@@ -59,11 +62,21 @@ export const BluetoothModal: React.FC<BluetoothModalProps> = ({
       if (res.connected) {
         setMessage(`ເຊື່ອມຕໍ່ສຳເລັດແລ້ວ: ${res.deviceName}`);
         onRefreshStatus();
+      } else if (res.isBlocked) {
+        setMessage(
+          '⚠️ Web Bluetooth ຖືກຈຳກັດ (Permissions Policy / iframe). ທ່ານສາມາດສັ່ງພິມໃບບິນຜ່ານ Standard Print (window.print()) ໄດ້ທັນທີ ໂດຍບໍ່ຕ້ອງໃຊ້ Bluetooth'
+        );
       } else {
         setMessage(`ບໍ່ສາມາດເຊື່ອມຕໍ່ໄດ້: ${res.error || 'ກະລຸນາລອງໃໝ່'}`);
       }
     } catch (err: any) {
-      setMessage(`ຂໍ້ຜິດພາດ: ${err.message}`);
+      if (isBluetoothBlockedError(err)) {
+        setMessage(
+          '⚠️ Web Bluetooth ຖືກຈຳກັດ (Permissions Policy / iframe). ທ່ານສາມາດສັ່ງພິມໃບບິນຜ່ານ Standard Print (window.print()) ໄດ້ທັນທີ ໂດຍບໍ່ຕ້ອງໃຊ້ Bluetooth'
+        );
+      } else {
+        setMessage(`ຂໍ້ຜິດພາດ: ${err.message}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -146,6 +159,28 @@ export const BluetoothModal: React.FC<BluetoothModalProps> = ({
 
         {/* Content */}
         <div className="space-y-4">
+          {/* Direct Tab Launcher for 100% Unrestricted Bluetooth when running in Google AI Studio / iframe */}
+          {isRunningInIframe() && (
+            <div className="p-3.5 rounded-2xl bg-gradient-to-r from-blue-950/90 via-indigo-950/80 to-slate-900 border border-blue-500/50 space-y-2 shadow-lg">
+              <div className="flex items-center gap-2 text-xs font-bold text-blue-300">
+                <ExternalLink className="w-4 h-4 text-blue-400 shrink-0" />
+                <span>ວິທີໃຊ້ Bluetooth Printer ໃນ Google AI Studio:</span>
+              </div>
+              <p className="text-[11px] text-slate-300 leading-relaxed">
+                ເນື່ອງຈາກ Google AI ສະແດງຜົນໃນ iframe ລະບົບບຣາວເຊີຈະຈຳກັດ Web Bluetooth. ເພື່ອໃຫ້ສາມາດຈັບຄູ່ເຄື່ອງພິມ Bluetooth ໃດກໍໄດ້ທີ່ຢູ່ໃກ້ຄຽງ ໄດ້ທັນທີແບບບໍ່ມີຫຍັງບລັອກ:
+              </p>
+              <a
+                href={typeof window !== 'undefined' ? window.location.href : '#'}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-600/30 transition-all cursor-pointer"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>🚀 ເປີດແອັບໃນແທັບໃໝ່ (ປົດລັອກ Bluetooth 100%)</span>
+              </a>
+            </div>
+          )}
+
           <div className="p-4 rounded-2xl bg-slate-800/60 border border-slate-700 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div
@@ -263,7 +298,8 @@ export const BluetoothModal: React.FC<BluetoothModalProps> = ({
             </div>
             <ul className="list-disc list-inside space-y-1 text-[11px] text-slate-400">
               <li>ເປີດສະວິດເຄື່ອງພິມ Mini Printer ແລະ ເປີດ Bluetooth ໃນອຸປະກອນຂອງທ່ານ</li>
-              <li>ກົດປຸ່ມ &quot;ຄົ້ນຫາ & ເຊື່ອມຕໍ່&quot; ແລ້ວເລືອກຊື່ເຄື່ອງພິມຂອງທ່ານໃນລາຍການທີ່ສະແດງ</li>
+              <li>ກົດປຸ່ມ &quot;ຄົ້ນຫາ & ເຊື່ອມຕໍ່&quot; ແລ້ວເລືອກຊື່ເຄື່ອງພິມຂອງທ່ານໃນລາຍການທີ່ສະແດງ (ຮອງຮັບ 58mm / 80mm ທຸກລຸ້ນ)</li>
+              <li><strong>ສຳລັບ iPhone / iPad (iOS):</strong> Apple Safari ບໍ່ຮອງຮັບ Web Bluetooth ໂດຍກົງ. ໃຫ້ດາວໂຫລດແອັບຟຣີ <strong>Bluefy</strong> (Web BLE Browser) ຈາກ App Store ແລ້ວເປີດລິ້ງນີ້ຈະເຊື່ອມຕໍ່ ແລະ ພິມ Bluetooth ໄດ້ 100%!</li>
               <li>ຖ້າບໍ່ມີເຄື່ອງພິມ Bluetooth ທ່ານຍັງສາມາດກົດ &quot;ພິມແບບທົ່ວໄປ (Print)&quot; ໃນໜ້າເຊັກບິນໄດ້ເຊັ່ນກັນ</li>
             </ul>
           </div>

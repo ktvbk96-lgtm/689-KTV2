@@ -575,7 +575,7 @@ export const fetchLatestDataFromGas = async (
  */
 export const sendDataToGas = async (
   gasUrl: string,
-  action: 'saveProducts' | 'saveRooms' | 'savePackages' | 'saveStaff' | 'saveDebts' | 'saveBill' | 'syncAll',
+  action: 'saveProducts' | 'saveRooms' | 'savePackages' | 'saveStaff' | 'saveDebts' | 'saveBill' | 'syncAll' | 'saveSettings',
   data: any,
   timeoutMs: number = 9000
 ): Promise<GasSyncResponse> => {

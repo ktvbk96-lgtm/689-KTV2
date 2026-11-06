@@ -120,6 +120,7 @@ export interface BillRecord {
   id: string;
   billNumber: string; // e.g. 689-20261031-001
   type: 'pos_sale' | 'ktv_room';
+  roomId?: string;
   roomName?: string;
   packageName?: string; // e.g. "4 ชั่วโมง 300,000 กีบ"
   bookedHours?: number; // e.g. 4
@@ -182,11 +183,16 @@ export interface AppSettings {
   appTheme?: AppThemeId; // ໂທນສີຂອງແອັບພລິເຄຊັນ
   showPinHintsOnLogin?: boolean; // ສະແດງລະຫັດ PIN ຕົວຢ່າງໃນໜ້າ Login (ກຳນົດເປີດ/ປິດໄດ້)
   receiptLogoUrl?: string; // ຮູບພາບ/ໂລໂກ້ຫົວໃບບິນ (Receipt Header Logo)
+  loginLogoUrl?: string; // ຮູບພາບໜ້າ Login / ປ້ອນ PIN (Login Brand Logo / Cover Image)
+  appFontSize?: 'normal' | 'medium' | 'large' | 'xlarge'; // ຂະໜາດ Font ຂອງລະບົບທັງໝົດ (App UI Font Scale)
   staffCanEditDebt?: boolean; // ອະນຸຍາດໃຫ້ພະນັກງານແກ້ໄຂຍອດຕິດໜີ້ໄດ້ຫຼືບໍ່ (Admin ເປັນຜູ້ກຳນົດ)
   staffCanDeleteDebt?: boolean; // ອະນຸຍາດໃຫ້ພະນັກງານລຶບຍອດຕິດໜີ້ໄດ້ຫຼືບໍ່ (Admin ເປັນຜູ້ກຳນົດ)
   receiptFontSize?: ReceiptFontSize; // ຂະໜາດຕົວໜັງສືໃບບິນ ('small' | 'medium' | 'large' | 'xlarge')
   receiptPaperWidth?: ReceiptPaperWidth; // ຂະໜາດເຈ້ຍໃບບິນ ('58mm' | '80mm')
   receiptBoldText?: boolean; // ເນັ້ນຕົວໜັງສືໜາເຂັ້ມພິເສດ (Extra Bold)
+  receiptHideTotalText?: boolean; // ບໍ່ຕ້ອງໃສ່ຂໍ້ຄວາມໃນແຖວບັນທັດຍອດສຸດທິ (ສະແດງສະເພາະຍອດເງິນ)
+  receiptCustomFontSize?: number; // ຂະໜາດ Font ໃບບິນແບບກຳນົດເອງ (Custom Font Size e.g. 12-36px)
+  receiptFontFamily?: 'phetsarath' | 'noto_sans' | 'saysettha'; // ຟອນພາສາລາວ (ເລີ່ມຕົ້ນ 'phetsarath')
   gasWebAppUrl?: string; // Google Apps Script Web App URL ສໍາລັບ Real-time Sync ຫຼາຍເຄື່ອງພ້ອມກັນ
   realtimeSyncEnabled?: boolean; // ເປີດການຊິ້ງຂໍ້ມູນ Real-time ອັດຕະໂນມັດເມື່ອມີການປ່ຽນແປງ
   lastSyncedAt?: string; // ເວລາຊິ້ງຂໍ້ມູນຫຼ້າສຸດ

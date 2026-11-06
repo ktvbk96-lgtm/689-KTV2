@@ -1,0 +1,380 @@
+{
+  "version": 3,
+  "lastUpdated": "2026-11-05T09:49:19.091Z",
+  "products": [
+    {
+      "imageUrl": "https://images.unsplash.com/photo-1608270199042-7cfd3f4439fa?w=400&auto=format&fit=crop&q=80",
+      "unit": "ແກ້ວ",
+      "name": "ເບຍລາວ ຂວດໃຫຍ່ (Beerlao Lager)",
+      "category": "beer",
+      "stock": 48,
+      "requireSeller": true,
+      "costPrice": 15000,
+      "minStockAlert": 10,
+      "id": "p-beerlao-lager",
+      "salePrice": 22000
+    },
+    {
+      "stock": 24,
+      "requireSeller": true,
+      "id": "p-beerlao-gold",
+      "costPrice": 20000,
+      "name": "ເບຍລາວ ໂກນ (Beerlao Gold)",
+      "unit": "ແກ້ວ",
+      "imageUrl": "https://images.unsplash.com/photo-1535958636474-b021ee887b13?w=400&auto=format&fit=crop&q=80",
+      "salePrice": 28000,
+      "category": "beer",
+      "minStockAlert": 8
+    },
+    {
+      "salePrice": 32000,
+      "minStockAlert": 5,
+      "category": "beer",
+      "unit": "ແກ້ວ",
+      "costPrice": 22000,
+      "name": "ເບຍລາວ ຄຣາຟ (Beerlao IPA/White)",
+      "requireSeller": true,
+      "imageUrl": "https://images.unsplash.com/photo-1575037614876-c38a4d44f5b8?w=400&auto=format&fit=crop&q=80",
+      "id": "p-beerlao-ipa",
+      "stock": 11
+    },
+    {
+      "unit": "ຕຸກ",
+      "name": "ນ້ຳດື່ມບໍລິສຸດ (Drinking Water)",
+      "minStockAlert": 15,
+      "imageUrl": "https://images.unsplash.com/photo-1548839140-29a749e1bc4e?w=400&auto=format&fit=crop&q=80",
+      "category": "drink",
+      "costPrice": 3000,
+      "stock": 50,
+      "requireSeller": false,
+      "salePrice": 7000,
+      "id": "p-water"
+    },
+    {
+      "category": "drink",
+      "id": "p-coke",
+      "costPrice": 6000,
+      "imageUrl": "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=400&auto=format&fit=crop&q=80",
+      "requireSeller": false,
+      "salePrice": 12000,
+      "name": "ໂຄ້ກ / ແປັບຊີ (Coca Cola)",
+      "minStockAlert": 8,
+      "unit": "ກະປ໋ອງ",
+      "stock": 30
+    },
+    {
+      "id": "p-redbull",
+      "requireSeller": false,
+      "salePrice": 15000,
+      "name": "ກະທິງແດງ (Red Bull / Som)",
+      "unit": "ຕຸກ",
+      "imageUrl": "https://images.unsplash.com/photo-1581009146145-b5ef050c2e1e?w=400&auto=format&fit=crop&q=80",
+      "minStockAlert": 6,
+      "costPrice": 7000,
+      "stock": 4,
+      "category": "drink"
+    },
+    {
+      "id": "p-heineken",
+      "category": "beer",
+      "imageUrl": "https://images.unsplash.com/photo-1527661591475-527312dd65f5?w=400&auto=format&fit=crop&q=80",
+      "requireSeller": true,
+      "costPrice": 25000,
+      "minStockAlert": 5,
+      "name": "ໄຮເນເກັນ (Heineken)",
+      "unit": "ແກ້ວ",
+      "salePrice": 35000,
+      "stock": 0
+    },
+    {
+      "costPrice": 3000,
+      "category": "drink",
+      "requireSeller": false,
+      "imageUrl": "https://images.unsplash.com/photo-1518057111178-44a106bad636?w=400&auto=format&fit=crop&q=80",
+      "minStockAlert": 10,
+      "salePrice": 10000,
+      "id": "p-ice-bucket",
+      "name": "ນ້ຳກ້ອນ ຖັງໃຫຍ່ (Ice Bucket)",
+      "unit": "ຖັງ",
+      "stock": 100
+    },
+    {
+      "costPrice": 30000,
+      "minStockAlert": 5,
+      "unit": "ຈານ",
+      "name": "ປີກໄກ່ທອດນ້ຳປາ (Fried Chicken Wings)",
+      "id": "p-fried-chicken",
+      "stock": 20,
+      "salePrice": 55000,
+      "category": "food",
+      "requireSeller": false,
+      "imageUrl": "https://images.unsplash.com/photo-1567620832903-9fc6debc209f?w=400&auto=format&fit=crop&q=80"
+    },
+    {
+      "category": "snack",
+      "requireSeller": false,
+      "id": "p-french-fries",
+      "imageUrl": "https://images.unsplash.com/photo-1576107232684-1279f3908594?w=400&auto=format&fit=crop&q=80",
+      "costPrice": 20000,
+      "stock": 25,
+      "salePrice": 35000,
+      "name": "ເຟຣນຟຣາຍທອດ (French Fries)",
+      "minStockAlert": 5,
+      "unit": "ຈານ"
+    },
+    {
+      "stock": 30,
+      "unit": "ຈານ",
+      "name": "ຖົ່ວດິນຂົ້ວເຄັມ (Roasted Peanuts)",
+      "salePrice": 18000,
+      "requireSeller": false,
+      "minStockAlert": 6,
+      "imageUrl": "https://images.unsplash.com/photo-1569466896818-335b1bedfcce?w=400&auto=format&fit=crop&q=80",
+      "id": "p-peanuts",
+      "costPrice": 8000,
+      "category": "snack"
+    },
+    {
+      "category": "snack",
+      "minStockAlert": 4,
+      "imageUrl": "https://images.unsplash.com/photo-1541832676-9b763b0239ab?w=400&auto=format&fit=crop&q=80",
+      "costPrice": 25000,
+      "stock": 14,
+      "name": "ເອັນໄກ່ທອດກອບ (Crispy Tendon)",
+      "unit": "ຈານ",
+      "id": "p-crispy-pork",
+      "salePrice": 48000,
+      "requireSeller": false
+    },
+    {
+      "category": "food",
+      "id": "p-tam-mak-houng",
+      "imageUrl": "https://images.unsplash.com/photo-1559847844-5315695dadae?w=400&auto=format&fit=crop&q=80",
+      "requireSeller": false,
+      "stock": 18,
+      "salePrice": 30000,
+      "minStockAlert": 4,
+      "name": "ຕຳໝາກຫຸ່ງແຊບນົວ (Papaya Salad)",
+      "costPrice": 15000,
+      "unit": "ຈານ"
+    },
+    {
+      "id": "p-fruit-plate",
+      "salePrice": 45000,
+      "requireSeller": false,
+      "costPrice": 25000,
+      "name": "ໝາກໄມ້ລວມຈານໃຫຍ່ (Mixed Fruit Plate)",
+      "unit": "ຈານ",
+      "category": "food",
+      "minStockAlert": 3,
+      "stock": 10,
+      "imageUrl": "https://images.unsplash.com/photo-1619566636858-adf3ef46400b?w=400&auto=format&fit=crop&q=80"
+    },
+    {
+      "unit": "ຊົ່ວໂມງ",
+      "minStockAlert": 1,
+      "name": "ບໍລິການພະນັກງານດູແລພິເສດ (VIP PR Service / ຊມ)",
+      "costPrice": 50000,
+      "salePrice": 100000,
+      "stock": 99,
+      "id": "p-pr-service",
+      "imageUrl": "https://images.unsplash.com/photo-1574096079513-d8259312b785?w=400&auto=format&fit=crop&q=80",
+      "requireSeller": true,
+      "category": "service"
+    }
+  ],
+  "rooms": [
+    {
+      "id": "room-689",
+      "name": "ຫ້ອງ VIP 689 (ຫ້ອງໃຫຍ່)",
+      "capacity": 15,
+      "status": "available",
+      "pricingType": "fixed_hourly",
+      "hourlyRate": 100000,
+      "orders": []
+    },
+    {
+      "id": "room-01",
+      "name": "ຫ້ອງ VIP 01",
+      "capacity": 10,
+      "status": "available",
+      "pricingType": "fixed_hourly",
+      "hourlyRate": 80000,
+      "orders": []
+    },
+    {
+      "id": "room-02",
+      "name": "ຫ້ອງ VIP 02",
+      "capacity": 10,
+      "status": "available",
+      "pricingType": "fixed_hourly",
+      "hourlyRate": 80000,
+      "orders": []
+    },
+    {
+      "id": "room-03",
+      "name": "ຫ້ອງທຳມະດາ 03",
+      "capacity": 6,
+      "status": "available",
+      "pricingType": "fixed_hourly",
+      "hourlyRate": 60000,
+      "orders": []
+    },
+    {
+      "id": "room-04",
+      "name": "ຫ້ອງທຳມະດາ 04",
+      "capacity": 6,
+      "status": "available",
+      "pricingType": "fixed_hourly",
+      "hourlyRate": 60000,
+      "orders": []
+    },
+    {
+      "id": "room-05",
+      "name": "ຫ້ອງ Mini 05",
+      "capacity": 4,
+      "status": "available",
+      "pricingType": "fixed_hourly",
+      "hourlyRate": 50000,
+      "orders": []
+    }
+  ],
+  "packages": [
+    {
+      "id": "pkg-standard-2h",
+      "name": "ແພັກເກັດ 2 ຊົ່ວໂມງ (2 Hrs Combo)",
+      "durationMinutes": 120,
+      "price": 180000,
+      "description": "ຮ້ອງເພງ 2 ຊົ່ວໂມງ + ແຖມນ້ຳດື່ມ 2 ຕຸກ & ຖົ່ວດິນ 1 ຈານ",
+      "includesBeerCount": 0
+    },
+    {
+      "id": "pkg-party-3h",
+      "name": "ແພັກເກັດ 3 ຊົ່ວໂມງ (Party 3 Hrs)",
+      "durationMinutes": 180,
+      "price": 320000,
+      "description": "ຮ້ອງເພງ 3 ຊົ່ວໂມງ + ເບຍລາວ 3 ແກ້ວ + ປັອບຄອນ 1 ຈານ",
+      "includesBeerCount": 3
+    },
+    {
+      "id": "pkg-vip-allnight",
+      "name": "ແພັກເກັດ VIP All-Night (ທັງຄືນ)",
+      "durationMinutes": 360,
+      "price": 550000,
+      "description": "ຮ້ອງເພງແບບຈຸໃຈ 6 ຊົ່ວໂມງ + ເບຍລາວ 1 ລັງ (12 ແກ້ວ) + ອາຫານຫວ່າງ 2 ຊຸດ",
+      "includesBeerCount": 12
+    }
+  ],
+  "staff": [
+    {
+      "id": "staff-admin",
+      "name": "Admin (ເຈົ້າຂອງຮ້ານ)",
+      "role": "admin",
+      "phone": "020-5555-8888",
+      "active": true
+    },
+    {
+      "id": "staff-1",
+      "name": "ນ້ອຍ (Noy)",
+      "role": "staff",
+      "phone": "020-9912-3456",
+      "active": true
+    },
+    {
+      "id": "staff-2",
+      "name": "ຄຳ (Kham)",
+      "role": "staff",
+      "phone": "020-9876-5432",
+      "active": true
+    },
+    {
+      "id": "staff-3",
+      "name": "ຕຸກຕາ (Toukta)",
+      "role": "staff",
+      "phone": "020-7766-5544",
+      "active": true
+    },
+    {
+      "id": "staff-4",
+      "name": "ສອນ (Sone)",
+      "role": "staff",
+      "phone": "020-9123-4567",
+      "active": true
+    }
+  ],
+  "settings": {
+    "shopName": "689 KTV",
+    "shopBranch": "ສາຂາໃຫຍ່ (Main Branch)",
+    "shopAddress": "ຖະໜົນ ໄກສອນ ພົມວິຫານ, ນະຄອນຫຼວງວຽງຈັນ (Vientiane, Lao PDR)",
+    "shopPhone": "020-5555-6899 / 020-9988-7766",
+    "receiptHeader": "689 KTV - ຄາຣາໂອເກະ ຄຸນນະພາບສູງ",
+    "receiptFooter": "ຂໍຂອບໃຈລູກຄ້າທີ່ມາອຸດໜູນ ຍິນດີຕ້ອນຮັບສະເໝີ! (Thank You)",
+    "wifiPassword": "Password: 689ktvvip",
+    "adminPin": "8888",
+    "staffPin": "1234",
+    "currencySymbol": "₭",
+    "defaultHourlyRate": 80000,
+    "bluetoothPrinterName": "POS-58 Bluetooth Thermal Printer",
+    "autoSyncGoogleSheets": true,
+    "showPinHintsOnLogin": false,
+    "receiptLogoUrl": "",
+    "loginLogoUrl": "",
+    "appFontSize": "large",
+    "staffCanEditDebt": false,
+    "staffCanDeleteDebt": false,
+    "receiptFontSize": "large",
+    "receiptPaperWidth": "58mm",
+    "receiptBoldText": true,
+    "receiptHideTotalText": true,
+    "receiptCustomFontSize": 16,
+    "receiptFontFamily": "phetsarath",
+    "gasWebAppUrl": "https://script.google.com/macros/s/AKfycbwP7K5U-POS-689KTV-WEBAPP/exec",
+    "realtimeSyncEnabled": true
+  },
+  "debts": [
+    {
+      "id": "debt-sample-1",
+      "customerName": "ທ່ານ ສົມພອນ (Somphone VIP)",
+      "customerPhone": "020-5599-8822",
+      "billNumber": "689-20261031-002",
+      "roomName": "ຫ້ອງ VIP 689 (ຫ້ອງໃຫຍ່)",
+      "totalAmount": 480000,
+      "paidAmount": 200000,
+      "remainingAmount": 280000,
+      "status": "partially_paid",
+      "createdAt": "2026-11-04T07:39:08.678Z",
+      "dueDate": "2026-11-08",
+      "photoUrl": "https://images.unsplash.com/photo-1554415707-9e4466b405c0?w=600&auto=format&fit=crop&q=80",
+      "note": "ລູກຄ້າປະຈຳ ຕິດຄ່າຫ້ອງ ແລະ ເບຍ 3 ແກ້ວ ໂອນມາແລ້ວ 200,000 ກີບ",
+      "staffName": "ນ້ອຍ (Noy)",
+      "payments": [
+        {
+          "id": "pay-1",
+          "amount": 200000,
+          "paidAt": "2026-11-04T19:39:08.679Z",
+          "paymentMethod": "transfer",
+          "note": "ໂອນຜ່ານ BCEL One",
+          "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)"
+        }
+      ]
+    },
+    {
+      "id": "debt-sample-2",
+      "customerName": "ນາງ ດາວັນ ແກ້ວມະນີ",
+      "customerPhone": "020-9944-3311",
+      "billNumber": "689-20261030-008",
+      "roomName": "ຫ້ອງ VIP 01",
+      "totalAmount": 350000,
+      "paidAmount": 0,
+      "remainingAmount": 350000,
+      "status": "unpaid",
+      "createdAt": "2026-11-03T07:39:08.679Z",
+      "dueDate": "2026-11-10",
+      "photoUrl": "https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=600&auto=format&fit=crop&q=80",
+      "note": "ສັ່ງເບຍລາວ 1 ລັງ + ອາຫານຫວ່າງ ສັນຍາຈະມາເຄຼຍວັນສຸກ",
+      "staffName": "ຄຳ (Kham)",
+      "payments": []
+    }
+  ],
+  "bills": []
+}

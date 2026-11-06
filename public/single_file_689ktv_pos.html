@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <html lang="lo">
 <head>
+  <base target="_top">
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>689 KTV - ລະບົບຄຸ້ມຄອງຮ້ານຄາຣາໂອເກະ ແລະ ຂາຍສິນຄ້າ (Single File POS)</title>
-  <meta name="description" content="ລະບົບຈັດການຮ້ານ 689 KTV - ລະບົບ POS ຂາຍສິນຄ້າ, ເປີດຫ້ອງຄາຣາໂອເກະ, ສະຕັອກ, ພິມໃບບິນ ແລະ ຊິ້ງຂໍ້ມູນ Google Sheets ແບບ Real-time" />
+  <title>689 KTV - ລະບົບຄຸ້ມຄອງຮ້ານຄາຣາໂອເກະ ແລະ POS (Google Apps Script Version)</title>
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -14,14 +14,14 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-  <!-- Google Noto Fonts (Lao & Thai) -->
+  <!-- Google Noto & Phetsarath Fonts (Lao & Thai) -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Lao:wght@400;500;600;700;800;900&family=Noto+Sans+Thai:wght@400;500;600;700;800&family=Noto+Sans:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Phetsarath:wght@400;700&family=Noto+Sans+Lao:wght@400;500;600;700;800;900&family=Noto+Sans+Thai:wght@400;500;600;700;800&family=Noto+Sans:wght@400;600;700&display=swap" rel="stylesheet" />
 
   <style>
     body {
-      font-family: 'Noto Sans Lao', 'Noto Sans Thai', sans-serif;
+      font-family: 'Phetsarath', 'Phetsarath OT', 'Noto Sans Lao', 'Noto Sans Thai', sans-serif;
       -webkit-font-smoothing: antialiased;
       user-select: none;
     }
@@ -94,7 +94,7 @@
       { id: 'p10', name: 'ໝາກໄມ້ລວມ VIP (Mixed Fruit Platter)', category: 'food', costPrice: 30000, salePrice: 55000, stock: 12, unit: 'ຈານ', requireSeller: false }
     ];
 
-    // Initial Packages with fixed durations
+    // Initial Packages with fixed durations (4 hours, 300,000 Kip etc.)
     const INITIAL_PACKAGES = [
       { id: 'pkg-4h', name: '4 ຊົ່ວໂມງ 300,000 ກີບ', durationHours: 4, price: 300000, description: 'ຫ້ອງ VIP 4 ຊົ່ວໂມງເຕັມ (ປະຢັດ 20,000 ₭)' },
       { id: 'pkg-2h', name: '2 ຊົ່ວໂມງ 150,000 ກີບ', durationHours: 2, price: 150000, description: 'ຫ້ອງ VIP 2 ຊົ່ວໂມງ' },
@@ -133,7 +133,7 @@
       }
     ];
 
-    // Storage helpers
+    // LocalStorage helper with graceful fallback
     const loadState = (key, fallback) => {
       try {
         const item = localStorage.getItem('689ktv_' + key);
@@ -149,15 +149,28 @@
       } catch (e) {}
     };
 
-    // Complete Google Apps Script template for copy-pasting
-    const GAS_BACKEND_CODE = `/**
- * 689 KTV - Google Apps Script Web App Backend
- * ສໍາລັບການເຊື່ອມຕໍ່ຫຼາຍເຄື່ອງ (Multi-Device Real-Time Sync)
+    // Google Apps Script Backend Code (Code.gs)
+    const GAS_CODE_GS = `/**
+ * ==============================================================================
+ * 689 KTV - Google Apps Script Web App Backend (Code.gs)
+ * ຮອງຮັບທັງ HtmlService.createTemplateFromFile('Index') ແລະ Real-time API
+ * ==============================================================================
  */
+
 function doGet(e) {
-  var action = (e && e.parameter && e.parameter.action) ? e.parameter.action : 'getAll';
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  // ຖ້າມີ parameter action ໃຫ້ຕອບ JSON API, ຖ້າບໍ່ມີໃຫ້ render ໜ້າเว็บ Index.html
+  var action = (e && e.parameter && e.parameter.action) ? e.parameter.action : null;
   
+  if (!action) {
+    // Render Index.html ໂດຍກົງໃນ Google Apps Script
+    return HtmlService.createTemplateFromFile('Index')
+      .evaluate()
+      .setTitle('689 KTV - ລະບົບຄຸ້ມຄອງຮ້ານ ແລະ POS')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no');
+  }
+  
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
   if (action === 'getAll') {
     return ContentService.createTextOutput(JSON.stringify({
       status: 'success',
@@ -170,7 +183,7 @@ function doGet(e) {
     })).setMimeType(ContentService.MimeType.JSON);
   }
   
-  return ContentService.createTextOutput(JSON.stringify({ status: 'ok', msg: '689 KTV GAS WebApp Active' }))
+  return ContentService.createTextOutput(JSON.stringify({ status: 'ok', msg: '689 KTV Active' }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -198,6 +211,39 @@ function doPost(e) {
     return ContentService.createTextOutput(JSON.stringify({ status: 'error', error: err.toString() }))
       .setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+// ຮອງຮັບການເອີ້ນຜ່ານ google.script.run ໂດຍກົງໃນ Index.html
+function handleGasApi(action, dataJson) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var data = {};
+  if (dataJson) {
+    try { data = JSON.parse(dataJson); } catch(e) {}
+  }
+  
+  if (action === 'getAll') {
+    return {
+      status: 'success',
+      data: {
+        products: getSheetData(ss, 'Products'),
+        rooms: getSheetData(ss, 'Rooms'),
+        debts: getSheetData(ss, 'Debts'),
+        timestamp: new Date().toISOString()
+      }
+    };
+  }
+  
+  if (action === 'saveRooms' && data.rooms) {
+    saveSheetData(ss, 'Rooms', data.rooms);
+  } else if (action === 'saveProducts' && data.products) {
+    saveSheetData(ss, 'Products', data.products);
+  } else if (action === 'saveDebts' && data.debts) {
+    saveSheetData(ss, 'Debts', data.debts);
+  } else if (action === 'saveBill' && data.bill) {
+    appendBillRecord(ss, data.bill);
+  }
+  
+  return { status: 'success', timestamp: new Date().toISOString() };
 }
 
 function getSheetData(ss, sheetName) {
@@ -264,7 +310,8 @@ function appendBillRecord(ss, bill) {
       const [lastSyncTime, setLastSyncTime] = useState(null);
       const [toastMsg, setToastMsg] = useState('');
 
-      // Receipt Font & Size Settings
+      // Receipt & UI Font Size Settings
+      const [appUiFontSize, setAppUiFontSize] = useState(() => loadState('appUiFontSize', '16.5px'));
       const [receiptFontSize, setReceiptFontSize] = useState(() => loadState('receiptFontSize', 'large')); // small, medium, large, xlarge
       const [receiptPaperWidth, setReceiptPaperWidth] = useState(() => loadState('receiptPaperWidth', '58mm'));
       
@@ -305,6 +352,7 @@ function appendBillRecord(ss, bill) {
       useEffect(() => { debtsRef.current = debts; saveState('debts', debts); }, [debts]);
       useEffect(() => { saveState('gasUrl', gasUrl); }, [gasUrl]);
       useEffect(() => { saveState('autoSync', autoSync); }, [autoSync]);
+      useEffect(() => { saveState('appUiFontSize', appUiFontSize); }, [appUiFontSize]);
       useEffect(() => { saveState('receiptFontSize', receiptFontSize); }, [receiptFontSize]);
       useEffect(() => { saveState('receiptPaperWidth', receiptPaperWidth); }, [receiptPaperWidth]);
 
@@ -314,12 +362,36 @@ function appendBillRecord(ss, bill) {
       };
 
       // -----------------------------------------------------------------------
-      // REAL-TIME SYNC FUNCTIONS
+      // REAL-TIME SYNC FUNCTIONS (DUAL ENGINE: google.script.run OR fetch)
       // -----------------------------------------------------------------------
       const triggerPush = async (action, data) => {
-        if (!gasUrl || !autoSync) return;
+        if (!autoSync) return;
         isPushingRef.current = true;
         setSyncStatus('syncing');
+
+        // Check if running inside Google Apps Script (native google.script.run)
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+          google.script.run
+            .withSuccessHandler((res) => {
+              setSyncStatus('success');
+              setLastSyncTime(new Date());
+              setTimeout(() => setSyncStatus('idle'), 2500);
+              setTimeout(() => { isPushingRef.current = false; }, 2000);
+            })
+            .withFailureHandler((err) => {
+              setSyncStatus('error');
+              setTimeout(() => setSyncStatus('idle'), 3500);
+              setTimeout(() => { isPushingRef.current = false; }, 2000);
+            })
+            .handleGasApi(action, JSON.stringify(data));
+          return;
+        }
+
+        // External Fallback via Web App URL (fetch)
+        if (!gasUrl) {
+          isPushingRef.current = false;
+          return;
+        }
 
         try {
           const payload = JSON.stringify({ action, data, timestamp: new Date().toISOString() });
@@ -341,8 +413,31 @@ function appendBillRecord(ss, bill) {
       };
 
       const fetchLatestFromSheets = async (isSilent = false) => {
-        if (!gasUrl || isPushingRef.current) return;
+        if (isPushingRef.current) return;
         if (!isSilent) setSyncStatus('syncing');
+
+        // Check if running inside Google Apps Script (native google.script.run)
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+          google.script.run
+            .withSuccessHandler((json) => {
+              if (json && json.status === 'success' && json.data) {
+                applySheetData(json.data, isSilent);
+              }
+              if (!isSilent) setSyncStatus('success');
+              setTimeout(() => setSyncStatus('idle'), 2500);
+            })
+            .withFailureHandler((err) => {
+              if (!isSilent) {
+                setSyncStatus('error');
+                setTimeout(() => setSyncStatus('idle'), 3000);
+              }
+            })
+            .handleGasApi('getAll', null);
+          return;
+        }
+
+        // External Fallback via Web App URL (fetch)
+        if (!gasUrl) return;
 
         try {
           const url = `${gasUrl}${gasUrl.includes('?') ? '&' : '?'}action=getAll&_t=${Date.now()}`;
@@ -350,33 +445,9 @@ function appendBillRecord(ss, bill) {
           const json = await res.json();
 
           if (json.status === 'success' && json.data) {
-            let updated = false;
-            // Check products
-            if (json.data.products && Array.isArray(json.data.products) && json.data.products.length > 0) {
-              if (JSON.stringify(productsRef.current) !== JSON.stringify(json.data.products)) {
-                setProducts(json.data.products);
-                updated = true;
-              }
-            }
-            // Check rooms
-            if (json.data.rooms && Array.isArray(json.data.rooms) && json.data.rooms.length > 0) {
-              if (JSON.stringify(roomsRef.current) !== JSON.stringify(json.data.rooms)) {
-                setRooms(json.data.rooms);
-                updated = true;
-              }
-            }
-            // Check debts
-            if (json.data.debts && Array.isArray(json.data.debts) && json.data.debts.length > 0) {
-              if (JSON.stringify(debtsRef.current) !== JSON.stringify(json.data.debts)) {
-                setDebts(json.data.debts);
-                updated = true;
-              }
-            }
+            applySheetData(json.data, isSilent);
             setLastSyncTime(new Date());
             if (!isSilent) setSyncStatus('success');
-            if (updated && isSilent) {
-              showToast('🔄 ຊິ້ງຂໍ້ມູນລ່າສຸດຈາກ Google Sheets ອັດຕະໂນມັດແລ້ວ');
-            }
             if (!isSilent) setTimeout(() => setSyncStatus('idle'), 2500);
           }
         } catch (e) {
@@ -387,7 +458,33 @@ function appendBillRecord(ss, bill) {
         }
       };
 
-      // 5-Second Real-Time Auto Polling Loop (Multi-Device Sync on Netlify/Cloud)
+      const applySheetData = (data, isSilent) => {
+        let updated = false;
+        if (data.products && Array.isArray(data.products) && data.products.length > 0) {
+          if (JSON.stringify(productsRef.current) !== JSON.stringify(data.products)) {
+            setProducts(data.products);
+            updated = true;
+          }
+        }
+        if (data.rooms && Array.isArray(data.rooms) && data.rooms.length > 0) {
+          if (JSON.stringify(roomsRef.current) !== JSON.stringify(data.rooms)) {
+            setRooms(data.rooms);
+            updated = true;
+          }
+        }
+        if (data.debts && Array.isArray(data.debts) && data.debts.length > 0) {
+          if (JSON.stringify(debtsRef.current) !== JSON.stringify(data.debts)) {
+            setDebts(data.debts);
+            updated = true;
+          }
+        }
+        setLastSyncTime(new Date());
+        if (updated && isSilent) {
+          showToast('🔄 ຊິ້ງຂໍ້ມູນລ່າສຸດຈາກ Google Sheets ອັດຕະໂນມັດແລ້ວ');
+        }
+      };
+
+      // 5-Second Real-Time Auto Polling Loop
       useEffect(() => {
         fetchLatestFromSheets(false);
 
@@ -412,25 +509,22 @@ function appendBillRecord(ss, bill) {
         };
       }, [gasUrl, autoSync]);
 
-      // -----------------------------------------------------------------------
-      // EXPORT STANDALONE SINGLE-FILE (index.html)
-      // -----------------------------------------------------------------------
-      const handleExportSingleFile = () => {
+      // Download single-file Index.html
+      const handleDownloadIndexHtml = () => {
         try {
-          // Download the current page HTML or serialized DOM as index.html
           const htmlContent = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
           const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
-          a.download = 'index.html';
+          a.download = 'Index.html';
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
           URL.revokeObjectURL(url);
-          showToast('📥 ດາວໂຫລດໄຟລ໌ "index.html" (Single File) ສຳເລັດແລ້ວ! ພ້ອມ Push ຂຶ້ນ GitHub ຫຼື ອັບໂຫລດ Netlify ທັນທີ');
+          showToast('📥 ດາວໂຫລດໄຟລ໌ "Index.html" ສຳເລັດແລ້ວ! ນຳໄປວາງໃນ Google Apps Script ໄດ້ເລີຍ');
         } catch (err) {
-          alert('Error exporting single file: ' + err.message);
+          alert('Error downloading Index.html: ' + err.message);
         }
       };
 
@@ -699,9 +793,7 @@ function appendBillRecord(ss, bill) {
         showToast('ບັນທຶກການຊຳລະໜີ້ສຳເລັດແລ້ວ!');
       };
 
-      // -----------------------------------------------------------------------
-      // CALCULATIONS FOR REPORTS
-      // -----------------------------------------------------------------------
+      // Calculations
       const totalInventoryValue = useMemo(() => {
         return products.reduce((sum, p) => sum + (p.stock * p.salePrice), 0);
       }, [products]);
@@ -710,8 +802,10 @@ function appendBillRecord(ss, bill) {
         return debts.filter(d => d.status === 'pending').reduce((sum, d) => sum + (d.amount - d.paidAmount), 0);
       }, [debts]);
 
+      const isInsideGas = typeof google !== 'undefined' && google.script && google.script.run;
+
       return (
-        <div className="flex-1 flex flex-col">
+        <div style={{ fontSize: appUiFontSize }} className="flex-1 flex flex-col">
           {/* ===================================================================
               TOP NAVIGATION BAR
           =================================================================== */}
@@ -726,7 +820,9 @@ function appendBillRecord(ss, bill) {
                   <h1 className="font-black text-base tracking-tight bg-gradient-to-r from-rose-400 via-pink-400 to-amber-300 bg-clip-text text-transparent">
                     689 KTV & RESTAURANT
                   </h1>
-                  <span className="text-[10px] text-slate-400">ລະບົບຂາຍ ແລະ ຄຸ້ມຄອງຮ້ານ (Single-File)</span>
+                  <span className="text-[10px] text-slate-400">
+                    {isInsideGas ? '🟢 ແລ່ນເທິງ Google Apps Script ໂດຍກົງ' : 'Single-File POS (Apps Script Ready)'}
+                  </span>
                 </div>
               </div>
 
@@ -748,13 +844,13 @@ function appendBillRecord(ss, bill) {
                   onClick={() => setActiveTab('stock')}
                   className={`px-3 py-1.5 rounded-xl font-bold transition-all whitespace-nowrap cursor-pointer ${activeTab === 'stock' ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
                 >
-                  📦 ສະຕັອກສິນຄ້າ ({products.length})
+                  📦 ສະຕັອກ ({products.length})
                 </button>
                 <button
                   onClick={() => setActiveTab('debts')}
                   className={`px-3 py-1.5 rounded-xl font-bold transition-all whitespace-nowrap cursor-pointer ${activeTab === 'debts' ? 'bg-gradient-to-r from-red-600 to-rose-700 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
                 >
-                  💳 ບັນຊີລູກໜີ້ ({debts.filter(d => d.status === 'pending').length})
+                  💳 ລູກໜີ້ ({debts.filter(d => d.status === 'pending').length})
                 </button>
                 <button
                   onClick={() => setActiveTab('reports')}
@@ -766,19 +862,19 @@ function appendBillRecord(ss, bill) {
                   onClick={() => setActiveTab('settings')}
                   className={`px-3 py-1.5 rounded-xl font-bold transition-all whitespace-nowrap cursor-pointer ${activeTab === 'settings' ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
                 >
-                  ⚙️ ຕັ້ງຄ່າ & Sheets
+                  ⚙️ ຕັ້ງຄ່າ & Apps Script
                 </button>
               </div>
 
-              {/* Action Buttons: Export index.html & Staff switcher */}
+              {/* Action Buttons: Export Index.html & Staff switcher */}
               <div className="flex items-center gap-2">
                 <button
-                  onClick={handleExportSingleFile}
-                  title="ດາວໂຫລດໄຟລ໌ນີ້ເປັນ index.html ເພື່ອ Push ຂຶ້ນ GitHub ຫຼື ນຳໄປໃຊ້ເທິງ Netlify ແບບ Single-File"
+                  onClick={handleDownloadIndexHtml}
+                  title="ດາວໂຫລດໄຟລ໌ນີ້ເປັນ Index.html ເພື່ອນຳໄປວາງໃນ Google Apps Script > Index.html"
                   className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-md cursor-pointer flex items-center gap-1.5 transition-all"
                 >
                   <span>📥</span>
-                  <span>Export index.html</span>
+                  <span>ດາວໂຫລດ Index.html</span>
                 </button>
 
                 <select
@@ -799,8 +895,9 @@ function appendBillRecord(ss, bill) {
                 <span className={`w-2.5 h-2.5 rounded-full ${syncStatus === 'syncing' ? 'bg-amber-400 animate-ping' : syncStatus === 'error' ? 'bg-rose-500' : 'bg-emerald-400'}`} />
                 <span className="font-semibold text-slate-300">
                   {syncStatus === 'syncing' ? 'ກຳລັງຊິ້ງຂໍ້ມູນກັບ Google Sheets...' :
-                   syncStatus === 'error' ? 'ບໍ່ສາມາດເຊື່ອມຕໍ່ Sheets ໄດ້ (ໃຊ້ຂໍ້ມູນໃນເຄື່ອງ Offline)' :
-                   `🟢 Real-time: ເຊື່ອມຕໍ່ Google Sheets ແລ້ວ (Auto-Sync ທຸກ 5 ວິ)`}
+                   syncStatus === 'error' ? 'ບໍ່ສາມາດເຊື່ອມຕໍ່ Sheets ໄດ້ (ໃຊ້ຂໍ້ມູນ Offline)' :
+                   isInsideGas ? '🟢 Native Apps Script: ເຊື່ອມຕໍ່ Google Sheets ໂດຍກົງ (Zero-Lag)' :
+                   `🟢 Real-time: ເຊື່ອມຕໍ່ Google Sheets Web App (Auto-Sync ທຸກ 5 ວິ)`}
                 </span>
                 {lastSyncTime && (
                   <span className="text-[10px] text-slate-500">
@@ -814,7 +911,7 @@ function appendBillRecord(ss, bill) {
                   onClick={() => setShowScriptModal(true)}
                   className="px-2.5 py-0.5 rounded-lg bg-slate-900 border border-slate-700 hover:bg-slate-800 text-amber-300 text-[11px] font-semibold cursor-pointer"
                 >
-                  📜 ໂຄ້ດ Apps Script
+                  📜 ໂຄ້ດ Code.gs
                 </button>
                 <button
                   onClick={() => fetchLatestFromSheets(false)}
@@ -839,9 +936,7 @@ function appendBillRecord(ss, bill) {
               MAIN VIEW AREA
           =================================================================== */}
           <main className="max-w-7xl mx-auto w-full p-4 flex-1">
-            {/* ---------------------------------------------------------------
-                TAB 1: ROOM MANAGEMENT
-            --------------------------------------------------------------- */}
+            {/* TAB 1: ROOM MANAGEMENT */}
             {activeTab === 'rooms' && (
               <div>
                 <div className="flex items-center justify-between mb-4">
@@ -951,12 +1046,9 @@ function appendBillRecord(ss, bill) {
               </div>
             )}
 
-            {/* ---------------------------------------------------------------
-                TAB 2: POS DIRECT SALES
-            --------------------------------------------------------------- */}
+            {/* TAB 2: POS DIRECT SALES */}
             {activeTab === 'pos' && (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Catalog */}
                 <div className="lg:col-span-2 space-y-4">
                   <div className="flex items-center justify-between">
                     <h2 className="text-lg font-black text-slate-100">ເມນູຂາຍໜ້າເຄົາເຕີ (POS)</h2>
@@ -1077,9 +1169,7 @@ function appendBillRecord(ss, bill) {
               </div>
             )}
 
-            {/* ---------------------------------------------------------------
-                TAB 3: INVENTORY STOCK
-            --------------------------------------------------------------- */}
+            {/* TAB 3: INVENTORY STOCK */}
             {activeTab === 'stock' && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -1159,9 +1249,7 @@ function appendBillRecord(ss, bill) {
               </div>
             )}
 
-            {/* ---------------------------------------------------------------
-                TAB 4: DEBT MANAGEMENT
-            --------------------------------------------------------------- */}
+            {/* TAB 4: DEBT MANAGEMENT */}
             {activeTab === 'debts' && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -1236,9 +1324,7 @@ function appendBillRecord(ss, bill) {
               </div>
             )}
 
-            {/* ---------------------------------------------------------------
-                TAB 5: SALES REPORTS
-            --------------------------------------------------------------- */}
+            {/* TAB 5: SALES REPORTS */}
             {activeTab === 'reports' && (
               <div className="space-y-6">
                 <div>
@@ -1264,7 +1350,7 @@ function appendBillRecord(ss, bill) {
                   </div>
                 </div>
 
-                {/* Top Products */}
+                {/* Low stock alerts */}
                 <div className="p-5 rounded-3xl bg-slate-900 border border-slate-800 space-y-3">
                   <h3 className="font-bold text-sm text-slate-100">🔥 ສິນຄ້າທີ່ກຳລັງເຫຼືອສະຕັອກໜ້ອຍ (Low Stock Alert)</h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
@@ -1284,28 +1370,60 @@ function appendBillRecord(ss, bill) {
               </div>
             )}
 
-            {/* ---------------------------------------------------------------
-                TAB 6: SETTINGS & GAS SYNC
-            --------------------------------------------------------------- */}
+            {/* TAB 6: SETTINGS & GAS SYNC */}
             {activeTab === 'settings' && (
               <div className="max-w-3xl mx-auto space-y-6">
                 <div>
-                  <h2 className="text-lg font-black text-slate-100">ຕັ້ງຄ່າລະບົບ & Google Sheets Sync</h2>
-                  <p className="text-xs text-slate-400">ກຳນົດ URL ຂອງ Google Apps Script Web App ສຳລັບການເຊື່ອມຕໍ່ຫຼາຍເຄື່ອງ</p>
+                  <h2 className="text-lg font-black text-slate-100">ຕັ້ງຄ່າລະບົບ & Google Apps Script</h2>
+                  <p className="text-xs text-slate-400">ຈັດການການເຊື່ອມຕໍ່ Google Sheets ແລະ ດາວໂຫລດໄຟລ໌ Index.html ສຳລັບ Apps Script</p>
+                </div>
+
+                {/* Google Apps Script Integration Banner */}
+                <div className="p-5 rounded-3xl bg-gradient-to-br from-indigo-950/80 via-slate-900 to-purple-950/60 border border-indigo-700/60 space-y-4 shadow-xl">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-2xl">⚡</span>
+                      <div>
+                        <h3 className="font-black text-sm text-indigo-200">Google Apps Script Mode</h3>
+                        <p className="text-xs text-indigo-300/80">
+                          {isInsideGas ? 'ລະບົບກຳລັງແລ່ນໃນຖານະ Web App ເທິງ Google Apps Script ແບບ Zero-Lag' : 'ພ້ອມນຳໄປໃຊ້ໃນ Google Apps Script (HtmlService)'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={handleDownloadIndexHtml}
+                      className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-white font-bold text-xs shadow-md cursor-pointer flex items-center gap-1.5"
+                    >
+                      <span>📥</span>
+                      <span>ດາວໂຫລດ Index.html</span>
+                    </button>
+                  </div>
+
+                  <div className="p-3 bg-slate-950/80 rounded-2xl border border-slate-800 text-xs space-y-2 text-slate-300">
+                    <p className="font-bold text-amber-300">💡 ວິທີນຳໄຟລ໌ນີ້ໄປໃຊ້ໃນ Google Apps Script:</p>
+                    <ol className="list-decimal pl-4 space-y-1 text-slate-400 text-[11px]">
+                      <li>ເປີດ Google Sheet ຂອງທ່ານ ➔ ໄປທີ່ <b>Extensions (ສ່ວນຂະຫຍາຍ) &gt; Apps Script</b></li>
+                      <li>ໃນໄຟລ໌ <b>Code.gs</b>: ວາງໂຄ້ດ Backend ຈາກປຸ່ມ <b className="text-amber-400">"📜 ໂຄ້ດ Code.gs"</b> ດ້ານເທິງ</li>
+                      <li>ກົດປຸ່ມ <b>+</b> ຢູ່ Apps Script ➔ ເລືອກ <b>HTML</b> ➔ ຕັ້ງຊື່ໄຟລ໌ເປັນ <b>Index</b> (ຈະໄດ້ <code className="text-emerald-400">Index.html</code>)</li>
+                      <li>ເປີດໄຟລ໌ <b>Index.html</b> ທີ່ດາວໂຫລດມານີ້ດ້ວຍ Notepad ແລ້ວ Copy ທັງໝົດມາວາງໃສ່</li>
+                      <li>ກົດ <b>Deploy &gt; New deployment &gt; Web app</b> (Who has access: <b>Anyone</b>) ➔ ໄດ້ URL ເວັບພ້ອມໃຊ້ງານທັນທີ!</li>
+                    </ol>
+                  </div>
                 </div>
 
                 {/* Google Apps Script URL Card */}
                 <div className="p-5 rounded-3xl bg-slate-900 border border-slate-800 space-y-4 shadow-xl">
                   <div className="flex items-center justify-between">
                     <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
-                      <span>⚡</span>
-                      <span>Google Apps Script Web App URL (ຝັງມາພ້ອມໃຊ້ງານ)</span>
+                      <span>🔗</span>
+                      <span>Web App URL ສຳລັບການເຊື່ອມຕໍ່ຈາກພາຍນອກ (Secondary API URL)</span>
                     </h3>
                     <button
                       onClick={() => setGasUrl(DEFAULT_GAS_WEBAPP_URL)}
                       className="text-xs text-amber-400 hover:underline font-bold cursor-pointer"
                     >
-                      ໃຊ້ URL ທີ່ຝັງມາ (Reset)
+                      Reset URL
                     </button>
                   </div>
 
@@ -1334,6 +1452,27 @@ function appendBillRecord(ss, bill) {
                     >
                       ທົດສອບເຊື່ອມຕໍ່ & ດຶງຂໍ້ມູນດຽວນີ້
                     </button>
+                  </div>
+                </div>
+
+                {/* App UI & PC Font Size (ຟອນເພັດຊະຣາດ) */}
+                <div className="p-5 rounded-3xl bg-slate-900 border border-slate-800 space-y-4 shadow-xl">
+                  <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
+                    <span>🔤</span>
+                    <span>ຕັ້ງຄ່າຂະໜາດຟອນໜ້າຈໍ PC (Phetsarath Font Size)</span>
+                  </h3>
+                  <div className="text-xs">
+                    <label className="block text-slate-400 mb-1 font-semibold">ຂະໜາດ Font ຕົວໜັງສືໜ້າຈໍຄອມພິວເຕີ PC / Tablet:</label>
+                    <select
+                      value={appUiFontSize}
+                      onChange={(e) => setAppUiFontSize(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-200"
+                    >
+                      <option value="14px">ປົກກະຕິ (Normal - 14px)</option>
+                      <option value="15.5px">ຂະໜາດກາງ (Medium - 15.5px)</option>
+                      <option value="17px">ຂະໜາດໃຫຍ່ (Large - 17px • ແນະນຳສຳລັບ PC)</option>
+                      <option value="19px">ຂະໜາດໃຫຍ່ພິເສດ (Extra Large - 19px • ເຫັນຊັດເຈນໄກ)</option>
+                    </select>
                   </div>
                 </div>
 
@@ -1372,28 +1511,12 @@ function appendBillRecord(ss, bill) {
                     </div>
                   </div>
                 </div>
-
-                {/* Standalone Export Card */}
-                <div className="p-5 rounded-3xl bg-gradient-to-br from-indigo-950/60 to-purple-950/40 border border-indigo-800/50 space-y-3 shadow-xl">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="font-black text-sm text-indigo-200">📦 ສົ່ງອອກ Single-File (index.html)</h3>
-                      <p className="text-xs text-indigo-300/80">ໄຟລ໌ດຽວຈົບລວມທັງໝົດ HTML, CSS, React ແລະ Real-time Google Sheets Sync</p>
-                    </div>
-                    <button
-                      onClick={handleExportSingleFile}
-                      className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-black shadow-lg cursor-pointer"
-                    >
-                      📥 ດາວໂຫລດ index.html
-                    </button>
-                  </div>
-                </div>
               </div>
             )}
           </main>
 
           {/* ===================================================================
-              MODAL 1: OPEN ROOM (With Package calculation e.g. 4 Hours 300,000 Kip)
+              MODAL 1: OPEN ROOM (With Choice Packages)
           =================================================================== */}
           {openRoomTarget && (
             <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1405,7 +1528,6 @@ function appendBillRecord(ss, bill) {
                   <button onClick={() => setOpenRoomTarget(null)} className="text-slate-400 hover:text-white font-bold text-lg cursor-pointer">×</button>
                 </div>
 
-                {/* Package Options */}
                 <div className="space-y-3">
                   <label className="block text-xs font-bold text-slate-300">ເລືອກແພັກເກັດຊົ່ວໂມງຂອງຮ້ານ (Choice Package):</label>
                   <div className="grid grid-cols-1 gap-2">
@@ -1453,7 +1575,7 @@ function appendBillRecord(ss, bill) {
           )}
 
           {/* ===================================================================
-              MODAL 2: ORDER ITEM INTO ROOM (With Required Price & Seller Validation)
+              MODAL 2: ORDER ITEM INTO ROOM (Mandatory Price & Seller Validation)
           =================================================================== */}
           {selectedRoom && (
             <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1468,7 +1590,6 @@ function appendBillRecord(ss, bill) {
                   <button onClick={() => setSelectedRoom(null)} className="text-slate-400 hover:text-white font-bold text-lg cursor-pointer">×</button>
                 </div>
 
-                {/* Products Grid to add */}
                 <div className="flex-1 overflow-y-auto grid grid-cols-2 sm:grid-cols-3 gap-2.5 p-1">
                   {products.map(p => (
                     <div
@@ -1477,7 +1598,7 @@ function appendBillRecord(ss, bill) {
                         setOrderModalProduct(p);
                         setOrderQty(1);
                         setOrderCustomPrice(p.salePrice.toString());
-                        setOrderSellerId(''); // Must choose seller as requested
+                        setOrderSellerId('');
                         setOrderError('');
                       }}
                       className="bg-slate-950 border border-slate-800 hover:border-rose-500/50 p-2.5 rounded-2xl cursor-pointer transition-all flex flex-col justify-between"
@@ -1494,7 +1615,6 @@ function appendBillRecord(ss, bill) {
                   ))}
                 </div>
 
-                {/* Sub-modal: Confirm item with Price & Seller */}
                 {orderModalProduct && (
                   <div className="p-4 rounded-2xl bg-slate-950 border border-rose-500/40 space-y-3">
                     <div className="flex items-center justify-between">
@@ -1505,7 +1625,6 @@ function appendBillRecord(ss, bill) {
                     </div>
 
                     <div className="grid grid-cols-3 gap-3 text-xs">
-                      {/* Qty */}
                       <div>
                         <label className="block text-slate-400 mb-1 font-semibold">ຈຳນວນ:</label>
                         <input
@@ -1517,7 +1636,6 @@ function appendBillRecord(ss, bill) {
                         />
                       </div>
 
-                      {/* Custom Price */}
                       <div>
                         <label className="block text-slate-400 mb-1 font-semibold">ລາຄາຂາຍ (₭) <span className="text-rose-400">*</span>:</label>
                         <input
@@ -1529,7 +1647,6 @@ function appendBillRecord(ss, bill) {
                         />
                       </div>
 
-                      {/* Seller Selection */}
                       <div>
                         <label className="block text-slate-400 mb-1 font-semibold">ພະນັກງານຂາຍ <span className="text-rose-400">*</span>:</label>
                         <select
@@ -1566,7 +1683,6 @@ function appendBillRecord(ss, bill) {
                   </div>
                 )}
 
-                {/* Current Room Orders */}
                 <div className="border-t border-slate-800 pt-3">
                   <div className="flex justify-between items-center mb-2 text-xs">
                     <span className="font-bold text-slate-300">ລາຍການທີ່ສັ່ງແລ້ວໃນຫ້ອງ ({selectedRoom.orders.length} ລາຍການ):</span>
@@ -1653,7 +1769,6 @@ function appendBillRecord(ss, bill) {
                   <button onClick={() => setActiveBill(null)} className="text-slate-400 hover:text-white font-bold text-lg cursor-pointer">×</button>
                 </div>
 
-                {/* Printable Receipt with Adjustable Font Size */}
                 <div
                   id="printable-receipt"
                   className={`bg-white text-black p-4 rounded-xl font-mono leading-tight space-y-2 border border-slate-300 ${
@@ -1681,7 +1796,6 @@ function appendBillRecord(ss, bill) {
                     </div>
                   </div>
 
-                  {/* Items */}
                   <div className="space-y-1 py-1 border-b border-black">
                     {activeBill.roomCharge > 0 && (
                       <div className="flex justify-between font-bold">
@@ -1697,11 +1811,9 @@ function appendBillRecord(ss, bill) {
                     ))}
                   </div>
 
-                  {/* Grand Total */}
                   <div className="pt-1 text-right">
-                    <div className="flex justify-between text-base font-black border-t-2 border-black pt-1">
-                      <span>ລວມທັງໝົດ:</span>
-                      <span>{formatKip(activeBill.total)}</span>
+                    <div className="flex justify-end text-lg font-black border-t-2 border-black pt-1">
+                      <span className="text-right font-black">{formatKip(activeBill.total)}</span>
                     </div>
                   </div>
 
@@ -1711,7 +1823,6 @@ function appendBillRecord(ss, bill) {
                   </div>
                 </div>
 
-                {/* Print Controls */}
                 <div className="pt-2 flex items-center gap-2">
                   <button
                     onClick={() => window.print()}
@@ -1731,7 +1842,7 @@ function appendBillRecord(ss, bill) {
           )}
 
           {/* ===================================================================
-              MODAL 5: GOOGLE APPS SCRIPT CODE VIEWER MODAL
+              MODAL 5: GOOGLE APPS SCRIPT CODE.GS VIEWER MODAL
           =================================================================== */}
           {showScriptModal && (
             <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1739,27 +1850,27 @@ function appendBillRecord(ss, bill) {
                 <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                   <div>
                     <h3 className="font-black text-base text-amber-400">📜 ໂຄ້ດ Google Apps Script (Code.gs)</h3>
-                    <p className="text-xs text-slate-400">ຄັດລອກໂຄ້ດນີ້ໄປວາງໃນ Google Sheets > Extensions > Apps Script ແລ້ວກົດ Deploy Web App</p>
+                    <p className="text-xs text-slate-400">ວາງໂຄ້ດນີ້ໃນ Code.gs ຂອງ Google Sheets Apps Script</p>
                   </div>
                   <button onClick={() => setShowScriptModal(false)} className="text-slate-400 hover:text-white font-bold text-lg cursor-pointer">×</button>
                 </div>
 
                 <div className="flex-1 overflow-y-auto">
                   <pre className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-emerald-400 font-mono text-xs overflow-x-auto select-all">
-                    {GAS_BACKEND_CODE}
+                    {GAS_CODE_GS}
                   </pre>
                 </div>
 
                 <div className="pt-2 flex items-center justify-between border-t border-slate-800">
                   <button
                     onClick={() => {
-                      navigator.clipboard.writeText(GAS_BACKEND_CODE);
+                      navigator.clipboard.writeText(GAS_CODE_GS);
                       setCopiedScript(true);
                       setTimeout(() => setCopiedScript(false), 2000);
                     }}
                     className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs shadow-md cursor-pointer flex items-center gap-2"
                   >
-                    <span>{copiedScript ? '✓ ຄັດລອກແລ້ວ!' : '📋 ຄັດລອກໂຄ້ດທັງໝົດ'}</span>
+                    <span>{copiedScript ? '✓ ຄັດລອກແລ້ວ!' : '📋 ຄັດລອກໂຄ້ດ Code.gs'}</span>
                   </button>
                   <button
                     onClick={() => setShowScriptModal(false)}
@@ -1775,7 +1886,6 @@ function appendBillRecord(ss, bill) {
       );
     }
 
-    // Render the React application
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
 </body>

@@ -12,6 +12,8 @@ import {
   Type,
   ZoomIn,
   ZoomOut,
+  ExternalLink,
+  RefreshCw,
 } from 'lucide-react';
 import { BillRecord, AppSettings, ReceiptFontSize, ReceiptPaperWidth } from '../types';
 import { formatCurrency, saveStoredSettings } from '../lib/storage';
@@ -19,8 +21,13 @@ import {
   printReceiptAsImageViaBluetooth,
   getReceiptImageDataUrl,
   isWebBluetoothSupported,
+  isBluetoothBlockedError,
+  isRunningInIframe,
   ensureLaoFontsReady,
   loadReceiptImage,
+  connectBluetoothPrinter,
+  getBluetoothStatus,
+  BluetoothPrinterStatus,
 } from '../lib/bluetoothPrinter';
 import { FormattedNumberInput } from './FormattedNumberInput';
 
@@ -60,6 +67,10 @@ export const BillingModal: React.FC<BillingModalProps> = ({
   const [printError, setPrintError] = useState<string>('');
   const [printSuccess, setPrintSuccess] = useState<boolean>(false);
   const [isSyncingSheet, setIsSyncingSheet] = useState<boolean>(false);
+  const [btFallbackNotice, setBtFallbackNotice] = useState<{
+    show: boolean;
+    message: string;
+  }>({ show: false, message: '' });
 
   // Receipt Preview mode: 'image' (Canvas render with authentic Lao fonts) or 'paper'
   const [previewMode, setPreviewMode] = useState<'image' | 'paper'>('image');
@@ -134,9 +145,79 @@ export const BillingModal: React.FC<BillingModalProps> = ({
     handleSetDiscount(amount);
   };
 
+  const [localBtStatus, setLocalBtStatus] = useState<BluetoothPrinterStatus>(getBluetoothStatus());
+  const [isConnectingBt, setIsConnectingBt] = useState<boolean>(false);
+
+  useEffect(() => {
+    const updateBt = () => {
+      setLocalBtStatus(getBluetoothStatus());
+    };
+    updateBt();
+
+    window.addEventListener('689ktv_bluetooth_connected', updateBt);
+    window.addEventListener('689ktv_bluetooth_disconnected', updateBt);
+    return () => {
+      window.removeEventListener('689ktv_bluetooth_connected', updateBt);
+      window.removeEventListener('689ktv_bluetooth_disconnected', updateBt);
+    };
+  }, []);
+
+  const isEffectiveBtConnected = bluetoothConnected || localBtStatus.connected;
+  const currentBtDeviceName =
+    localBtStatus.deviceName ||
+    (typeof localStorage !== 'undefined' ? localStorage.getItem('689ktv_last_bt_device') : '') ||
+    'Bluetooth Mini Printer';
+
   const [autoCloseAfterPrint, setAutoCloseAfterPrint] = useState<boolean>(
     settings.autoCloseAfterPrint !== undefined ? settings.autoCloseAfterPrint : true
   );
+
+  // Connect to Bluetooth printer directly from BillingModal
+  const handleConnectBluetooth = async (): Promise<boolean> => {
+    setIsConnectingBt(true);
+    setPrintError('');
+    try {
+      const res = await connectBluetoothPrinter();
+      if (res.connected) {
+        setLocalBtStatus(res);
+        setPrintSuccess(true);
+        setTimeout(() => setPrintSuccess(false), 2500);
+        return true;
+      } else if (res.isBlocked) {
+        setBtFallbackNotice({
+          show: true,
+          message:
+            'Web Bluetooth ຖືກຈຳກັດ (Permissions Policy / iframe). ທ່ານສາມາດສັ່ງພິມຜ່ານ Standard Print ແທນ ຫຼື ເປີດລິ້ງໃນແທັບໃໝ່',
+        });
+        return false;
+      } else {
+        setPrintError(res.error || 'ບໍ່ສາມາດເຊື່ອມຕໍ່ Bluetooth ໄດ້');
+        return false;
+      }
+    } catch (err: any) {
+      if (isBluetoothBlockedError(err)) {
+        setBtFallbackNotice({
+          show: true,
+          message:
+            'Web Bluetooth ຖືກຈຳກັດ (Permissions Policy / iframe). ທ່ານສາມາດສັ່ງພິມຜ່ານ Standard Print ແທນ',
+        });
+      } else {
+        setPrintError(err.message || 'ເກີດຂໍ້ຜິດພາດໃນການເຊື່ອມຕໍ່');
+      }
+      return false;
+    } finally {
+      setIsConnectingBt(false);
+    }
+  };
+
+  // Fast Print: ຕັດບັນຫາທຸກຢ່າງ ແລະ ສັ່ງພິມໃບບິນອອກມາໄດ້ທັນທີ
+  const handleFastPrint = async () => {
+    if (isWebBluetoothSupported() && !isRunningInIframe()) {
+      handlePrintBluetoothImage();
+    } else {
+      handleStandardPrint();
+    }
+  };
 
   // Print via Bluetooth as raster image (Lao font support)
   const handlePrintBluetoothImage = async () => {
@@ -144,7 +225,31 @@ export const BillingModal: React.FC<BillingModalProps> = ({
     setPrintError('');
     setPrintSuccess(false);
 
+    // If running in Google AI Studio iframe, browser permissions policy disallows navigator.bluetooth.
+    if (isRunningInIframe()) {
+      setIsPrintingBt(false);
+      setPrintError('');
+      setBtFallbackNotice({
+        show: true,
+        message:
+          'Google AI ສະແດງຜົນໃນ iframe ເຊິ່ງບຣາວເຊີຈະບລັອກ Bluetooth. ລະບົບຈຶ່ງສັ່ງພິມໃບບິນຜ່ານ Standard Print ໃຫ້ທັນທີ (ຫຼື ເປີດແທັບໃໝ່ເພື່ອໃຊ້ Bluetooth ໂດຍກົງ)',
+      });
+      setTimeout(() => {
+        handleStandardPrint();
+      }, 350);
+      return;
+    }
+
     try {
+      // If not connected yet, trigger device search & connect first!
+      if (!isEffectiveBtConnected) {
+        const connected = await handleConnectBluetooth();
+        if (!connected) {
+          setIsPrintingBt(false);
+          return;
+        }
+      }
+
       await printReceiptAsImageViaBluetooth(currentBillState, activeSettings);
       setPrintSuccess(true);
 
@@ -157,7 +262,23 @@ export const BillingModal: React.FC<BillingModalProps> = ({
         setTimeout(() => setPrintSuccess(false), 4000);
       }
     } catch (err: any) {
-      setPrintError(err.message || 'ບໍ່ສາມາດພິມໃບບິນຜ່ານ Bluetooth ໄດ້');
+      console.warn('Bluetooth print failed, evaluating fallback:', err);
+      if (isBluetoothBlockedError(err)) {
+        setPrintError('');
+        setBtFallbackNotice({
+          show: true,
+          message:
+            'Web Bluetooth ຖືກຈຳກັດ. ລະບົບກຳລັງສະຫຼັບໄປສັ່ງພິມຜ່ານ Standard Print ໃຫ້ອັດຕະໂນມັດ...',
+        });
+        setTimeout(() => {
+          handleStandardPrint();
+          setTimeout(() => {
+            setBtFallbackNotice({ show: false, message: '' });
+          }, 2000);
+        }, 400);
+      } else {
+        setPrintError(err.message || 'ບໍ່ສາມາດພິມໃບບິນຜ່ານ Bluetooth ໄດ້. ກະລຸນາກວດສອບເຄື່ອງພິມ');
+      }
     } finally {
       setIsPrintingBt(false);
     }
@@ -342,8 +463,8 @@ export const BillingModal: React.FC<BillingModalProps> = ({
         </div>
 
         {/* Printable Receipt Paper Container (thermal preview) */}
-        {previewMode === 'image' ? (
-          <div className="bg-slate-950 p-3 rounded-2xl border border-slate-800 flex flex-col items-center justify-center max-h-72 overflow-y-auto scrollbar-thin">
+        {previewMode === 'image' && (
+          <div className="no-print print:hidden bg-slate-950 p-3 rounded-2xl border border-slate-800 flex flex-col items-center justify-center max-h-72 overflow-y-auto scrollbar-thin">
             {receiptImageUrl ? (
               <div className="bg-white p-3 rounded-xl shadow-lg border border-slate-200">
                 <img
@@ -361,172 +482,188 @@ export const BillingModal: React.FC<BillingModalProps> = ({
               * ລະບົບປ່ຽນໃບບິນພາສາລາວເປັນຮູບພາບຄົມຊັດ (Raster Bitmap) ກ່ອນສົ່ງຫາ Mini Thermal Printer (Font: {receiptFontSize.toUpperCase()})
             </p>
           </div>
-        ) : (
-          <div
-            className={`bg-slate-100 text-slate-900 p-5 rounded-2xl shadow-inner font-mono max-h-72 overflow-y-auto border border-slate-300 print:max-h-none print:shadow-none print:m-0 print:p-2 print:border-none print-receipt-container receipt-font-${receiptFontSize}`}
-            style={{
-              fontSize:
+        )}
+
+        <div
+          className={`bg-slate-100 text-slate-900 p-5 rounded-2xl shadow-inner font-mono max-h-72 overflow-y-auto border border-slate-300 print:max-h-none print:shadow-none print:m-0 print:p-2 print:border-none print-receipt-container ${
+            receiptPaperWidth === '58mm' ? 'paper-58mm' : 'paper-80mm'
+          } receipt-font-${receiptFontSize} ${previewMode === 'image' ? 'hidden print:block' : 'block'}`}
+          style={{
+            fontFamily: "'Phetsarath', 'Phetsarath OT', 'Noto Sans Lao', monospace",
+            fontSize: settings.receiptCustomFontSize
+              ? `${settings.receiptCustomFontSize}px`
+              : receiptFontSize === 'xlarge'
+              ? '16px'
+              : receiptFontSize === 'large'
+              ? '14px'
+              : receiptFontSize === 'medium'
+              ? '12.5px'
+              : '11px',
+            lineHeight: 1.38,
+          }}
+        >
+          {/* Header 689 KTV */}
+          <div className="text-center pb-2 border-b border-dashed border-slate-400">
+            {settings.receiptLogoUrl && (
+              <div className="flex justify-center mb-2">
+                <img
+                  src={settings.receiptLogoUrl}
+                  alt="Shop Logo"
+                  className="max-h-16 max-w-[140px] object-contain mx-auto"
+                />
+              </div>
+            )}
+            <h2
+              className={`receipt-title font-black tracking-wider text-slate-950 ${
                 receiptFontSize === 'xlarge'
-                  ? '16px'
+                  ? 'text-xl'
                   : receiptFontSize === 'large'
-                  ? '14px'
-                  : receiptFontSize === 'medium'
-                  ? '12.5px'
-                  : '11px',
-              lineHeight: 1.38,
-            }}
-          >
-            {/* Header 689 KTV */}
-            <div className="text-center pb-2 border-b border-dashed border-slate-400">
-              {settings.receiptLogoUrl && (
-                <div className="flex justify-center mb-2">
-                  <img
-                    src={settings.receiptLogoUrl}
-                    alt="Shop Logo"
-                    className="max-h-16 max-w-[140px] object-contain mx-auto"
-                  />
-                </div>
-              )}
-              <h2
-                className={`receipt-title font-black tracking-wider text-slate-950 ${
-                  receiptFontSize === 'xlarge'
-                    ? 'text-xl'
-                    : receiptFontSize === 'large'
-                    ? 'text-lg'
-                    : 'text-base'
-                }`}
-              >
-                {settings.shopName}
-              </h2>
-              <p className="font-semibold text-slate-700">{settings.receiptHeader}</p>
-              {settings.shopAddress && <p className="text-slate-600">{settings.shopAddress}</p>}
-              {settings.shopPhone && <p className="text-slate-600">Tel: {settings.shopPhone}</p>}
-              {settings.wifiPassword && (
-                <p className="text-slate-600">WiFi: {settings.wifiPassword}</p>
-              )}
+                  ? 'text-lg'
+                  : 'text-base'
+              }`}
+            >
+              {settings.shopName}
+            </h2>
+            <p className="font-semibold text-slate-700">{settings.receiptHeader}</p>
+            {settings.shopAddress && <p className="text-slate-600">{settings.shopAddress}</p>}
+            {settings.shopPhone && <p className="text-slate-600">Tel: {settings.shopPhone}</p>}
+            {settings.wifiPassword && (
+              <p className="text-slate-600">WiFi: {settings.wifiPassword}</p>
+            )}
+          </div>
+
+          {/* Bill Meta */}
+          <div className="py-2 border-b border-dashed border-slate-400 space-y-0.5">
+            <div className="flex justify-between">
+              <span>ເລກທີບິນ:</span>
+              <span className="font-bold">{bill.billNumber}</span>
             </div>
-
-            {/* Bill Meta */}
-            <div className="py-2 border-b border-dashed border-slate-400 space-y-0.5">
-              <div className="flex justify-between">
-                <span>ເລກທີບິນ:</span>
-                <span className="font-bold">{bill.billNumber}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>ວັນທີ-ເວລາ:</span>
-                <span>{new Date(bill.endTime).toLocaleString('lo-LA')}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>ພະນັກງານ:</span>
-                <span>{bill.staffName}</span>
-              </div>
-              {bill.roomName && (
-                <div className="flex justify-between font-bold text-slate-900 pt-1">
-                  <span>ຫ້ອງ KTV:</span>
-                  <span>{bill.roomName}</span>
-                </div>
-              )}
-              {bill.packageName && (
-                <div className="flex justify-between font-bold text-slate-900">
-                  <span>ແພັກເກັດຫ້ອງ:</span>
-                  <span>{bill.packageName}</span>
-                </div>
-              )}
-              {bill.startTime && (
-                <div className="flex justify-between font-bold text-slate-950 py-0.5 bg-slate-200/80 px-1.5 rounded">
-                  <span>ເວລາເປີດ - ສິ້ນສຸດ:</span>
-                  <span className="font-mono">
-                    {new Date(bill.startTime).toLocaleTimeString('lo-LA', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      hour12: false,
-                    })}{' '}
-                    ຫາ{' '}
-                    {new Date(bill.endTime).toLocaleTimeString('lo-LA', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      hour12: false,
-                    })}
-                  </span>
-                </div>
-              )}
-              {bill.timeRangeFormatted && (
-                <div className="flex justify-between text-slate-600">
-                  <span>ກຳນົດໄລຍະເວລາ:</span>
-                  <span>{bill.timeRangeFormatted}</span>
-                </div>
-              )}
-              {bill.durationMinutes !== undefined && bill.durationMinutes > 0 && (
-                <div className="flex justify-between text-slate-700">
-                  <span>ໄລຍະເວລາໃຊ້ງານຈິງ:</span>
-                  <span>
-                    {Math.floor(bill.durationMinutes / 60)} ຊມ {bill.durationMinutes % 60} ນາທີ (
-                    {bill.durationMinutes} ນາທີ)
-                  </span>
-                </div>
-              )}
+            <div className="flex justify-between">
+              <span>ວັນທີ-ເວລາ:</span>
+              <span>{new Date(bill.endTime).toLocaleString('lo-LA')}</span>
             </div>
-
-            {/* Items breakdown */}
-            <div className="py-2 border-b border-dashed border-slate-400 space-y-1.5">
-              {bill.roomCharge > 0 && (
-                <div className="flex justify-between font-semibold">
-                  <span>ຄ່າຫ້ອງຄາຣາໂອເກະ</span>
-                  <span>{formatCurrency(bill.roomCharge, settings.currencySymbol)}</span>
-                </div>
-              )}
-
-              {bill.items.map((item, idx) => (
-                <div key={idx} className="space-y-0.5">
-                  <div className="flex justify-between">
-                    <span className="font-bold truncate max-w-[200px]">{item.productName}</span>
-                    <span className="font-bold font-mono">
-                      {formatCurrency(item.total, settings.currencySymbol)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-[0.88em] text-slate-600">
-                    <span>
-                      {item.quantity} {item.unit} x {formatCurrency(item.price, '')}
-                    </span>
-                    {item.sellerName && <span>ເສີບ: {item.sellerName}</span>}
-                  </div>
-                </div>
-              ))}
+            <div className="flex justify-between">
+              <span>ພະນັກງານ:</span>
+              <span>{bill.staffName}</span>
             </div>
-
-            {/* Totals */}
-            <div className="py-2 border-b border-dashed border-slate-400 space-y-1">
+            {bill.roomName && (
+              <div className="flex justify-between font-bold text-slate-900 pt-1">
+                <span>ຫ້ອງ KTV:</span>
+                <span>{bill.roomName}</span>
+              </div>
+            )}
+            {bill.packageName && (
+              <div className="flex justify-between font-bold text-slate-900">
+                <span>ແພັກເກັດຫ້ອງ:</span>
+                <span>{bill.packageName}</span>
+              </div>
+            )}
+            {bill.startTime && (
+              <div className="flex justify-between font-bold text-slate-950 py-0.5 bg-slate-200/80 px-1.5 rounded">
+                <span>ເວລາເປີດ - ສິ້ນສຸດ:</span>
+                <span className="font-mono">
+                  {new Date(bill.startTime).toLocaleTimeString('lo-LA', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false,
+                  })}{' '}
+                  ຫາ{' '}
+                  {new Date(bill.endTime).toLocaleTimeString('lo-LA', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false,
+                  })}
+                </span>
+              </div>
+            )}
+            {bill.timeRangeFormatted && (
+              <div className="flex justify-between text-slate-600">
+                <span>ກຳນົດໄລຍະເວລາ:</span>
+                <span>{bill.timeRangeFormatted}</span>
+              </div>
+            )}
+            {bill.durationMinutes !== undefined && bill.durationMinutes > 0 && (
               <div className="flex justify-between text-slate-700">
-                <span>ລວມເງິນ:</span>
-                <span>{formatCurrency(bill.subtotal, settings.currencySymbol)}</span>
+                <span>ໄລຍະເວລາໃຊ້ງານຈິງ:</span>
+                <span>
+                  {Math.floor(bill.durationMinutes / 60)} ຊມ {bill.durationMinutes % 60} ນາທີ (
+                  {bill.durationMinutes} ນາທີ)
+                </span>
               </div>
-              {discount > 0 && (
-                <div className="flex justify-between text-rose-700 font-bold">
-                  <span>ສ່ວນຫຼຸດ (Discount):</span>
-                  <span>-{formatCurrency(discount, settings.currencySymbol)}</span>
-                </div>
-              )}
-              <div
-                className={`receipt-total flex justify-between font-black text-slate-950 pt-1.5 border-t-2 border-slate-950 ${
-                  receiptFontSize === 'xlarge'
-                    ? 'text-lg'
-                    : receiptFontSize === 'large'
-                    ? 'text-base'
-                    : 'text-sm'
-                }`}
-              >
-                <span>ຍອດສຸດທິ (TOTAL):</span>
-                <span>{formatCurrency(netTotal, settings.currencySymbol)}</span>
-              </div>
-            </div>
+            )}
+          </div>
 
-            {/* Footer note */}
-            <div className="pt-2 text-center text-slate-600 space-y-0.5">
-              <p>{settings.receiptFooter}</p>
-              <p className="font-black text-slate-900">*** 689 KTV ***</p>
+          {/* Items breakdown */}
+          <div className="py-2 border-b border-dashed border-slate-400 space-y-1.5">
+            {bill.roomCharge > 0 && (
+              <div className="flex justify-between font-semibold">
+                <span>ຄ່າຫ້ອງຄາຣາໂອເກະ</span>
+                <span>{formatCurrency(bill.roomCharge, settings.currencySymbol)}</span>
+              </div>
+            )}
+
+            {bill.items.map((item, idx) => (
+              <div key={idx} className="space-y-0.5">
+                <div className="flex justify-between">
+                  <span className="font-bold truncate max-w-[200px]">{item.productName}</span>
+                  <span className="font-bold font-mono">
+                    {formatCurrency(item.total, settings.currencySymbol)}
+                  </span>
+                </div>
+                <div className="flex justify-between text-[0.88em] text-slate-600">
+                  <span>
+                    {item.quantity} {item.unit} x {formatCurrency(item.price, '')}
+                  </span>
+                  {item.sellerName && <span>ເສີບ: {item.sellerName}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Totals */}
+          <div className="py-2 border-b border-dashed border-slate-400 space-y-1">
+            <div className="flex justify-between text-slate-700">
+              <span>ລວມເງິນ:</span>
+              <span>{formatCurrency(bill.subtotal, settings.currencySymbol)}</span>
+            </div>
+            {discount > 0 && (
+              <div className="flex justify-between text-rose-700 font-bold">
+                <span>ສ່ວນຫຼຸດ (Discount):</span>
+                <span>-{formatCurrency(discount, settings.currencySymbol)}</span>
+              </div>
+            )}
+            <div
+              className={`receipt-total flex ${settings.receiptHideTotalText !== false ? 'justify-end' : 'justify-between'} font-black text-slate-950 pt-1.5 border-t-2 border-slate-950 ${
+                receiptFontSize === 'xlarge'
+                  ? 'text-xl'
+                  : receiptFontSize === 'large'
+                  ? 'text-lg'
+                  : 'text-base'
+              }`}
+            >
+              {settings.receiptHideTotalText !== false ? (
+                // เอาข้อความที่มีอยู่ในบรรทัดยอดสุทธิออก ไม่ต้องใส่
+                <span className="font-black text-right w-full text-slate-950">
+                  {formatCurrency(netTotal, settings.currencySymbol)}
+                </span>
+              ) : (
+                <>
+                  <span>ຍອດສຸດທິ:</span>
+                  <span>{formatCurrency(netTotal, settings.currencySymbol)}</span>
+                </>
+              )}
             </div>
           </div>
-        )}
+
+          {/* Footer note */}
+          <div className="pt-2 text-center text-slate-600 space-y-0.5">
+            <p>{settings.receiptFooter}</p>
+            <p className="font-black text-slate-900">*** 689 KTV ***</p>
+          </div>
+
+          {/* Paper cutter bottom spacer (ensures Windows thermal driver auto-cut cuts cleanly without clipping footer text) */}
+          <div className="receipt-cut-spacer hidden print:block" style={{ height: '14mm' }} />
+        </div>
 
 
         {/* Dynamic Discount Controls */}
@@ -618,6 +755,71 @@ export const BillingModal: React.FC<BillingModalProps> = ({
             </div>
           )}
 
+          {/* Bluetooth Connection & Search Card (For ANY device opening shared link) */}
+          <div className="p-3 bg-slate-950/80 border border-slate-800 rounded-2xl space-y-2">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <div
+                  className={`w-8 h-8 rounded-xl flex items-center justify-center ${
+                    isEffectiveBtConnected
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                      : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                  }`}
+                >
+                  <Bluetooth className={`w-4 h-4 ${isEffectiveBtConnected ? 'animate-pulse' : ''}`} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-black text-slate-100">
+                      {isEffectiveBtConnected ? 'ເຊື່ອມຕໍ່ Bluetooth ແລ້ວ' : 'Bluetooth Thermal Printer'}
+                    </span>
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        isEffectiveBtConnected ? 'bg-emerald-400 animate-ping' : 'bg-slate-600'
+                      }`}
+                    />
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    {isEffectiveBtConnected
+                      ? `ເຄື່ອງພິມ: ${currentBtDeviceName}`
+                      : 'ຮອງຮັບເຄື່ອງພິມ 58mm / 80mm ທຸກລຸ້ນ (Android, Windows, iOS Bluefy)'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Search & Connect Button */}
+              <button
+                type="button"
+                onClick={handleConnectBluetooth}
+                disabled={isConnectingBt}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm ${
+                  isEffectiveBtConnected
+                    ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
+                    : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-blue-600/30 font-black'
+                }`}
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isConnectingBt ? 'animate-spin' : ''}`} />
+                <span>
+                  {isConnectingBt
+                    ? 'ກຳລັງຄົ້ນຫາ...'
+                    : isEffectiveBtConnected
+                    ? 'ປ່ຽນເຄື່ອງພິມ'
+                    : '🔍 ຄົ້ນຫາ & ເຊື່ອມຕໍ່ Bluetooth'}
+                </span>
+              </button>
+            </div>
+
+            {/* Helpful iOS Safari Tip if device is on iOS and browser lacks native Web Bluetooth */}
+            {!isWebBluetoothSupported() && (
+              <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-300 flex items-start gap-2">
+                <span className="text-base shrink-0">💡</span>
+                <span className="leading-relaxed">
+                  <strong>ສຳລັບ iPhone / iPad (iOS):</strong> Apple Safari ບໍ່ຮອງຮັບ Bluetooth ໂດຍກົງ. ທ່ານສາມາດດາວໂຫລດແອັບຟຣີ <strong>Bluefy</strong> (Web BLE Browser) ຈາກ App Store ແລ້ວເປີດລິ້ງນີ້ຈະຄົ້ນຫາ ແລະ ພິມ Bluetooth ໄດ້ 100%! ຫຼື ກົດ <strong>"ພິມແບບທົ່ວໄປ (Print)"</strong> ດ້ານລຸ່ມເພື່ອພິມຜ່ານ AirPrint ໄດ້ທັນທີ
+                </span>
+              </div>
+            )}
+          </div>
+
           {/* Auto close toggle after print */}
           <div className="flex items-center justify-between p-2 rounded-xl bg-slate-850 border border-slate-800">
             <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
@@ -635,35 +837,50 @@ export const BillingModal: React.FC<BillingModalProps> = ({
           </div>
 
           {/* Print & Action Buttons */}
-          <div className="grid grid-cols-2 gap-2 pt-1">
-            {/* Bluetooth Thermal Print as Image */}
+          <div className="space-y-2 pt-1">
+            {/* Primary One-Click Instant Print */}
             <button
-              onClick={handlePrintBluetoothImage}
+              type="button"
+              onClick={handleFastPrint}
               disabled={isPrintingBt}
-              className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                bluetoothConnected
-                  ? 'bg-blue-600 hover:bg-blue-500 border-blue-500 text-white shadow-md shadow-blue-600/30'
-                  : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300'
-              }`}
+              className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black text-xs shadow-lg shadow-amber-500/25 flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.98]"
             >
-              <Bluetooth className={`w-4 h-4 ${isPrintingBt ? 'animate-spin' : ''}`} />
-              <span>
-                {isPrintingBt
-                  ? 'ກຳລັງພິມຮູບພາບ...'
-                  : bluetoothConnected
-                  ? 'ພິມຮູບພາບຜ່ານ Bluetooth'
-                  : 'ເຊື່ອມຕໍ່ & ພິມຮູບ BT'}
-              </span>
+              <Printer className="w-4 h-4 text-slate-950" />
+              <span>⚡ ພິມໃບບິນດ່ວນທັນທີ (Fast Print Receipt)</span>
             </button>
 
-            {/* Standard Browser Print */}
-            <button
-              onClick={handleStandardPrint}
-              className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <Printer className="w-4 h-4 text-amber-400" />
-              <span>ພິມແບບທົ່ວໄປ (Print)</span>
-            </button>
+            <div className="grid grid-cols-2 gap-2">
+              {/* Bluetooth Thermal Print as Image */}
+              <button
+                type="button"
+                onClick={handlePrintBluetoothImage}
+                disabled={isPrintingBt || isConnectingBt}
+                className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  isEffectiveBtConnected
+                    ? 'bg-blue-600 hover:bg-blue-500 border-blue-500 text-white shadow-md shadow-blue-600/30 font-black'
+                    : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200'
+                }`}
+              >
+                <Bluetooth className={`w-3.5 h-3.5 ${isPrintingBt ? 'animate-spin' : ''}`} />
+                <span>
+                  {isPrintingBt
+                    ? 'ກຳລັງພິມ...'
+                    : isEffectiveBtConnected
+                    ? 'ພິມຜ່ານ Bluetooth'
+                    : '🔍 ຄົ້ນຫາ & ພິມ BT'}
+                </span>
+              </button>
+
+              {/* Standard Browser Print */}
+              <button
+                type="button"
+                onClick={handleStandardPrint}
+                className="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5 text-amber-400" />
+                <span>ພິມແບບທົ່ວໄປ (Print)</span>
+              </button>
+            </div>
           </div>
 
           {/* Confirm & Close */}
@@ -681,6 +898,61 @@ export const BillingModal: React.FC<BillingModalProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Bluetooth Fallback to Standard Print Modal (No persistent red error bar) */}
+      {btFallbackNotice.show && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-amber-500/50 rounded-3xl p-5 w-full max-w-sm shadow-2xl text-center space-y-4">
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+              <Printer className="w-7 h-7 animate-bounce" />
+            </div>
+            <div className="space-y-1.5">
+              <h4 className="font-black text-base text-slate-100">
+                ສະຫຼັບໄປພິມແບບມາດຕະຖານ (Standard Print)
+              </h4>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                {btFallbackNotice.message}
+              </p>
+            </div>
+            <div className="p-2.5 rounded-xl bg-slate-800/80 border border-slate-700 text-[11px] text-amber-300/90 font-medium">
+              💡 ລະບົບປັບຂະໜາດເຈ້ຍຄວາມຮ້ອນ 58mm / 80mm ແລະ ຕັດຂອບອັດຕະໂນມັດ ສຳລັບ Windows Thermal Printer
+            </div>
+
+            {isRunningInIframe() && (
+              <a
+                href={typeof window !== 'undefined' ? window.location.href : '#'}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-600/25 transition-all cursor-pointer block"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>🚀 ເປີດແທັບໃໝ່ (ເຊື່ອມຕໍ່ Bluetooth 100%)</span>
+              </a>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setBtFallbackNotice({ show: false, message: '' })}
+                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
+              >
+                ປິດ
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setBtFallbackNotice({ show: false, message: '' });
+                  handleStandardPrint();
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black shadow-lg shadow-amber-500/25 flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Printer className="w-4 h-4" />
+                <span>ພິມດຽວນີ້ (Print)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -16,10 +16,12 @@ import {
   Palette,
   HandCoins,
   Download,
+  ExternalLink,
 } from 'lucide-react';
 import { Role, StaffMember, AppSettings, AppThemeId } from '../types';
 import { THEMES } from '../lib/theme';
 import { exportStandaloneHtmlFile } from '../lib/exportSingleFile';
+import { isRunningInIframe } from '../lib/bluetoothPrinter';
 
 interface NavbarProps {
   activeTab: 'pos' | 'rooms' | 'stock' | 'debts' | 'reports' | 'settings';
@@ -211,6 +213,20 @@ export const Navbar: React.FC<NavbarProps> = ({
                 {bluetoothConnected ? 'BT ພ້ອມ' : 'Bluetooth'}
               </span>
             </button>
+
+            {/* Direct Tab Opener when inside Google AI Studio iframe */}
+            {isRunningInIframe() && (
+              <a
+                href={typeof window !== 'undefined' ? window.location.href : '#'}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="ເປີດແອັບເຕັມຈໍໃນແທັບໃໝ່ (ຮອງຮັບ Web Bluetooth 100% ບໍ່ຕິດບລັອກ)"
+                className="flex items-center gap-1.5 px-2 py-1.5 rounded-xl text-xs font-bold border border-blue-500/40 bg-blue-950/50 text-blue-300 hover:bg-blue-900/60 hover:text-white transition-all cursor-pointer shadow-sm"
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-blue-400" />
+                <span className="hidden md:inline">ແທັບເຕັມຈໍ (BT)</span>
+              </a>
+            )}
 
             {/* Google Sheets Sync Button */}
             <button

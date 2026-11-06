@@ -294,11 +294,16 @@ export const INITIAL_SETTINGS: AppSettings = {
   autoSyncGoogleSheets: true,
   showPinHintsOnLogin: false,
   receiptLogoUrl: '',
+  loginLogoUrl: '',
+  appFontSize: 'large', // Default App UI Font Size
   staffCanEditDebt: false,
   staffCanDeleteDebt: false,
   receiptFontSize: 'large', // Default to Large font size so letters are easily readable
   receiptPaperWidth: '58mm',
   receiptBoldText: true,
+  receiptHideTotalText: true, // เอาข้อความที่มีอยู่ในบรรทัดยอดสุทธิออก ไม่ต้องใส่
+  receiptCustomFontSize: 16, // Default custom font size
+  receiptFontFamily: 'phetsarath', // ฟอนต์เพชรรัตน์ (Phetsarath OT)
   gasWebAppUrl: 'https://script.google.com/macros/s/AKfycbwP7K5U-POS-689KTV-WEBAPP/exec',
   realtimeSyncEnabled: true,
 };

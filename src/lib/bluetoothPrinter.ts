@@ -8,70 +8,224 @@ export interface BluetoothPrinterStatus {
   connected: boolean;
   deviceName?: string;
   error?: string;
+  isBlocked?: boolean;
 }
 
 export const isWebBluetoothSupported = (): boolean => {
   return typeof navigator !== 'undefined' && 'bluetooth' in navigator;
 };
 
+export const isBluetoothBlockedError = (err: any): boolean => {
+  if (!err) return false;
+  if (err.isBlocked) return true;
+  const msg = (err.message || '').toString();
+  const name = err.name || '';
+  return (
+    name === 'SecurityError' ||
+    name === 'NotAllowedError' ||
+    name === 'NotSupportedError' ||
+    /permissions policy|disallowed|iframe|not allowed|SecurityError|not supported/i.test(msg) ||
+    /requestDevice.*disallowed/i.test(msg) ||
+    /user cancelled/i.test(msg)
+  );
+};
+
+export const isRunningInIframe = (): boolean => {
+  try {
+    return typeof window !== 'undefined' && window.self !== window.top;
+  } catch (e) {
+    return true;
+  }
+};
+
+export const ALL_THERMAL_PRINTER_SERVICES: string[] = [
+  '000018f0-0000-1000-8000-00805f9b34fb', // Standard POS Printer Service
+  '0000ffe0-0000-1000-8000-00805f9b34fb', // GOOJPRT, PeriPage, Xprinter, PT-210, MPT, Rongta
+  '0000ffe1-0000-1000-8000-00805f9b34fb', // Data channel
+  '0000fee7-0000-1000-8000-00805f9b34fb', // Tencent IoT / POS-58
+  '0000ff00-0000-1000-8000-00805f9b34fb', // Milestone / Rongta
+  '0000ff02-0000-1000-8000-00805f9b34fb',
+  '0000af30-0000-1000-8000-00805f9b34fb', // Portable Mini Thermal Printer
+  '0000ae00-0000-1000-8000-00805f9b34fb',
+  '0000ae30-0000-1000-8000-00805f9b34fb',
+  '0000fff0-0000-1000-8000-00805f9b34fb', // Chinese BLE Printer
+  '0000fff1-0000-1000-8000-00805f9b34fb',
+  '0000fff2-0000-1000-8000-00805f9b34fb',
+  'e7810a71-73ae-499d-8c15-faa9aef0c3f2', // Mobile Bluetooth Thermal Printer
+  '49535343-fe7d-4ae5-8fa9-9fafd205e455', // ISSC transparent UART
+  '6e400001-b5a3-f393-e0a9-e50e24dcca9e', // Nordic UART Service (NUS - widely used)
+  '00001101-0000-1000-8000-00805f9b34fb', // Serial Port Profile (SPP)
+  '0000fef5-0000-1000-8000-00805f9b34fb', // Dialog BLE printer
+  '00001800-0000-1000-8000-00805f9b34fb',
+  '00001801-0000-1000-8000-00805f9b34fb',
+  '0000180a-0000-1000-8000-00805f9b34fb',
+];
+
+// Helper to probe and find the writable characteristic from any GATT server
+export const findPrinterWriteCharacteristic = async (server: any): Promise<any> => {
+  let writeChar: any = null;
+
+  // 1. Scan broad primary services
+  try {
+    const services = await server.getPrimaryServices();
+    for (const service of services) {
+      try {
+        const characteristics = await service.getCharacteristics();
+        for (const char of characteristics) {
+          if (char.properties.write || char.properties.writeWithoutResponse) {
+            writeChar = char;
+            return writeChar;
+          }
+        }
+      } catch (charErr) {
+        // Continue scanning next service if this service restricts reading
+      }
+    }
+  } catch (servicesErr) {
+    console.warn('getPrimaryServices query failed, attempting targeted service search', servicesErr);
+  }
+
+  // 2. Targeted fallback probe for known printer services
+  const targetServices = [
+    '0000ffe0-0000-1000-8000-00805f9b34fb',
+    '6e400001-b5a3-f393-e0a9-e50e24dcca9e',
+    '000018f0-0000-1000-8000-00805f9b34fb',
+    '49535343-fe7d-4ae5-8fa9-9fafd205e455',
+    'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
+    '0000fee7-0000-1000-8000-00805f9b34fb',
+    '0000ff00-0000-1000-8000-00805f9b34fb',
+    '0000af30-0000-1000-8000-00805f9b34fb',
+    '0000ae00-0000-1000-8000-00805f9b34fb',
+    '0000fff0-0000-1000-8000-00805f9b34fb',
+  ];
+
+  for (const sUuid of targetServices) {
+    try {
+      const s = await server.getPrimaryService(sUuid);
+      const chars = await s.getCharacteristics();
+      for (const c of chars) {
+        if (c.properties.write || c.properties.writeWithoutResponse) {
+          writeChar = c;
+          return writeChar;
+        }
+      }
+    } catch (targetErr) {
+      // Continue to next service
+    }
+  }
+
+  return writeChar;
+};
+
 export const connectBluetoothPrinter = async (): Promise<BluetoothPrinterStatus> => {
   if (!isWebBluetoothSupported()) {
-    throw new Error('Web Bluetooth is not supported in this browser. Please use Google Chrome or Edge.');
+    return {
+      connected: false,
+      error: 'Web Bluetooth is not supported in this browser or iframe environment.',
+      isBlocked: true,
+    };
   }
 
   try {
-    const device = await (navigator as any).bluetooth.requestDevice({
-      acceptAllDevices: true,
-      optionalServices: [
-        '000018f0-0000-1000-8000-00805f9b34fb', // Standard Serial/Printer
-        'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
-        '49535343-fe7d-4ae5-8fa9-9fafd205e455', // ISSC
-        0xffe0, // Common Chinese mini thermal printers (GOOJPRT, PT-210, etc.)
-        0x18f0,
-      ],
-    });
+    let device: any;
+    try {
+      device = await (navigator as any).bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: ALL_THERMAL_PRINTER_SERVICES,
+      });
+    } catch (reqErr: any) {
+      console.warn('Bluetooth requestDevice failed or blocked:', reqErr);
+      const isBlocked = isBluetoothBlockedError(reqErr);
+      const errObj: any = new Error(
+        isBlocked
+          ? 'Web Bluetooth ຖືກຈຳກັດ (Permissions Policy / iframe). ລະບົບຈະປ່ຽນໄປພິມແບບມາດຕະຖານ (Standard Print) ແທນ.'
+          : reqErr.message || 'Bluetooth device selection cancelled or failed'
+      );
+      errObj.name = reqErr.name || 'BluetoothSecurityError';
+      errObj.isBlocked = isBlocked;
+      throw errObj;
+    }
 
     device.addEventListener('gattserverdisconnected', onDisconnected);
     const server = await device.gatt.connect();
 
-    const services = await server.getPrimaryServices();
-    let writeChar = null;
-
-    for (const service of services) {
-      const characteristics = await service.getCharacteristics();
-      for (const char of characteristics) {
-        if (char.properties.write || char.properties.writeWithoutResponse) {
-          writeChar = char;
-          break;
-        }
-      }
-      if (writeChar) break;
-    }
+    const writeChar = await findPrinterWriteCharacteristic(server);
 
     if (!writeChar) {
-      throw new Error('No writable printer characteristic found on this device');
+      throw new Error('ບໍ່ພົບຊ່ອງສັນຍານສັ່ງພິມ (Writable characteristic) ໃນເຄື່ອງພິມເຄື່ອງນີ້');
     }
 
     bluetoothDevice = device;
     printerCharacteristic = writeChar;
 
+    const deviceName = device.name || 'Bluetooth Mini Printer';
+    try {
+      localStorage.setItem('689ktv_last_bt_device', deviceName);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('689ktv_bluetooth_connected', { detail: { deviceName } })
+        );
+      }
+    } catch (e) {}
+
     return {
       connected: true,
-      deviceName: device.name || 'Bluetooth Mini Printer',
+      deviceName,
     };
   } catch (err: any) {
-    console.error('Bluetooth connection failed:', err);
+    const isBlocked = isBluetoothBlockedError(err);
+    console.warn('Bluetooth connection error:', err);
     return {
       connected: false,
       error: err.message || 'Failed to connect to Bluetooth printer',
+      isBlocked,
     };
+  }
+};
+
+// Try auto-reconnecting to previously paired printer without opening picker
+export const tryAutoReconnectBluetooth = async (): Promise<BluetoothPrinterStatus> => {
+  if (!isWebBluetoothSupported() || isRunningInIframe()) {
+    return { connected: false };
+  }
+  try {
+    if (bluetoothDevice && bluetoothDevice.gatt && bluetoothDevice.gatt.connected && printerCharacteristic) {
+      return { connected: true, deviceName: bluetoothDevice.name || 'Bluetooth Thermal Printer' };
+    }
+    if ((navigator as any).bluetooth?.getDevices) {
+      const devices = await (navigator as any).bluetooth.getDevices();
+      if (devices && devices.length > 0) {
+        const device = devices[0];
+        if (device && device.gatt) {
+          device.addEventListener('gattserverdisconnected', onDisconnected);
+          const server = await device.gatt.connect();
+          const writeChar = await findPrinterWriteCharacteristic(server);
+          if (writeChar) {
+            bluetoothDevice = device;
+            printerCharacteristic = writeChar;
+            const deviceName = device.name || 'Bluetooth Mini Printer';
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(
+                new CustomEvent('689ktv_bluetooth_connected', { detail: { deviceName } })
+              );
+            }
+            return { connected: true, deviceName };
+          }
+        }
+      }
+    }
+    return { connected: false };
+  } catch (e) {
+    return { connected: false };
   }
 };
 
 const onDisconnected = () => {
   bluetoothDevice = null;
   printerCharacteristic = null;
-  window.dispatchEvent(new Event('689ktv_bluetooth_disconnected'));
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('689ktv_bluetooth_disconnected'));
+  }
 };
 
 export const disconnectBluetoothPrinter = async () => {
@@ -97,8 +251,10 @@ export const ensureLaoFontsReady = async (): Promise<boolean> => {
   if (typeof document !== 'undefined' && 'fonts' in document) {
     try {
       await (document as any).fonts.ready;
-      await (document as any).fonts.load('bold 16px "Noto Sans Lao"');
-      await (document as any).fonts.load('bold 24px "Noto Sans Lao"');
+      await (document as any).fonts.load('bold 16px "Phetsarath"').catch(() => {});
+      await (document as any).fonts.load('bold 24px "Phetsarath"').catch(() => {});
+      await (document as any).fonts.load('bold 16px "Noto Sans Lao"').catch(() => {});
+      await (document as any).fonts.load('bold 24px "Noto Sans Lao"').catch(() => {});
       return true;
     } catch (e) {
       console.warn('Font loading check completed with system fallback:', e);
@@ -133,7 +289,10 @@ export const loadReceiptImage = (src: string): Promise<HTMLImageElement> => {
 
 // Rendering Lao text on HTML5 Canvas ensures authentic Lao typography prints clearly.
 
-export const getReceiptFontScale = (size?: string): number => {
+export const getReceiptFontScale = (size?: string, customSizePx?: number): number => {
+  if (customSizePx && customSizePx >= 10 && customSizePx <= 40) {
+    return customSizePx / 12;
+  }
   switch (size) {
     case 'small':
       return 1.0;
@@ -141,6 +300,8 @@ export const getReceiptFontScale = (size?: string): number => {
       return 1.18;
     case 'xlarge':
       return 1.62; // ໃຫຍ່ພິເສດ (Extra Large)
+    case 'xxlarge':
+      return 1.95; // ໃຫຍ່ພິເສດສຸດໆ (XXL)
     case 'large':
     default:
       return 1.38; // ໃຫຍ່ (Large - Default for maximum clarity)
@@ -162,16 +323,16 @@ export const renderReceiptToCanvas = (
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Canvas 2D context not available');
 
-  // Font scale calculation
-  let scale = getReceiptFontScale(settings.receiptFontSize);
+  // Font scale calculation: check custom size or presets
+  let scale = getReceiptFontScale(settings.receiptFontSize, settings.receiptCustomFontSize);
   if (is80mm) {
     scale *= 1.15; // Proportional boost for 80mm wider paper
   }
 
   const isExtraBold = settings.receiptBoldText !== false;
 
-  // Lao font stack with highest priority to Google Noto Sans Lao
-  const laoFont = '"Noto Sans Lao", "Noto Sans Thai", "Noto Sans", "Phetsarath OT", "Saysettha OT", "Lao UI", sans-serif';
+  // Lao font stack with highest priority to Phetsarath / Phetsarath OT font
+  const laoFont = '"Phetsarath", "Phetsarath OT", "Noto Sans Lao", "Noto Sans Thai", sans-serif';
   const monoFont = '"Courier New", Courier, monospace';
 
   // Dynamic canvas height estimation to avoid any clipping
@@ -403,13 +564,21 @@ export const renderReceiptToCanvas = (
   y += Math.round(8 * scale);
 
   // Grand TOTAL (Big & Bold - Super Clear)
-  const totalSize = Math.round(22 * scale);
+  const totalSize = Math.round(24 * scale);
   ctx.fillStyle = '#000000';
   ctx.font = `900 ${totalSize}px ${laoFont}`;
-  ctx.textAlign = 'left';
-  ctx.fillText('ຍອດສຸດທິ (TOTAL):', paddingX, y);
-  ctx.textAlign = 'right';
-  ctx.fillText(`${bill.total.toLocaleString()} ${settings.currencySymbol}`, canvas.width - paddingX, y);
+
+  if (settings.receiptHideTotalText !== false) {
+    // User requested: "เอาข้อความที่มีอยู่ในบรรทัดยอดสุทธิออก ไม่ต้องใส่"
+    // Do NOT put any label text on this line - show only the grand total amount
+    ctx.textAlign = 'right';
+    ctx.fillText(`${bill.total.toLocaleString()} ${settings.currencySymbol}`, canvas.width - paddingX, y);
+  } else {
+    ctx.textAlign = 'left';
+    ctx.fillText('ຍອດສຸດທິ:', paddingX, y);
+    ctx.textAlign = 'right';
+    ctx.fillText(`${bill.total.toLocaleString()} ${settings.currencySymbol}`, canvas.width - paddingX, y);
+  }
   y += Math.round(totalSize * 1.55);
 
   drawDashedLine(y);
@@ -525,7 +694,9 @@ export const printReceiptAsImageViaBluetooth = async (
   if (!printerCharacteristic) {
     const conn = await connectBluetoothPrinter();
     if (!conn.connected || !printerCharacteristic) {
-      throw new Error(conn.error || 'Bluetooth printer is not connected');
+      const err: any = new Error(conn.error || 'Bluetooth printer is not connected');
+      err.isBlocked = conn.isBlocked;
+      throw err;
     }
   }
 
@@ -833,8 +1004,10 @@ export const printDebtSlipAsImageViaBluetooth = async (
 ): Promise<boolean> => {
   if (!bluetoothDevice || !bluetoothDevice.gatt || !bluetoothDevice.gatt.connected || !printerCharacteristic) {
     const res = await connectBluetoothPrinter();
-    if (!res.connected) {
-      throw new Error(res.error || 'Bluetooth printer is not connected');
+    if (!res.connected || !printerCharacteristic) {
+      const err: any = new Error(res.error || 'Bluetooth printer is not connected');
+      err.isBlocked = res.isBlocked;
+      throw err;
     }
   }
 
