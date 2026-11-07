@@ -194,8 +194,14 @@ async function startServer() {
       } else if (action === 'saveSettings' && data?.settings) {
         store.settings = { ...store.settings, ...data.settings };
         hasChanged = true;
-      } else if (action === 'saveBill' && data?.bill) {
-        store.bills = [data.bill, ...(store.bills || [])];
+      } else if (action === 'saveBill') {
+        if (Array.isArray(data?.bills)) {
+          store.bills = data.bills;
+        } else if (data?.bill) {
+          const existing = store.bills || [];
+          const filtered = existing.filter((b: any) => b.id !== data.bill.id);
+          store.bills = [data.bill, ...filtered];
+        }
         hasChanged = true;
       } else if (action === 'saveBills' && Array.isArray(data?.bills)) {
         store.bills = data.bills;
@@ -223,7 +229,16 @@ async function startServer() {
           version: store.version,
           lastUpdated: store.lastUpdated,
           senderDeviceId: senderDeviceId || 'unknown',
-          data,
+          data: {
+            ...data,
+            bills: store.bills,
+            rooms: store.rooms,
+            products: store.products,
+            debts: store.debts,
+            packages: store.packages,
+            staff: store.staff,
+            settings: store.settings,
+          },
         });
       }
 

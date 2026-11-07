@@ -97,6 +97,7 @@ export default function App() {
   const packagesRef = useRef<RoomPackage[]>(packages);
   const staffRef = useRef<StaffMember[]>(staffList);
   const debtsRef = useRef<DebtRecord[]>(debts);
+  const billsRef = useRef<BillRecord[]>(bills);
   const isPushingRef = useRef<boolean>(false);
 
   useEffect(() => {
@@ -118,6 +119,10 @@ export default function App() {
   useEffect(() => {
     debtsRef.current = debts;
   }, [debts]);
+
+  useEffect(() => {
+    billsRef.current = bills;
+  }, [bills]);
 
   // Set up multi-device real-time sync across iOS, Android, and Windows PC (SSE + Polling + BroadcastChannel)
   useEffect(() => {
@@ -172,19 +177,19 @@ export default function App() {
 
         // 6. Bills
         if (Array.isArray(remoteData.bills)) {
-          setBills(remoteData.bills);
-          updateStoredBills(remoteData.bills);
-          changed = true;
+          if (JSON.stringify(billsRef.current) !== JSON.stringify(remoteData.bills)) {
+            setBills(remoteData.bills);
+            updateStoredBills(remoteData.bills);
+            changed = true;
+          }
         } else if (remoteData.bill) {
-          setBills((prev) => {
-            if (!prev.some((b) => b.id === remoteData.bill!.id)) {
-              const updated = [remoteData.bill!, ...prev];
-              updateStoredBills(updated);
-              return updated;
-            }
-            return prev;
-          });
-          changed = true;
+          const singleBill = remoteData.bill;
+          if (!billsRef.current.some((b) => b.id === singleBill.id)) {
+            const updated = [singleBill, ...billsRef.current];
+            setBills(updated);
+            updateStoredBills(updated);
+            changed = true;
+          }
         }
 
         // 7. Settings
@@ -274,20 +279,19 @@ export default function App() {
       // 6. Bills
       const rBills = remoteData.bills ?? remoteData.saveBills?.bills;
       if (Array.isArray(rBills)) {
-        setBills(rBills);
-        updateStoredBills(rBills);
-        changed = true;
+        if (JSON.stringify(billsRef.current) !== JSON.stringify(rBills)) {
+          setBills(rBills);
+          updateStoredBills(rBills);
+          changed = true;
+        }
       } else if (remoteData.bill ?? remoteData.saveBill?.bill) {
         const singleBill = remoteData.bill ?? remoteData.saveBill?.bill;
-        setBills((prev) => {
-          if (!prev.some((b) => b.id === singleBill.id)) {
-            const updated = [singleBill, ...prev];
-            updateStoredBills(updated);
-            return updated;
-          }
-          return prev;
-        });
-        changed = true;
+        if (!billsRef.current.some((b) => b.id === singleBill.id)) {
+          const updated = [singleBill, ...billsRef.current];
+          setBills(updated);
+          updateStoredBills(updated);
+          changed = true;
+        }
       }
 
       // 7. Settings
@@ -348,8 +352,15 @@ export default function App() {
     action: SyncAction,
     payload: any
   ) => {
+    // Ensure bills is always captured in full so all devices get immediate Sales Summary sync
+    const currentBills = payload.bills !== undefined ? payload.bills : getStoredBills();
+    const enrichedPayload = {
+      ...payload,
+      bills: currentBills,
+    };
+
     // 1. Instantly push to Backend Server & SSE to notify all iOS, Android & Windows devices
-    pushMultiDeviceUpdate(action, payload);
+    pushMultiDeviceUpdate(action, enrichedPayload);
 
     // 2. Also push to Firebase Firestore Cloud (ktv-e97cb)
     const deviceId = getDeviceId();
@@ -357,8 +368,9 @@ export default function App() {
       lastSenderId: deviceId,
       lastAction: action,
       lastUpdated: new Date().toISOString(),
-      ...payload,
-      [action]: payload,
+      bills: currentBills,
+      ...enrichedPayload,
+      [action]: enrichedPayload,
     };
     pushToFirebaseStore(firestoreData);
 
@@ -463,7 +475,7 @@ export default function App() {
 
         // 6. Sync Bills if remote changed
         if (res.data.bills && Array.isArray(res.data.bills)) {
-          const currentStr = JSON.stringify(bills);
+          const currentStr = JSON.stringify(billsRef.current);
           const newStr = JSON.stringify(res.data.bills);
           if (currentStr !== newStr) {
             setBills(res.data.bills);
@@ -559,6 +571,7 @@ export default function App() {
       setDebts(getStoredDebts());
     };
 
+    window.addEventListener('storage', handleStorageUpdate);
     window.addEventListener('689ktv_products_updated', handleStorageUpdate);
     window.addEventListener('689ktv_rooms_updated', handleStorageUpdate);
     window.addEventListener('689ktv_bills_updated', handleStorageUpdate);
@@ -566,6 +579,7 @@ export default function App() {
 
     return () => {
       clearInterval(btInterval);
+      window.removeEventListener('storage', handleStorageUpdate);
       window.removeEventListener('689ktv_products_updated', handleStorageUpdate);
       window.removeEventListener('689ktv_rooms_updated', handleStorageUpdate);
       window.removeEventListener('689ktv_bills_updated', handleStorageUpdate);
@@ -804,7 +818,7 @@ export default function App() {
     saveStoredBill(completedBill);
     const updatedBills = getStoredBills();
     setBills(updatedBills);
-    triggerGasSync('saveBill', { bill: completedBill });
+    triggerGasSync('saveBill', { bill: completedBill, bills: updatedBills });
 
     // CRITICAL: Guarantee room is completely cleared back to available when billing is confirmed!
     if (completedBill.roomName || completedBill.roomId) {
@@ -1080,7 +1094,7 @@ export default function App() {
             onSyncAllToSheets={handleBulkSyncAllToSheets}
             isSyncingSheets={isSyncingAllSheets}
             onDeleteBill={(billId) => {
-              const updated = bills.filter((b) => b.id !== billId);
+              const updated = billsRef.current.filter((b) => b.id !== billId);
               setBills(updated);
               updateStoredBills(updated);
               triggerGasSync('saveBills', { bills: updated });
@@ -1088,7 +1102,7 @@ export default function App() {
             }}
             onDeleteBills={(billIds) => {
               const idSet = new Set(billIds);
-              const updated = bills.filter((b) => !idSet.has(b.id));
+              const updated = billsRef.current.filter((b) => !idSet.has(b.id));
               setBills(updated);
               updateStoredBills(updated);
               triggerGasSync('saveBills', { bills: updated });
