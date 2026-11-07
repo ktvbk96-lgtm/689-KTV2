@@ -176,6 +176,22 @@ async function startServer() {
 
       let hasChanged = false;
 
+      // Always capture updated debts whenever present in payload
+      if (Array.isArray(data?.debts)) {
+        if (JSON.stringify(store.debts) !== JSON.stringify(data.debts)) {
+          store.debts = data.debts;
+          hasChanged = true;
+        }
+      }
+
+      // Always capture updated bills whenever present in payload
+      if (Array.isArray(data?.bills)) {
+        if (JSON.stringify(store.bills) !== JSON.stringify(data.bills)) {
+          store.bills = data.bills;
+          hasChanged = true;
+        }
+      }
+
       if (action === 'saveRooms' && Array.isArray(data?.rooms)) {
         store.rooms = data.rooms;
         hasChanged = true;

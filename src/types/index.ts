@@ -70,6 +70,7 @@ export interface Room {
   bookedHours?: number; // e.g. 4
   openedByStaffId?: string;
   openedByStaffName?: string;
+  isPaid?: boolean; // ລູກຄ້າຈ່າຍແລ້ວ / ຊຳລະຄ່າຫ້ອງແລ້ວ (ຖ້າຕິກແລ້ວບໍ່ຕ້ອງຄິດໄລ່ເງິນ ຄິດໄລ່ແຕ່ເວລາ)
   orders: RoomOrder[];
 }
 
@@ -131,6 +132,7 @@ export interface BillRecord {
   durationMinutes?: number;
   pricingType?: RoomPricingType;
   roomCharge: number;
+  isRoomChargePaid?: boolean; // ຈ່າຍຄ່າຫ້ອງແລ້ວບໍ່ຕ້ອງຄິດໄລ່ເງິນ ຄິດໄລ່ແຕ່ເວລາ
   items: {
     productId: string;
     productName: string;

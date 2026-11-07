@@ -595,12 +595,17 @@ export const BillingModal: React.FC<BillingModalProps> = ({
 
           {/* Items breakdown */}
           <div className="py-2 border-b border-dashed border-slate-400 space-y-1.5">
-            {bill.roomCharge > 0 && (
+            {bill.roomCharge > 0 ? (
               <div className="flex justify-between font-semibold">
                 <span>ຄ່າຫ້ອງຄາຣາໂອເກະ</span>
                 <span>{formatCurrency(bill.roomCharge, settings.currencySymbol)}</span>
               </div>
-            )}
+            ) : bill.type === 'ktv_room' && (bill.isRoomChargePaid || bill.roomCharge === 0) ? (
+              <div className="flex justify-between font-semibold text-emerald-800 bg-emerald-50 px-1 py-0.5 rounded">
+                <span>ຄ່າຫ້ອງຄາຣາໂອເກະ (ຈ່າຍແລ້ວ)</span>
+                <span>0 {settings.currencySymbol}</span>
+              </div>
+            ) : null}
 
             {bill.items.map((item, idx) => (
               <div key={idx} className="space-y-0.5">

@@ -129,6 +129,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
   const [customHourlyRate, setCustomHourlyRate] = useState<number>(settings.defaultHourlyRate);
   const [bookedHours, setBookedHours] = useState<number>(4); // Default 4 hours as requested!
   const [openedByStaffId, setOpenedByStaffId] = useState<string>(currentStaff?.id || staffList[0]?.id || '');
+  const [isOpenRoomPaid, setIsOpenRoomPaid] = useState<boolean>(false);
 
   // Time selection & editing states for opening a room
   const [openStartTimeInput, setOpenStartTimeInput] = useState<string>(() => toHHMM(new Date()));
@@ -271,6 +272,9 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
   const calculateRoomFee = (room: Room): number => {
     if (room.status !== 'in_use' || !room.openedAt) return 0;
 
+    // IF CUSTOMER ALREADY PAID: Do NOT calculate fee (room charge = 0 ₭), only calculate elapsed time!
+    if (room.isPaid) return 0;
+
     if (room.pricingType === 'package') {
       const pkg = packages.find((p) => p.id === room.packageId) || packages.find((p) => p.name === room.packageName);
       return pkg ? pkg.price : room.hourlyRate || 0;
@@ -294,6 +298,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
   // Trigger open room modal and pre-initialize times
   const handleOpenRoomClick = (room: Room) => {
     setOpeningRoom(room);
+    setIsOpenRoomPaid(false); // Reset paid status
     setCustomHourlyRate(room.hourlyRate || settings.defaultHourlyRate);
     setPricingChoice('open_time'); // Default to Open-Ended (ນັບຕາມເວລາຈິງ ບໍ່ມີກຳນົດເວລາ) as requested!
     const firstPkg = packages[0];
@@ -350,6 +355,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
           targetEndTime: targetD ? targetD.toISOString() : undefined,
           openedByStaffId: staff?.id,
           openedByStaffName: staff?.name,
+          isPaid: isOpenRoomPaid,
           orders: [],
         };
       }
@@ -358,6 +364,20 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
 
     onUpdateRooms(updatedRooms);
     setOpeningRoom(null);
+  };
+
+  // Toggle Room Paid Status (ຈ່າຍແລ້ວ / ຍັງບໍ່ຈ່າຍ)
+  const handleToggleRoomPaid = (room: Room) => {
+    const newPaid = !room.isPaid;
+    const updatedRoom: Room = {
+      ...room,
+      isPaid: newPaid,
+    };
+    const updatedRooms = rooms.map((r) => (r.id === room.id ? updatedRoom : r));
+    onUpdateRooms(updatedRooms);
+    if (selectedRoomForDetails?.id === room.id) {
+      setSelectedRoomForDetails(updatedRoom);
+    }
   };
 
   // Open Edit Time modal for any in-use room
@@ -580,6 +600,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
       openedByStaffName: undefined,
       packageId: undefined,
       packageName: undefined,
+      isPaid: undefined,
       orders: [],
     };
     const updated = rooms.map((r) =>
@@ -612,6 +633,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
           openedByStaffName: undefined,
           packageId: undefined,
           packageName: undefined,
+          isPaid: undefined,
           orders: [],
         };
       }
@@ -647,6 +669,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
         openedByStaffName: undefined,
         packageId: undefined,
         packageName: undefined,
+        isPaid: undefined,
         orders: [],
       }));
       onUpdateRooms(updated);
@@ -857,8 +880,18 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                         </span>
                       </div>
 
-                      {/* Right box: If open_time show current room charge with live pulse, else show remaining/overtime */}
-                      {room.pricingType === 'open_time' || !targetFormatted ? (
+                      {/* Right box: If room.isPaid show 0 ₭ paid, else if open_time show current room charge, else remaining/overtime */}
+                      {room.isPaid ? (
+                        <div className="p-2 rounded-xl border bg-emerald-950/60 border-emerald-500/60 text-emerald-300 flex flex-col justify-between">
+                          <span className="text-[10px] block mb-0.5 opacity-90 flex items-center gap-1 font-bold">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>ຈ່າຍຄ່າຫ້ອງແລ້ວ:</span>
+                          </span>
+                          <span className="font-mono font-black text-emerald-300">
+                            0 {settings.currencySymbol} (ຄິດໄລ່ແຕ່ເວລາ)
+                          </span>
+                        </div>
+                      ) : room.pricingType === 'open_time' || !targetFormatted ? (
                         <div className="p-2 rounded-xl border bg-emerald-950/40 border-emerald-600/40 text-emerald-300 flex flex-col justify-between">
                           <span className="text-[10px] block mb-0.5 opacity-80 flex items-center gap-1">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
@@ -902,11 +935,38 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                       </div>
                     )}
 
+                    {/* Quick Paid Toggle Button */}
+                    <button
+                      type="button"
+                      onClick={() => handleToggleRoomPaid(room)}
+                      className={`w-full py-1.5 px-3 rounded-xl text-xs font-bold border transition-all flex items-center justify-between cursor-pointer ${
+                        room.isPaid
+                          ? 'bg-emerald-950/70 border-emerald-500/70 text-emerald-300 shadow-sm shadow-emerald-950/50 hover:bg-emerald-900/60'
+                          : 'bg-slate-900/80 border-slate-700/80 text-slate-400 hover:text-slate-200 hover:border-slate-600'
+                      }`}
+                      title="ກົດເພື່ອປ່ຽນສະຖານະ: ຈ່າຍຄ່າຫ້ອງແລ້ວ ຫຼື ຍັງບໍ່ຈ່າຍ"
+                    >
+                      <span className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={!!room.isPaid}
+                          onChange={() => {}}
+                          className="w-4 h-4 rounded border-slate-600 text-emerald-500 pointer-events-none"
+                        />
+                        <span>{room.isPaid ? 'ລູກຄ້າຈ່າຍຄ່າຫ້ອງແລ້ວ (ຄິດໄລ່ແຕ່ເວລາ)' : 'ຕິກຖ້າລູກຄ້າຈ່າຍຄ່າຫ້ອງແລ້ວ'}</span>
+                      </span>
+                      <span className="font-mono font-black text-[11px]">
+                        {room.isPaid ? '0 ₭' : 'ຍັງບໍ່ຈ່າຍ'}
+                      </span>
+                    </button>
+
                     {/* Pricing Type Badge */}
                     <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-800/80">
                       <span className="text-slate-400">ປະເພດລາຄາ:</span>
                       <span className="font-semibold text-rose-300">
-                        {room.pricingType === 'package'
+                        {room.isPaid
+                          ? 'ຈ່າຍແລ້ວ • ຄິດໄລ່ແຕ່ເວລາ (0 ₭)'
+                          : room.pricingType === 'package'
                           ? `ແພັກເກັດ: ${room.packageName}`
                           : room.pricingType === 'open_time'
                           ? `ນັບຕາມເວລາຈິງ (ບໍ່ມີກຳນົດເວລາ)`
@@ -1611,6 +1671,33 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
               </select>
             </div>
 
+            {/* Checkbox: Customer Already Paid (ຈ່າຍຄ່າຫ້ອງແລ້ວ ບໍ່ຕ້ອງຄິດໄລ່ເງິນ ຄິດໄລ່ແຕ່ເວລາ) */}
+            <div className={`mb-5 p-3.5 rounded-2xl border transition-all cursor-pointer ${
+              isOpenRoomPaid
+                ? 'bg-emerald-950/60 border-emerald-500 text-emerald-200 ring-1 ring-emerald-500/50'
+                : 'bg-slate-800/80 border-slate-700/80 text-slate-300 hover:bg-slate-800'
+            }`}>
+              <label className="flex items-start gap-3 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={isOpenRoomPaid}
+                  onChange={(e) => setIsOpenRoomPaid(e.target.checked)}
+                  className="w-5 h-5 rounded border-emerald-500 text-emerald-600 focus:ring-emerald-500 bg-slate-900 cursor-pointer mt-0.5"
+                />
+                <div className="flex-1 text-xs">
+                  <div className="font-bold text-slate-100 flex items-center gap-1.5">
+                    <CheckCircle2 className={`w-4 h-4 ${isOpenRoomPaid ? 'text-emerald-400' : 'text-slate-400'}`} />
+                    <span className={isOpenRoomPaid ? 'text-emerald-300 font-extrabold' : ''}>
+                      ລູກຄ້າຈ່າຍເງິນແລ້ວ / ຊຳລະຄ່າຫ້ອງແລ້ວ (ບໍ່ຄິດໄລ່ເງິນ)
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
+                    ຖ້າຕິກເລືອກ: ລະບົບຈະ<strong>ບໍ່ຄິດໄລ່ເງິນຄ່າຫ້ອງ (0 {settings.currencySymbol})</strong> ແຕ່ຈະ<strong>ຄຳນວນແຕ່ເວລາໃຊ້ງານເທົ່ານັ້ນ</strong>.
+                  </p>
+                </div>
+              </label>
+            </div>
+
             {/* Action buttons */}
             <div className="flex gap-2">
               <button
@@ -1625,7 +1712,9 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                 onClick={handleOpenRoomSubmit}
                 className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/30 cursor-pointer"
               >
-                {pricingChoice === 'open_time'
+                {isOpenRoomPaid
+                  ? 'ຢືນຢັນເປີດຫ້ອງ (ຈ່າຍແລ້ວ • ຄິດໄລ່ແຕ່ເວລາ)'
+                  : pricingChoice === 'open_time'
                   ? `ຢືນຢັນເປີດຫ້ອງ (ນັບຕາມຈິງ ${formatCurrency(customHourlyRate, settings.currencySymbol)}/ຊມ)`
                   : `ຢືນຢັນເປີດຫ້ອງ (${previewEndTime.hoursLabel})`}
               </button>
@@ -1700,13 +1789,33 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-12 gap-5 py-4 flex-1 overflow-hidden">
               {/* Left Column: Current Orders (5 cols) */}
               <div className="md:col-span-5 flex flex-col border border-slate-800 rounded-2xl p-4 bg-slate-950/60 overflow-hidden">
-                <div className="flex items-center justify-between pb-2 border-b border-slate-800 mb-2">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-800 mb-2 gap-2 flex-wrap">
                   <h4 className="font-bold text-xs text-slate-200">
                     ລາຍການທີ່ສັ່ງແລ້ວ ({selectedRoomForDetails.orders.length})
                   </h4>
-                  <span className="text-xs font-mono font-bold text-amber-400">
-                    ຄ່າຫ້ອງ: {formatCurrency(calculateRoomFee(selectedRoomForDetails), settings.currencySymbol)}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleRoomPaid(selectedRoomForDetails)}
+                      className={`px-2.5 py-1 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                        selectedRoomForDetails.isPaid
+                          ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300 shadow-sm'
+                          : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+                      }`}
+                      title="ກົດເພື່ອຕິກວ່າລູກຄ້າຈ່າຍຄ່າຫ້ອງແລ້ວ ຫຼື ຍັງບໍ່ທັນຈ່າຍ"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={!!selectedRoomForDetails.isPaid}
+                        onChange={() => {}}
+                        className="w-3.5 h-3.5 rounded text-emerald-500 pointer-events-none"
+                      />
+                      <span>{selectedRoomForDetails.isPaid ? 'ຈ່າຍແລ້ວ (0 ₭)' : 'ຕິກຖ້າຈ່າຍແລ້ວ'}</span>
+                    </button>
+                    <span className="text-xs font-mono font-bold text-amber-400">
+                      ຄ່າຫ້ອງ: {selectedRoomForDetails.isPaid ? `0 ${settings.currencySymbol}` : formatCurrency(calculateRoomFee(selectedRoomForDetails), settings.currencySymbol)}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto space-y-2 pr-1 scrollbar-thin">

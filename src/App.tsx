@@ -167,10 +167,11 @@ export default function App() {
         }
 
         // 5. Debts
-        if (Array.isArray(remoteData.debts)) {
-          if (JSON.stringify(debtsRef.current) !== JSON.stringify(remoteData.debts)) {
-            setDebts(remoteData.debts);
-            saveStoredDebts(remoteData.debts);
+        const rDebts = remoteData.debts ?? (remoteData as any).saveDebts?.debts;
+        if (Array.isArray(rDebts)) {
+          if (JSON.stringify(debtsRef.current) !== JSON.stringify(rDebts)) {
+            setDebts(rDebts);
+            saveStoredDebts(rDebts);
             changed = true;
           }
         }
@@ -352,11 +353,13 @@ export default function App() {
     action: SyncAction,
     payload: any
   ) => {
-    // Ensure bills is always captured in full so all devices get immediate Sales Summary sync
+    // Ensure bills and debts are always captured in full so all devices get immediate Sales Summary & Debt sync
     const currentBills = payload.bills !== undefined ? payload.bills : getStoredBills();
+    const currentDebts = payload.debts !== undefined ? payload.debts : getStoredDebts();
     const enrichedPayload = {
       ...payload,
       bills: currentBills,
+      debts: currentDebts,
     };
 
     // 1. Instantly push to Backend Server & SSE to notify all iOS, Android & Windows devices
@@ -369,6 +372,7 @@ export default function App() {
       lastAction: action,
       lastUpdated: new Date().toISOString(),
       bills: currentBills,
+      debts: currentDebts,
       ...enrichedPayload,
       [action]: enrichedPayload,
     };
@@ -724,8 +728,10 @@ export default function App() {
     endStr?: string,
     timeRangeStr?: string
   ) => {
+    // If room is marked as already paid, room fee is 0 ₭ (calculate only time)!
+    const effectiveRoomCharge = room.isPaid ? 0 : roomCharge;
     const itemsTotal = room.orders.reduce((sum, o) => sum + o.price * o.quantity, 0);
-    const subtotal = roomCharge + itemsTotal;
+    const subtotal = effectiveRoomCharge + itemsTotal;
     const dateNow = new Date();
     const dateStr = dateNow.toISOString().slice(0, 10).replace(/-/g, '');
     const billNumber = `689-${dateStr}-${(bills.length + 1).toString().padStart(3, '0')}`;
@@ -746,8 +752,8 @@ export default function App() {
       timeRangeStr ||
       (formattedStart
         ? (room.pricingType === 'open_time' || !formattedTarget)
-          ? `${formattedStart} - ${formattedEnd} (${Math.floor(durationMinutes / 60)} ຊມ ${durationMinutes % 60} ນາທີ - ຕາມເວລາຈິງ)`
-          : `${formattedStart} ຫາ ${formattedEnd} (ກຳນົດ: ${formattedStart} ຫາ ${formattedTarget || formattedEnd})`
+          ? `${formattedStart} - ${formattedEnd} (${Math.floor(durationMinutes / 60)} ຊມ ${durationMinutes % 60} ນາທີ - ຕາມເວລາຈິງ${room.isPaid ? ' - ຈ່າຍແລ້ວ' : ''})`
+          : `${formattedStart} ຫາ ${formattedEnd} (ກຳນົດ: ${formattedStart} ຫາ ${formattedTarget || formattedEnd}${room.isPaid ? ' - ຈ່າຍແລ້ວ' : ''})`
         : undefined);
 
     const newBill: BillRecord = {
@@ -764,7 +770,8 @@ export default function App() {
       timeRangeFormatted,
       durationMinutes,
       pricingType: room.pricingType,
-      roomCharge,
+      roomCharge: effectiveRoomCharge,
+      isRoomChargePaid: !!room.isPaid,
       items: room.orders.map((o) => ({
         productId: o.product.id,
         productName: o.product.name,
@@ -802,6 +809,7 @@ export default function App() {
           openedByStaffName: undefined,
           packageId: undefined,
           packageName: undefined,
+          isPaid: undefined,
           orders: [],
         };
       }
@@ -841,6 +849,7 @@ export default function App() {
               openedByStaffName: undefined,
               packageId: undefined,
               packageName: undefined,
+              isPaid: undefined,
               orders: [],
             };
           }
@@ -873,7 +882,7 @@ export default function App() {
         staffName: completedBill.staffName,
         payments: [],
       };
-      const updatedDebts = [newDebt, ...debts];
+      const updatedDebts = [newDebt, ...debtsRef.current];
       setDebts(updatedDebts);
       saveStoredDebts(updatedDebts);
       triggerGasSync('saveDebts', { debts: updatedDebts });
