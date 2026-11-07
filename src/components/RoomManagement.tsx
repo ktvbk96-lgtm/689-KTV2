@@ -24,7 +24,7 @@ import {
   Pencil,
   RotateCcw,
 } from 'lucide-react';
-import { Room, RoomPackage, Product, StaffMember, AppSettings, CartItem, Role } from '../types';
+import { Room, RoomPackage, Product, StaffMember, AppSettings, CartItem, Role, RoomPricingType } from '../types';
 import { formatCurrency } from '../lib/storage';
 import { formatWithSeparators, parseCleanNumber, FormattedNumberInput } from './FormattedNumberInput';
 
@@ -123,7 +123,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
 
   // Modal states: Open Room
   const [openingRoom, setOpeningRoom] = useState<Room | null>(null);
-  const [pricingChoice, setPricingChoice] = useState<'package' | 'fixed_hourly'>('fixed_hourly');
+  const [pricingChoice, setPricingChoice] = useState<RoomPricingType>('open_time');
   const [selectedPackageId, setSelectedPackageId] = useState<string>(packages[0]?.id || '');
   const [packageHours, setPackageHours] = useState<number>(() => parsePackageDurationHours(packages[0]));
   const [customHourlyRate, setCustomHourlyRate] = useState<number>(settings.defaultHourlyRate);
@@ -238,11 +238,20 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
 
   const calculateTargetEndTime = (
     startDate: Date,
-    hoursOrPackage: { type: 'package' | 'fixed_hourly'; hours?: number; packageId?: string }
-  ): { targetDate: Date; hoursLabel: string; effectiveHours: number } => {
+    hoursOrPackage: { type: RoomPricingType; hours?: number; packageId?: string }
+  ): { targetDate: Date; hoursLabel: string; effectiveHours: number; isOpenEnded?: boolean } => {
     let target = new Date(startDate.getTime());
     let hoursLabel = '';
     let effectiveHours = 4;
+
+    if (hoursOrPackage.type === 'open_time') {
+      return {
+        targetDate: startDate,
+        hoursLabel: 'ນັບຕາມເວລາຈິງ (ບໍ່ມີກຳນົດເວລາ)',
+        effectiveHours: 0,
+        isOpenEnded: true,
+      };
+    }
 
     if (hoursOrPackage.type === 'package') {
       const pkg = packages.find((p) => p.id === hoursOrPackage.packageId);
@@ -256,7 +265,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
       hoursLabel = `${effectiveHours} ຊົ່ວໂມງ`;
     }
 
-    return { targetDate: target, hoursLabel, effectiveHours };
+    return { targetDate: target, hoursLabel, effectiveHours, isOpenEnded: false };
   };
 
   const calculateRoomFee = (room: Room): number => {
@@ -267,8 +276,16 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
       return pkg ? pkg.price : room.hourlyRate || 0;
     }
 
-    // Fixed hourly rate (if booked specific hours, charge booked hours or actual duration, whichever is greater)
     const minutes = calculateDurationMinutes(room.openedAt);
+
+    // Open-ended count-up mode: Auto calculate based on elapsed minutes from opened time until now/checkout!
+    if (room.pricingType === 'open_time') {
+      // Minimum 30 mins, pro-rated in 30-min (0.5 hr) blocks
+      const actualHours = Math.max(0.5, Math.ceil(minutes / 30) * 0.5);
+      return Math.round(actualHours * room.hourlyRate);
+    }
+
+    // Fixed hourly rate (if booked specific hours, charge booked hours or actual duration, whichever is greater)
     const actualHours = Math.max(0.5, Math.ceil(minutes / 30) * 0.5);
     const hoursToCharge = room.bookedHours ? Math.max(room.bookedHours, actualHours) : actualHours;
     return Math.round(hoursToCharge * room.hourlyRate);
@@ -277,8 +294,8 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
   // Trigger open room modal and pre-initialize times
   const handleOpenRoomClick = (room: Room) => {
     setOpeningRoom(room);
-    setCustomHourlyRate(room.hourlyRate);
-    setPricingChoice('package'); // Default to package (Choice 1)
+    setCustomHourlyRate(room.hourlyRate || settings.defaultHourlyRate);
+    setPricingChoice('open_time'); // Default to Open-Ended (ນັບຕາມເວລາຈິງ ບໍ່ມີກຳນົດເວລາ) as requested!
     const firstPkg = packages[0];
     setSelectedPackageId(firstPkg?.id || '');
     const hrs = parsePackageDurationHours(firstPkg);
@@ -302,9 +319,12 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
 
     // Use customized start time from input
     const startD = openStartTimeInput ? createDateFromHHMM(openStartTimeInput, new Date()) : new Date();
-    let targetD: Date;
+    let targetD: Date | undefined;
 
-    if (isManualEndTime && openEndTimeInput) {
+    if (pricingChoice === 'open_time') {
+      targetD = undefined;
+      effectiveHours = 0;
+    } else if (isManualEndTime && openEndTimeInput) {
       targetD = createDateFromHHMM(openEndTimeInput, startD, startD);
       const diffH = computeDiffHours(openStartTimeInput, openEndTimeInput);
       if (diffH > 0) {
@@ -322,10 +342,12 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
           pricingType: pricingChoice,
           packageId: pricingChoice === 'package' ? selectedPackageId : undefined,
           packageName: pricingChoice === 'package' ? pkg?.name : undefined,
-          hourlyRate: pricingChoice === 'fixed_hourly' ? customHourlyRate : (pkg?.price || r.hourlyRate),
-          bookedHours: effectiveHours,
+          hourlyRate: (pricingChoice === 'fixed_hourly' || pricingChoice === 'open_time')
+            ? customHourlyRate
+            : (pkg?.price || r.hourlyRate),
+          bookedHours: pricingChoice === 'open_time' ? 0 : effectiveHours,
           openedAt: startD.toISOString(),
-          targetEndTime: targetD.toISOString(),
+          targetEndTime: targetD ? targetD.toISOString() : undefined,
           openedByStaffId: staff?.id,
           openedByStaffName: staff?.name,
           orders: [],
@@ -360,14 +382,22 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
 
     const baseStart = editingTimeRoom.openedAt ? new Date(editingTimeRoom.openedAt) : new Date();
     const newStart = createDateFromHHMM(editStartTimeInput, baseStart);
-    const newTarget = createDateFromHHMM(editEndTimeInput, newStart, newStart);
-    const diffH = computeDiffHours(editStartTimeInput, editEndTimeInput);
-    const finalHours = editBookedHours > 0 ? editBookedHours : (diffH || 1);
+
+    const isOpenEnded = editingTimeRoom.pricingType === 'open_time' && !editingTimeRoom.targetEndTime;
+
+    let newTarget: Date | undefined;
+    let finalHours = 0;
+
+    if (!isOpenEnded) {
+      newTarget = createDateFromHHMM(editEndTimeInput, newStart, newStart);
+      const diffH = computeDiffHours(editStartTimeInput, editEndTimeInput);
+      finalHours = editBookedHours > 0 ? editBookedHours : (diffH || 1);
+    }
 
     const updatedRoom: Room = {
       ...editingTimeRoom,
       openedAt: newStart.toISOString(),
-      targetEndTime: newTarget.toISOString(),
+      targetEndTime: newTarget ? newTarget.toISOString() : undefined,
       bookedHours: finalHours,
     };
 
@@ -533,7 +563,9 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
       : undefined;
 
     const timeRangeStr = startStr
-      ? `${startStr} - ${endStr} (ກຳນົດ: ${startStr} - ${targetStr || endStr})`
+      ? (room.pricingType === 'open_time' || !targetStr
+          ? `${startStr} - ${endStr} (${Math.floor(duration / 60)} ຊມ ${duration % 60} ນາທີ - ນັບຕາມຈິງ)`
+          : `${startStr} - ${endStr} (ກຳນົດ: ${startStr} - ${targetStr || endStr})`)
       : undefined;
 
     // Immediately reset room state back to available with 00:00 time and 0 hours
@@ -779,8 +811,8 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                 {/* Active Session Details */}
                 {isInUse ? (
                   <div className="space-y-3 bg-slate-950/70 border border-slate-800 p-3.5 rounded-2xl mb-4">
-                    {/* Time Window Banner: e.g. 08:00 -> 12:00 (4 hrs) */}
-                    {startFormatted && targetFormatted && (
+                    {/* Time Window Banner */}
+                    {startFormatted && (
                       <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-700/80 space-y-1.5">
                         <div className="flex items-center justify-between text-xs">
                           <span className="text-slate-400 flex items-center gap-1">
@@ -789,7 +821,9 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                           </span>
                           <div className="flex items-center gap-1.5">
                             <span className="font-bold text-slate-100 font-mono">
-                              {startFormatted} ຫາ {targetFormatted}
+                              {targetFormatted
+                                ? `${startFormatted} ຫາ ${targetFormatted}`
+                                : `ເລີ່ມ: ${startFormatted} (ບໍ່ມີກຳນົດເວລາ)`}
                             </span>
                             <button
                               type="button"
@@ -803,15 +837,17 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                           </div>
                         </div>
                         <div className="flex items-center justify-between text-[11px] text-slate-400">
-                          <span>ໄລຍະເວລາ:</span>
-                          <span className="text-amber-400 font-semibold">
-                            {room.bookedHours ? `${room.bookedHours} ຊົ່ວໂມງ` : 'ຕາມຊົ່ວໂມງ'}
+                          <span>ຮູບແບບຄິດໄລ່:</span>
+                          <span className="text-emerald-400 font-semibold font-mono">
+                            {room.pricingType === 'open_time'
+                              ? `ນັບຕາມເວລາຈິງ (${formatCurrency(room.hourlyRate, settings.currencySymbol)}/ຊມ)`
+                              : room.bookedHours ? `${room.bookedHours} ຊົ່ວໂມງ` : 'ຕາມຊົ່ວໂມງ'}
                           </span>
                         </div>
                       </div>
                     )}
 
-                    {/* Live Timer & Remaining Countdown */}
+                    {/* Live Timer & Real-time Room Charge */}
                     <div className="grid grid-cols-2 gap-2 text-xs">
                       {/* Elapsed */}
                       <div className="bg-slate-900/60 p-2 rounded-xl border border-slate-800">
@@ -821,25 +857,37 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                         </span>
                       </div>
 
-                      {/* Remaining / Overtime */}
-                      <div
-                        className={`p-2 rounded-xl border ${
-                          remainingInfo?.isOvertime
-                            ? 'bg-amber-950/60 border-amber-600/60 text-amber-300'
-                            : 'bg-emerald-950/40 border-emerald-600/40 text-emerald-300'
-                        }`}
-                      >
-                        <span className="text-[10px] block mb-0.5 opacity-80">
-                          {remainingInfo?.isOvertime ? 'ກາຍເວລາແລ້ວ:' : 'ເຫຼືອເວລາ:'}
-                        </span>
-                        <span className="font-mono font-bold">
-                          {remainingInfo?.text}
-                        </span>
-                      </div>
+                      {/* Right box: If open_time show current room charge with live pulse, else show remaining/overtime */}
+                      {room.pricingType === 'open_time' || !targetFormatted ? (
+                        <div className="p-2 rounded-xl border bg-emerald-950/40 border-emerald-600/40 text-emerald-300 flex flex-col justify-between">
+                          <span className="text-[10px] block mb-0.5 opacity-80 flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                            <span>ຄ່າຫ້ອງປະຈຸບັນ:</span>
+                          </span>
+                          <span className="font-mono font-bold text-emerald-300">
+                            {formatCurrency(roomCharge, settings.currencySymbol)}
+                          </span>
+                        </div>
+                      ) : (
+                        <div
+                          className={`p-2 rounded-xl border ${
+                            remainingInfo?.isOvertime
+                              ? 'bg-amber-950/60 border-amber-600/60 text-amber-300'
+                              : 'bg-emerald-950/40 border-emerald-600/40 text-emerald-300'
+                          }`}
+                        >
+                          <span className="text-[10px] block mb-0.5 opacity-80">
+                            {remainingInfo?.isOvertime ? 'ກາຍເວລາແລ້ວ:' : 'ເຫຼືອເວລາ:'}
+                          </span>
+                          <span className="font-mono font-bold">
+                            {remainingInfo?.text}
+                          </span>
+                        </div>
+                      )}
                     </div>
 
                     {/* Progress bar */}
-                    {remainingInfo && (
+                    {targetFormatted && remainingInfo ? (
                       <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
                         <div
                           className={`h-full transition-all duration-500 ${
@@ -847,6 +895,10 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                           }`}
                           style={{ width: `${remainingInfo.percent}%` }}
                         />
+                      </div>
+                    ) : (
+                      <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                        <div className="h-full bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-500 w-full animate-pulse opacity-80" />
                       </div>
                     )}
 
@@ -856,6 +908,8 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                       <span className="font-semibold text-rose-300">
                         {room.pricingType === 'package'
                           ? `ແພັກເກັດ: ${room.packageName}`
+                          : room.pricingType === 'open_time'
+                          ? `ນັບຕາມເວລາຈິງ (ບໍ່ມີກຳນົດເວລາ)`
                           : `ລາຄາຕາຍຕົວ (${formatCurrency(room.hourlyRate, settings.currencySymbol)}/ຊມ)`}
                       </span>
                     </div>
@@ -1021,181 +1075,270 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                   <CalendarCheck className="w-4 h-4 text-amber-400" />
                   <span>ເລືອກ & ແກ້ໄຂເວລາເປີດຫ້ອງ:</span>
                 </div>
-                <span className="text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-full font-semibold font-mono">
-                  {previewEffectiveHours} ຊົ່ວໂມງ
+                <span className="text-[10px] text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2.5 py-0.5 rounded-full font-semibold font-mono">
+                  {pricingChoice === 'open_time'
+                    ? 'ນັບຕາມເວລາຈິງ (ບໍ່ມີກຳນົດເວລາ)'
+                    : `${previewEffectiveHours} ຊົ່ວໂມງ`}
                 </span>
               </div>
 
-              {/* Time inputs: Start Time -> Duration -> End Time */}
-              <div className="grid grid-cols-1 sm:grid-cols-11 gap-2 items-center bg-slate-900/90 p-3 rounded-xl border border-slate-700/80">
-                {/* Start Time Box (5 cols) */}
-                <div className="sm:col-span-5 space-y-1">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-slate-400 font-medium flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>ເວລາເລີ່ມ:</span>
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOpenStartTimeInput(toHHMM(new Date()));
+              {/* Time inputs */}
+              {pricingChoice === 'open_time' ? (
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center bg-slate-900/90 p-3 rounded-xl border border-slate-700/80">
+                  {/* Start Time Box (6 cols) */}
+                  <div className="sm:col-span-6 space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-400 font-medium flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>ເວລາເລີ່ມນັບ:</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenStartTimeInput(toHHMM(new Date()));
+                          setIsManualEndTime(false);
+                        }}
+                        className="text-[10px] text-emerald-400 hover:text-emerald-300 underline font-semibold cursor-pointer"
+                      >
+                        ຕັ້ງເປັນຕອນນີ້
+                      </button>
+                    </div>
+                    <input
+                      type="time"
+                      value={openStartTimeInput}
+                      onChange={(e) => {
+                        setOpenStartTimeInput(e.target.value);
                         setIsManualEndTime(false);
                       }}
-                      className="text-[10px] text-emerald-400 hover:text-emerald-300 underline font-semibold cursor-pointer"
-                    >
-                      ຕັ້ງເປັນຕອນນີ້
-                    </button>
+                      className="w-full bg-slate-950 border border-emerald-500/50 rounded-xl px-3 py-1.5 text-base font-black text-emerald-300 font-mono text-center focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                    {/* Quick Adjust Start Time Buttons */}
+                    <div className="flex items-center justify-center gap-1 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenStartTimeInput((prev) => adjustHHMM(prev, -30));
+                          setIsManualEndTime(false);
+                        }}
+                        className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono font-bold border border-slate-700 cursor-pointer"
+                      >
+                        -30ນ
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenStartTimeInput((prev) => adjustHHMM(prev, -15));
+                          setIsManualEndTime(false);
+                        }}
+                        className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono font-bold border border-slate-700 cursor-pointer"
+                      >
+                        -15ນ
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenStartTimeInput((prev) => adjustHHMM(prev, 15));
+                          setIsManualEndTime(false);
+                        }}
+                        className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono font-bold border border-slate-700 cursor-pointer"
+                      >
+                        +15ນ
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenStartTimeInput((prev) => adjustHHMM(prev, 30));
+                          setIsManualEndTime(false);
+                        }}
+                        className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono font-bold border border-slate-700 cursor-pointer"
+                      >
+                        +30ນ
+                      </button>
+                    </div>
                   </div>
-                  <input
-                    type="time"
-                    value={openStartTimeInput}
-                    onChange={(e) => {
-                      setOpenStartTimeInput(e.target.value);
-                      setIsManualEndTime(false);
-                    }}
-                    className="w-full bg-slate-950 border border-emerald-500/50 rounded-xl px-3 py-1.5 text-base font-black text-emerald-300 font-mono text-center focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  />
-                  {/* Quick Adjust Start Time Buttons */}
-                  <div className="flex items-center justify-center gap-1 pt-0.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOpenStartTimeInput((prev) => adjustHHMM(prev, -30));
-                        setIsManualEndTime(false);
-                      }}
-                      className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono font-bold border border-slate-700 cursor-pointer"
-                    >
-                      -30ນ
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOpenStartTimeInput((prev) => adjustHHMM(prev, -15));
-                        setIsManualEndTime(false);
-                      }}
-                      className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono font-bold border border-slate-700 cursor-pointer"
-                    >
-                      -15ນ
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOpenStartTimeInput((prev) => adjustHHMM(prev, 15));
-                        setIsManualEndTime(false);
-                      }}
-                      className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono font-bold border border-slate-700 cursor-pointer"
-                    >
-                      +15ນ
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOpenStartTimeInput((prev) => adjustHHMM(prev, 30));
-                        setIsManualEndTime(false);
-                      }}
-                      className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono font-bold border border-slate-700 cursor-pointer"
-                    >
-                      +30ນ
-                    </button>
-                  </div>
-                </div>
 
-                {/* Arrow / Middle Indicator (1 col) */}
-                <div className="sm:col-span-1 flex justify-center py-1">
-                  <span className="text-amber-400 font-bold text-xs sm:rotate-0">➔</span>
+                  {/* Open-Ended Banner (6 cols) */}
+                  <div className="sm:col-span-6 bg-slate-950/80 border border-emerald-500/30 rounded-xl p-3 flex flex-col justify-center">
+                    <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-xs mb-1">
+                      <Sparkles className="w-4 h-4 text-emerald-400 animate-pulse" />
+                      <span>ບໍ່ມີກຳນົດເວລາສິ້ນສຸດ (Open-Ended)</span>
+                    </div>
+                    <p className="text-[11px] text-slate-300 leading-snug">
+                      ເລີ່ມນັບຕັ້ງແຕ່ຕອນເປີດ ຈົນຮອດຕອນເຊັກບິນ • ລະບົບຈະຄິດໄລ່ຄ່າຫ້ອງຕາມເວລາຕົວຈິງອັດຕະໂນມັດ
+                    </p>
+                  </div>
                 </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-11 gap-2 items-center bg-slate-900/90 p-3 rounded-xl border border-slate-700/80">
+                  {/* Start Time Box (5 cols) */}
+                  <div className="sm:col-span-5 space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-400 font-medium flex items-center gap-1">
+                        <Clock className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>ເວລາເລີ່ມ:</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenStartTimeInput(toHHMM(new Date()));
+                          setIsManualEndTime(false);
+                        }}
+                        className="text-[10px] text-emerald-400 hover:text-emerald-300 underline font-semibold cursor-pointer"
+                      >
+                        ຕັ້ງເປັນຕອນນີ້
+                      </button>
+                    </div>
+                    <input
+                      type="time"
+                      value={openStartTimeInput}
+                      onChange={(e) => {
+                        setOpenStartTimeInput(e.target.value);
+                        setIsManualEndTime(false);
+                      }}
+                      className="w-full bg-slate-950 border border-emerald-500/50 rounded-xl px-3 py-1.5 text-base font-black text-emerald-300 font-mono text-center focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                    {/* Quick Adjust Start Time Buttons */}
+                    <div className="flex items-center justify-center gap-1 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenStartTimeInput((prev) => adjustHHMM(prev, -30));
+                          setIsManualEndTime(false);
+                        }}
+                        className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono font-bold border border-slate-700 cursor-pointer"
+                      >
+                        -30ນ
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenStartTimeInput((prev) => adjustHHMM(prev, -15));
+                          setIsManualEndTime(false);
+                        }}
+                        className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono font-bold border border-slate-700 cursor-pointer"
+                      >
+                        -15ນ
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenStartTimeInput((prev) => adjustHHMM(prev, 15));
+                          setIsManualEndTime(false);
+                        }}
+                        className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono font-bold border border-slate-700 cursor-pointer"
+                      >
+                        +15ນ
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenStartTimeInput((prev) => adjustHHMM(prev, 30));
+                          setIsManualEndTime(false);
+                        }}
+                        className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono font-bold border border-slate-700 cursor-pointer"
+                      >
+                        +30ນ
+                      </button>
+                    </div>
+                  </div>
 
-                {/* End Time Box (5 cols) */}
-                <div className="sm:col-span-5 space-y-1">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-slate-400 font-medium flex items-center gap-1">
-                      <Hourglass className="w-3.5 h-3.5 text-rose-400" />
-                      <span>ເວລາສິ້ນສຸດ:</span>
-                    </span>
-                    {isManualEndTime ? (
-                      <span className="text-[10px] text-amber-300 font-bold">ກຳນົດເອງ</span>
-                    ) : (
-                      <span className="text-[10px] text-slate-400 font-medium">ອັດຕະໂນມັດ</span>
-                    )}
+                  {/* Arrow / Middle Indicator (1 col) */}
+                  <div className="sm:col-span-1 flex justify-center py-1">
+                    <span className="text-amber-400 font-bold text-xs sm:rotate-0">➔</span>
                   </div>
-                  <input
-                    type="time"
-                    value={openEndTimeInput}
-                    onChange={(e) => {
-                      setOpenEndTimeInput(e.target.value);
-                      setIsManualEndTime(true);
-                      const diffH = computeDiffHours(openStartTimeInput, e.target.value);
-                      if (diffH > 0) {
-                        if (pricingChoice === 'package') {
-                          setPackageHours(diffH);
-                        } else {
-                          setBookedHours(diffH);
-                        }
-                      }
-                    }}
-                    className="w-full bg-slate-950 border border-rose-500/50 rounded-xl px-3 py-1.5 text-base font-black text-rose-300 font-mono text-center focus:outline-none focus:ring-2 focus:ring-rose-500"
-                  />
-                  {/* Quick Adjust End Time Buttons */}
-                  <div className="flex items-center justify-center gap-1 pt-0.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const newEnd = adjustHHMM(openEndTimeInput, -30);
-                        setOpenEndTimeInput(newEnd);
+
+                  {/* End Time Box (5 cols) */}
+                  <div className="sm:col-span-5 space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-400 font-medium flex items-center gap-1">
+                        <Hourglass className="w-3.5 h-3.5 text-rose-400" />
+                        <span>ເວລາສິ້ນສຸດ:</span>
+                      </span>
+                      {isManualEndTime ? (
+                        <span className="text-[10px] text-amber-300 font-bold">ກຳນົດເອງ</span>
+                      ) : (
+                        <span className="text-[10px] text-slate-400 font-medium">ອັດຕະໂນມັດ</span>
+                      )}
+                    </div>
+                    <input
+                      type="time"
+                      value={openEndTimeInput}
+                      onChange={(e) => {
+                        setOpenEndTimeInput(e.target.value);
                         setIsManualEndTime(true);
-                        const diffH = computeDiffHours(openStartTimeInput, newEnd);
+                        const diffH = computeDiffHours(openStartTimeInput, e.target.value);
                         if (diffH > 0) {
-                          if (pricingChoice === 'package') setPackageHours(diffH);
-                          else setBookedHours(diffH);
+                          if (pricingChoice === 'package') {
+                            setPackageHours(diffH);
+                          } else {
+                            setBookedHours(diffH);
+                          }
                         }
                       }}
-                      className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono font-bold border border-slate-700 cursor-pointer"
-                    >
-                      -30ນ
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const newEnd = adjustHHMM(openEndTimeInput, 30);
-                        setOpenEndTimeInput(newEnd);
-                        setIsManualEndTime(true);
-                        const diffH = computeDiffHours(openStartTimeInput, newEnd);
-                        if (diffH > 0) {
-                          if (pricingChoice === 'package') setPackageHours(diffH);
-                          else setBookedHours(diffH);
-                        }
-                      }}
-                      className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono font-bold border border-slate-700 cursor-pointer"
-                    >
-                      +30ນ
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const newEnd = adjustHHMM(openEndTimeInput, 60);
-                        setOpenEndTimeInput(newEnd);
-                        setIsManualEndTime(true);
-                        const diffH = computeDiffHours(openStartTimeInput, newEnd);
-                        if (diffH > 0) {
-                          if (pricingChoice === 'package') setPackageHours(diffH);
-                          else setBookedHours(diffH);
-                        }
-                      }}
-                      className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono font-bold border border-slate-700 cursor-pointer"
-                    >
-                      +1ຊມ
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsManualEndTime(false)}
-                      className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 text-[10px] font-bold border border-slate-700 cursor-pointer"
-                      title="ຣີເຊັດໃຫ້ຄຳນວນຕາມຊົ່ວໂມງອັດຕະໂນມັດ"
-                    >
-                      ຣີເຊັດ
-                    </button>
+                      className="w-full bg-slate-950 border border-rose-500/50 rounded-xl px-3 py-1.5 text-base font-black text-rose-300 font-mono text-center focus:outline-none focus:ring-2 focus:ring-rose-500"
+                    />
+                    {/* Quick Adjust End Time Buttons */}
+                    <div className="flex items-center justify-center gap-1 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const newEnd = adjustHHMM(openEndTimeInput, -30);
+                          setOpenEndTimeInput(newEnd);
+                          setIsManualEndTime(true);
+                          const diffH = computeDiffHours(openStartTimeInput, newEnd);
+                          if (diffH > 0) {
+                            if (pricingChoice === 'package') setPackageHours(diffH);
+                            else setBookedHours(diffH);
+                          }
+                        }}
+                        className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono font-bold border border-slate-700 cursor-pointer"
+                      >
+                        -30ນ
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const newEnd = adjustHHMM(openEndTimeInput, 30);
+                          setOpenEndTimeInput(newEnd);
+                          setIsManualEndTime(true);
+                          const diffH = computeDiffHours(openStartTimeInput, newEnd);
+                          if (diffH > 0) {
+                            if (pricingChoice === 'package') setPackageHours(diffH);
+                            else setBookedHours(diffH);
+                          }
+                        }}
+                        className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono font-bold border border-slate-700 cursor-pointer"
+                      >
+                        +30ນ
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const newEnd = adjustHHMM(openEndTimeInput, 60);
+                          setOpenEndTimeInput(newEnd);
+                          setIsManualEndTime(true);
+                          const diffH = computeDiffHours(openStartTimeInput, newEnd);
+                          if (diffH > 0) {
+                            if (pricingChoice === 'package') setPackageHours(diffH);
+                            else setBookedHours(diffH);
+                          }
+                        }}
+                        className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono font-bold border border-slate-700 cursor-pointer"
+                      >
+                        +1ຊມ
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsManualEndTime(false)}
+                        className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 text-[10px] font-bold border border-slate-700 cursor-pointer"
+                        title="ຣີເຊັດໃຫ້ຄຳນວນຕາມຊົ່ວໂມງອັດຕະໂນມັດ"
+                      >
+                        ຣີເຊັດ
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
             </div>
 
             {/* Pricing Choices Tab */}
@@ -1203,44 +1346,121 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
               <label className="block text-xs font-bold text-slate-300 mb-2">
                 ເລືອກຮູບແບບລາຄາ:
               </label>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                {/* Choice 1: Open Time (ນັບຕາມເວລາຈິງ ບໍ່ມີກຳນົດເວລາ) */}
                 <button
                   type="button"
-                  onClick={() => setPricingChoice('package')}
-                  className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
-                    pricingChoice === 'package'
-                      ? 'bg-rose-950/50 border-rose-500 text-rose-200 shadow-md shadow-rose-950/40 ring-1 ring-rose-500/50'
+                  onClick={() => setPricingChoice('open_time')}
+                  className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                    pricingChoice === 'open_time'
+                      ? 'bg-emerald-950/60 border-emerald-500 text-emerald-200 shadow-md shadow-emerald-950/40 ring-1 ring-emerald-500/50'
                       : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
                   }`}
                 >
-                  <div className="flex items-center gap-2 mb-1">
-                    <Package className="w-4 h-4 text-rose-400" />
-                    <span className="font-bold text-xs text-white">Choice 1: ແພັກເກັດຮ້ານ</span>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <Sparkles className="w-4 h-4 text-emerald-400" />
+                    <span className="font-bold text-xs text-white">Choice 1: ນັບຕາມຈິງ</span>
                   </div>
-                  <p className="text-[11px] text-slate-400">
-                    ລາຄາເໝົາລວມ ພ້ອມເຄື່ອງດື່ມແຖມ
+                  <p className="text-[10px] text-slate-400">
+                    ບໍ່ມີກຳນົດເວລາ • ຄຳນວນເອງຕອນເຊັກບິນ
                   </p>
                 </button>
 
+                {/* Choice 2: Fixed Hourly */}
                 <button
                   type="button"
                   onClick={() => setPricingChoice('fixed_hourly')}
-                  className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer ${
+                  className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
                     pricingChoice === 'fixed_hourly'
                       ? 'bg-amber-950/50 border-amber-500 text-amber-200 shadow-md shadow-amber-950/40 ring-1 ring-amber-500/50'
                       : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
                   }`}
                 >
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="flex items-center gap-1.5 mb-1">
                     <Timer className="w-4 h-4 text-amber-400" />
                     <span className="font-bold text-xs text-white">Choice 2: ລາຄາຕາຍຕົວ</span>
                   </div>
-                  <p className="text-[11px] text-slate-400">
-                    ເລືອກຈຳນວນຊົ່ວໂມງ (ເຊັ່ນ 4 ຊມ)
+                  <p className="text-[10px] text-slate-400">
+                    ກຳນົດຊົ່ວໂມງ (ເຊັ່ນ 2, 4 ຊມ)
+                  </p>
+                </button>
+
+                {/* Choice 3: Package */}
+                <button
+                  type="button"
+                  onClick={() => setPricingChoice('package')}
+                  className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                    pricingChoice === 'package'
+                      ? 'bg-rose-950/50 border-rose-500 text-rose-200 shadow-md shadow-rose-950/40 ring-1 ring-rose-500/50'
+                      : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <Package className="w-4 h-4 text-rose-400" />
+                    <span className="font-bold text-xs text-white">Choice 3: ແພັກເກັດ</span>
+                  </div>
+                  <p className="text-[10px] text-slate-400">
+                    ລາຄາເໝົາ ພ້ອມເຄື່ອງດື່ມແຖມ
                   </p>
                 </button>
               </div>
             </div>
+
+            {/* If Choice 1: Open-Time Rate Selection */}
+            {pricingChoice === 'open_time' && (
+              <div className="space-y-3 mb-4 p-3.5 rounded-2xl bg-slate-850/80 border border-slate-750">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-slate-200 flex items-center gap-1.5">
+                    <DollarSign className="w-4 h-4 text-emerald-400" />
+                    <span>ເລືອກລາຄາຕໍ່ຊົ່ວໂມງ ({settings.currencySymbol}/ຊມ):</span>
+                  </span>
+                  <span className="font-mono font-black text-emerald-400 text-sm">
+                    {formatCurrency(customHourlyRate, settings.currencySymbol)}/ຊມ
+                  </span>
+                </div>
+
+                {/* Preset Rate Chips */}
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                  {[40000, 50000, 60000, 70000, 80000, 100000].map((rate) => (
+                    <button
+                      key={rate}
+                      type="button"
+                      onClick={() => setCustomHourlyRate(rate)}
+                      className={`py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer font-mono ${
+                        customHourlyRate === rate
+                          ? 'bg-emerald-500 border-emerald-400 text-slate-950 font-black shadow-md shadow-emerald-500/30'
+                          : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      {rate >= 1000 ? `${rate / 1000}k` : rate}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Custom Rate Input */}
+                <div className="pt-1">
+                  <label className="block text-[11px] text-slate-400 mb-1">
+                    ຫຼື ປ້ອນລາຄາຄ່າຫ້ອງເອງ ({settings.currencySymbol}/ຊມ):
+                  </label>
+                  <input
+                    type="number"
+                    step="5000"
+                    min="0"
+                    value={customHourlyRate}
+                    onChange={(e) => setCustomHourlyRate(parseFloat(e.target.value) || 0)}
+                    className="w-full bg-slate-900 border border-emerald-500/40 rounded-xl px-3 py-2 text-xs font-mono text-emerald-300 font-bold focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    placeholder="ປ້ອນລາຄາຕໍ່ຊົ່ວໂມງ..."
+                  />
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-[11px] text-emerald-300 flex items-start gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <span>
+                    ຕອນເຊັກບິນ: ລະບົບຈະຄຳນວນເວລາເລີ່ມຈົນຮອດຕອນເຊັກບິນ ແລະ ຄິດໄລ່ຕາມອັດຕາ <strong>{formatCurrency(customHourlyRate, settings.currencySymbol)}/ຊມ</strong> ໃຫ້ອັດຕະໂນມັດ.
+                  </span>
+                </div>
+              </div>
+            )}
 
             {/* If Choice 2: Select Hours */}
             {pricingChoice === 'fixed_hourly' && (
@@ -1405,7 +1625,9 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                 onClick={handleOpenRoomSubmit}
                 className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/30 cursor-pointer"
               >
-                ຢືນຢັນເປີດຫ້ອງ ({previewEndTime.hoursLabel})
+                {pricingChoice === 'open_time'
+                  ? `ຢືນຢັນເປີດຫ້ອງ (ນັບຕາມຈິງ ${formatCurrency(customHourlyRate, settings.currencySymbol)}/ຊມ)`
+                  : `ຢືນຢັນເປີດຫ້ອງ (${previewEndTime.hoursLabel})`}
               </button>
             </div>
           </div>
@@ -1438,7 +1660,9 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                       title="ກົດເພື່ອແກ້ໄຂເວລາເລີ່ມ ຫຼື ເວລາສິ້ນສຸດ"
                     >
                       <span>
-                        ເລີ່ມ: {selectedRoomForDetails.openedAt ? new Date(selectedRoomForDetails.openedAt).toLocaleTimeString('lo-LA', { hour: '2-digit', minute: '2-digit', hour12: false }) : ''} - ໝົດ: {selectedRoomForDetails.targetEndTime ? new Date(selectedRoomForDetails.targetEndTime).toLocaleTimeString('lo-LA', { hour: '2-digit', minute: '2-digit', hour12: false }) : ''}
+                        {selectedRoomForDetails.pricingType === 'open_time' || !selectedRoomForDetails.targetEndTime
+                          ? `ເລີ່ມ: ${selectedRoomForDetails.openedAt ? new Date(selectedRoomForDetails.openedAt).toLocaleTimeString('lo-LA', { hour: '2-digit', minute: '2-digit', hour12: false }) : ''} (ນັບຕາມເວລາຈິງ - ບໍ່ມີກຳນົດເວລາ)`
+                          : `ເລີ່ມ: ${selectedRoomForDetails.openedAt ? new Date(selectedRoomForDetails.openedAt).toLocaleTimeString('lo-LA', { hour: '2-digit', minute: '2-digit', hour12: false }) : ''} - ໝົດ: ${new Date(selectedRoomForDetails.targetEndTime).toLocaleTimeString('lo-LA', { hour: '2-digit', minute: '2-digit', hour12: false })}`}
                       </span>
                       <Pencil className="w-3 h-3 text-amber-400" />
                     </button>
@@ -1990,6 +2214,18 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
             </div>
 
             <div className="space-y-4 mb-5">
+              {editingTimeRoom.pricingType === 'open_time' && (
+                <div className="p-3 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 text-xs flex items-start gap-2">
+                  <Sparkles className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5 animate-pulse" />
+                  <div>
+                    <div className="font-bold">ຮູບແບບ: ນັບຕາມເວລາຈິງ (ບໍ່ມີກຳນົດເວລາສິ້ນສຸດ)</div>
+                    <div className="text-[11px] text-emerald-400/80 mt-0.5">
+                      ທ່ານສາມາດປັບເວລາເລີ່ມຕົ້ນໄດ້ຕາມຕ້ອງການ ລະບົບຈະຄຳນວນຄ່າຫ້ອງຕາມເວລາຕົວຈິງເລີ່ມຈາກເວລານີ້.
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Start Time Field */}
               <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
                 <div className="flex items-center justify-between text-xs">

@@ -32,7 +32,7 @@ export interface CartItem {
   note?: string;
 }
 
-export type RoomPricingType = 'package' | 'fixed_hourly';
+export type RoomPricingType = 'open_time' | 'fixed_hourly' | 'package';
 
 export interface RoomPackage {
   id: string;

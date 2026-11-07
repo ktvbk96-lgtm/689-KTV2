@@ -745,7 +745,9 @@ export default function App() {
     const timeRangeFormatted =
       timeRangeStr ||
       (formattedStart
-        ? `${formattedStart} ຫາ ${formattedEnd} (ກຳນົດ: ${formattedStart} ຫາ ${formattedTarget || formattedEnd})`
+        ? (room.pricingType === 'open_time' || !formattedTarget)
+          ? `${formattedStart} - ${formattedEnd} (${Math.floor(durationMinutes / 60)} ຊມ ${durationMinutes % 60} ນາທີ - ຕາມເວລາຈິງ)`
+          : `${formattedStart} ຫາ ${formattedEnd} (ກຳນົດ: ${formattedStart} ຫາ ${formattedTarget || formattedEnd})`
         : undefined);
 
     const newBill: BillRecord = {
