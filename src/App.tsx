@@ -284,6 +284,13 @@ export default function App() {
         } else if (status === 'syncing') {
           setSyncStatus('loading');
           if (message) setSyncMessage(message);
+        } else if (status === 'offline') {
+          setSyncStatus('idle');
+          if (message) setSyncMessage(message);
+        } else if (status === 'error') {
+          setSyncStatus('error');
+          if (message) setSyncMessage(message);
+          setTimeout(() => setSyncStatus('idle'), 4000);
         }
       },
     });
@@ -444,20 +451,28 @@ export default function App() {
     };
 
     // 1. Instantly push to Backend Server & SSE to notify all iOS, Android & Windows devices
-    await pushMultiDeviceUpdate(action, enrichedPayload);
+    try {
+      await pushMultiDeviceUpdate(action, enrichedPayload);
+    } catch (e) {
+      console.warn('Realtime push note (running in local mode):', e);
+    }
 
     // 2. Also push to Firebase Firestore Cloud (ktv-e97cb)
-    const deviceId = getDeviceId();
-    const firestoreData: any = {
-      lastSenderId: deviceId,
-      lastAction: action,
-      lastUpdated: new Date().toISOString(),
-      bills: currentBills,
-      debts: currentDebts,
-      ...enrichedPayload,
-      [action]: enrichedPayload,
-    };
-    pushToFirebaseStore(firestoreData);
+    try {
+      const deviceId = getDeviceId();
+      const firestoreData: any = {
+        lastSenderId: deviceId,
+        lastAction: action,
+        lastUpdated: new Date().toISOString(),
+        bills: currentBills,
+        debts: currentDebts,
+        ...enrichedPayload,
+        [action]: enrichedPayload,
+      };
+      await pushToFirebaseStore(firestoreData);
+    } catch (e) {
+      console.warn('Firebase push note:', e);
+    }
 
     // 3. Also forward to Google Sheets Web App if configured
     if (!settings.gasWebAppUrl || settings.realtimeSyncEnabled === false) return true;
@@ -471,7 +486,7 @@ export default function App() {
       const res = await sendDataToGas(settings.gasWebAppUrl, action, payload);
       if (res.success) {
         setSyncStatus('success');
-        setSyncMessage('ຊິ້ງຂໍ້ມູນລົງ Google Sheets ສຳເລັດແລ້ວ');
+        setSyncMessage(res.message || 'ຊິ້ງຂໍ້ມູນລົງ Google Sheets ສຳເລັດແລ້ວ');
         const nowStr = new Date().toISOString();
         const updatedSettings = { ...settings, lastSyncedAt: nowStr };
         setSettings(updatedSettings);
@@ -480,11 +495,15 @@ export default function App() {
         return true;
       } else {
         setSyncStatus('error');
-        setSyncMessage(res.error || 'ຊິ້ງຂໍ້ມູນບໍ່ສຳເລັດ');
+        setSyncMessage(res.error || 'ບັນທຶກໃນເຄື່ອງສຳເລັດ (Google Sheets ຢູ່ໃນໂໝດອອບລາຍ)');
         setTimeout(() => setSyncStatus('idle'), 4000);
         return false;
       }
-    } catch {
+    } catch (err: any) {
+      console.warn('Google Sheets sync note:', err);
+      setSyncStatus('error');
+      setSyncMessage('ບັນທຶກໃນເຄື່ອງສຳເລັດ (ບໍ່ສາມາດເຊື່ອມຕໍ່ Sheets ໄດ້)');
+      setTimeout(() => setSyncStatus('idle'), 4000);
       return false;
     } finally {
       setTimeout(() => {

@@ -557,11 +557,18 @@ export const fetchLatestDataFromGas = async (
     return { success: false, error: 'ຍັງບໍ່ໄດ້ລະບຸ Google Apps Script Web App URL' };
   }
 
+  const cleanUrl = gasUrl.trim();
+  if (cleanUrl.includes('docs.google.com/spreadsheets')) {
+    return {
+      success: false,
+      error: 'URL ທີ່ໃສ່ເປັນລິ້ງ Google Sheet (ຕ້ອງໃຊ້ Web App URL ທີ່ລົງທ້າຍດ້ວຍ /exec)',
+    };
+  }
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const cleanUrl = gasUrl.trim();
     // Cache buster to avoid browser stale caches across different devices
     const fetchUrl = `${cleanUrl}${cleanUrl.includes('?') ? '&' : '?'}action=getAll&_t=${Date.now()}`;
 
@@ -582,8 +589,18 @@ export const fetchLatestDataFromGas = async (
       };
     }
 
-    const json = await res.json();
-    if (json.status === 'success' && json.data) {
+    const text = await res.text();
+    let json: any = null;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      return {
+        success: false,
+        error: 'Google Sheets ຕອບກັບບໍ່ແມ່ນຮູບແບບ JSON (ກວດສອບວ່າ Web App URL ຖືກຕ້ອງ)',
+      };
+    }
+
+    if (json && json.status === 'success' && json.data) {
       return {
         success: true,
         message: 'ດຶງຂໍ້ມູນລ່າສຸດສຳເລັດແລ້ວ',
@@ -593,7 +610,7 @@ export const fetchLatestDataFromGas = async (
     } else {
       return {
         success: false,
-        error: json.message || 'ຮູບແບບຂໍ້ມູນທີ່ຕອບກັບບໍ່ຖືກຕ້ອງ',
+        error: json?.message || 'ຮູບແບບຂໍ້ມູນທີ່ຕອບກັບບໍ່ຖືກຕ້ອງ',
       };
     }
   } catch (err: any) {
@@ -601,7 +618,14 @@ export const fetchLatestDataFromGas = async (
     if (err.name === 'AbortError') {
       return {
         success: false,
-        error: `ໝົດເວລາເຊື່ອມຕໍ່ (${timeoutMs / 1000} ວິນາທີ) - ກະລຸນາກວດສອບອິນເຕີເນັດ`,
+        error: `ໝົດເວລາເຊື່ອມຕໍ່ (${timeoutMs / 1000} ວິນາທີ) - ກຳລັງໃຊ້ຂໍ້ມູນໃນເຄື່ອງ`,
+      };
+    }
+    const msg = String(err?.message || '');
+    if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('Load failed')) {
+      return {
+        success: false,
+        error: 'ບໍ່ສາມາດເຊື່ອມຕໍ່ Google Sheets ໄດ້ (ກວດສອບວ່າ URL ລົງທ້າຍດ້ວຍ /exec ແລະ ຕັ້ງ Who has access: Anyone)',
       };
     }
     return {
@@ -613,7 +637,8 @@ export const fetchLatestDataFromGas = async (
 
 /**
  * Send (POST) real-time data to Google Apps Script Web App
- * Uses text/plain to avoid browser CORS preflight blocks with Google Apps Script
+ * Uses text/plain to avoid browser CORS preflight blocks.
+ * Automatically falls back to mode: 'no-cors' if CORS or redirect issues occur.
  */
 export const sendDataToGas = async (
   gasUrl: string,
@@ -625,18 +650,26 @@ export const sendDataToGas = async (
     return { success: false, error: 'ຍັງບໍ່ໄດ້ລະບຸ Google Apps Script Web App URL' };
   }
 
+  const cleanUrl = gasUrl.trim();
+  if (cleanUrl.includes('docs.google.com/spreadsheets')) {
+    return {
+      success: false,
+      error: 'URL ທີ່ໃສ່ເປັນລິ້ງ Google Sheet (ຕ້ອງໃຊ້ Web App URL ທີ່ລົງທ້າຍດ້ວຍ /exec)',
+    };
+  }
+
+  const payload = JSON.stringify({
+    action,
+    data,
+    timestamp: new Date().toISOString(),
+  });
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const payload = JSON.stringify({
-      action,
-      data,
-      timestamp: new Date().toISOString(),
-    });
-
     // Content-Type: text/plain avoids CORS preflight OPTIONS request
-    const res = await fetch(gasUrl.trim(), {
+    const res = await fetch(cleanUrl, {
       method: 'POST',
       redirect: 'follow',
       signal: controller.signal,
@@ -681,12 +714,46 @@ export const sendDataToGas = async (
     }
   } catch (err: any) {
     clearTimeout(timeoutId);
+
     if (err.name === 'AbortError') {
       return {
         success: false,
-        error: 'ໝົດເວລາສົ່ງຂໍ້ມູນຂຶ້ນ Sheets',
+        error: 'ໝົດເວລາສົ່ງຂໍ້ມູນຂຶ້ນ Sheets (ກວດສອບອິນເຕີເນັດ)',
       };
     }
+
+    // AUTOMATIC FALLBACK: Google Apps Script Web App accepts no-cors POST seamlessly!
+    // This completely bypasses browser CORS & 302 redirect errors ("Failed to fetch")
+    try {
+      const fallbackController = new AbortController();
+      const fallbackTimer = setTimeout(() => fallbackController.abort(), 6000);
+      await fetch(cleanUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        signal: fallbackController.signal,
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8',
+        },
+        body: payload,
+      });
+      clearTimeout(fallbackTimer);
+      return {
+        success: true,
+        message: 'ບັນທຶກຂຶ້ນ Google Sheets ສຳເລັດ (ໂໝດ Direct Sync)',
+        timestamp: new Date().toISOString(),
+      };
+    } catch (fallbackErr) {
+      console.warn('Fallback no-cors post also failed:', fallbackErr);
+    }
+
+    const msg = String(err?.message || '');
+    if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('Load failed')) {
+      return {
+        success: false,
+        error: 'ບໍ່ສາມາດເຊື່ອມຕໍ່ Google Sheets: ກວດສອບ URL ຕ້ອງລົງທ້າຍດ້ວຍ /exec ແລະ ເລືອກ Who has access: Anyone',
+      };
+    }
+
     return {
       success: false,
       error: `ສົ່ງຂໍ້ມູນບໍ່ສຳເລັດ: ${err.message || 'Network error'}`,

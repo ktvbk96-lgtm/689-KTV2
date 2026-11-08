@@ -657,7 +657,11 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
         return r;
       });
 
-      await onUpdateRooms(updatedRooms);
+      try {
+        await onUpdateRooms(updatedRooms);
+      } catch (err) {
+        console.warn('Realtime clear room note:', err);
+      }
       setSelectedRoomForDetails(null);
       setOpeningRoom(null);
     } finally {
@@ -696,7 +700,11 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
           orders: [],
           updatedAt: nowIso,
         }));
-        await onUpdateRooms(updated);
+        try {
+          await onUpdateRooms(updated);
+        } catch (err) {
+          console.warn('Realtime clear all rooms note:', err);
+        }
       } finally {
         setIsClearingAll(false);
       }

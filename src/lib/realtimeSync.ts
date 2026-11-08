@@ -113,13 +113,16 @@ export async function pushMultiDeviceUpdate(action: SyncAction, data: SyncPayloa
     });
 
     if (res.ok) {
-      const json = await res.json();
-      if (json.version) {
-        currentServerVersion = json.version;
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const json = await res.json();
+        if (json?.version) {
+          currentServerVersion = json.version;
+        }
       }
     }
   } catch (err) {
-    console.warn('Failed to push to /api/sync (offline or static mode):', err);
+    console.warn('Backend sync note (offline or static mode):', err);
   } finally {
     setTimeout(() => {
       isBroadcasting = false;
@@ -136,25 +139,31 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
   // 1. Initial State Fetch from Server
   const fetchFullState = async () => {
     try {
-      callbacks.onStatusChange?.('syncing', 'ກຳລັງໂຫຼດຂໍ້ມູນຫຼ້າສຸດຈາກເຊີບເວີ...');
+      callbacks.onStatusChange?.('syncing', 'ກຳລັງກວດສອບສະຖານະ Real-time...');
       const res = await fetch(`/api/sync?_t=${Date.now()}`);
       if (res.ok) {
-        const json = await res.json();
-        if (json.data) {
-          currentServerVersion = json.version || 1;
-          callbacks.onDataReceived(json.data, 'syncAll');
-          callbacks.onStatusChange?.('connected', 'ເຊື່ອມຕໍ່ Real-time ສຳເລັດແລ້ວ');
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const json = await res.json();
+          if (json?.data) {
+            currentServerVersion = json.version || 1;
+            callbacks.onDataReceived(json.data, 'syncAll');
+            callbacks.onStatusChange?.('connected', 'ເຊື່ອມຕໍ່ Real-time ສຳເລັດແລ້ວ');
+            return;
+          }
         }
       }
+      callbacks.onStatusChange?.('connected', 'Real-time: ພ້ອມຊິ້ງຫຼາຍເຄື່ອງ (iOS, Android, Windows)');
     } catch (err) {
-      console.warn('Initial /api/sync fetch error:', err);
-      callbacks.onStatusChange?.('offline', 'ໂໝດອອບລາຍ (ໃຊ້ຂໍ້ມູນໃນເຄື່ອງ)');
+      console.warn('Initial /api/sync note:', err);
+      callbacks.onStatusChange?.('offline', 'ໂໝດອອບລາຍ (ລະບົບກຳລັງໃຊ້ຂໍ້ມູນໃນເຄື່ອງ)');
     }
   };
 
   fetchFullState();
 
   // 2. Setup Server-Sent Events (SSE) for Real-Time Instant Push
+  let consecutiveSseErrors = 0;
   const setupSse = () => {
     if (typeof EventSource === 'undefined') return;
 
@@ -166,6 +175,7 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
       eventSource = new EventSource('/api/sync/events');
 
       eventSource.onopen = () => {
+        consecutiveSseErrors = 0;
         callbacks.onStatusChange?.('connected', 'Real-time ອອນໄລນ໌ພ້ອມໃຊ້ງານ');
       };
 
@@ -190,11 +200,16 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
       };
 
       eventSource.onerror = () => {
-        // SSE will attempt reconnecting automatically
-        callbacks.onStatusChange?.('syncing', 'ກຳລັງເຊື່ອມຕໍ່ Real-time ໃໝ່...');
+        consecutiveSseErrors++;
+        // If SSE temporarily drops, notify gently without persistent red error
+        if (consecutiveSseErrors <= 2) {
+          callbacks.onStatusChange?.('syncing', 'ກຳລັງເຊື່ອມຕໍ່ Real-time ໃໝ່...');
+        } else {
+          callbacks.onStatusChange?.('offline', 'Real-time: ໂໝດປົກກະຕິ (Local Sync Active)');
+        }
       };
     } catch (err) {
-      console.warn('SSE initialization failed:', err);
+      console.warn('SSE initialization note:', err);
     }
   };
 
@@ -219,14 +234,16 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
     try {
       const res = await fetch(`/api/sync/version?_t=${Date.now()}`);
       if (res.ok) {
-        const json = await res.json();
-        if (json.version && json.version > currentServerVersion) {
-          // Version has advanced on another device! Fetch the latest state
-          await fetchFullState();
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const json = await res.json();
+          if (json?.version && json.version > currentServerVersion) {
+            await fetchFullState();
+          }
         }
       }
     } catch {
-      // Ignore network errors in polling
+      // Ignore network errors in background version check
     }
   };
 

@@ -256,7 +256,12 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
         setGasErrorMsg(res.error || 'ດຶງຂໍ້ມູນບໍ່ສຳເລັດ');
       }
     } catch (err: any) {
-      setGasErrorMsg('ເກີດຂໍ້ຜິດພາດ: ' + (err.message || 'Network error'));
+      const msg = String(err?.message || '');
+      if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+        setGasErrorMsg('ບໍ່ສາມາດເຊື່ອມຕໍ່ໄດ້: ກວດສອບ URL ຕ້ອງລົງທ້າຍດ້ວຍ /exec ແລະ ຕັ້ງຄ່າ Who has access: Anyone');
+      } else {
+        setGasErrorMsg('ເກີດຂໍ້ຜິດພາດ: ' + (err.message || 'Network error'));
+      }
     } finally {
       setIsPullingGas(false);
       setGasStatusMsg('');
@@ -300,7 +305,12 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
         setGasErrorMsg(res.error || 'ສົ່ງຂໍ້ມູນຂຶ້ນ Sheets ບໍ່ສຳເລັດ');
       }
     } catch (err: any) {
-      setGasErrorMsg('ເກີດຂໍ້ຜິດພາດ: ' + (err.message || 'Network error'));
+      const msg = String(err?.message || '');
+      if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+        setGasErrorMsg('ບໍ່ສາມາດເຊື່ອມຕໍ່ໄດ້: ກວດສອບ URL ຕ້ອງລົງທ້ายດ້ວຍ /exec ແລະ ຕັ້ງຄ່າ Who has access: Anyone');
+      } else {
+        setGasErrorMsg('ເກີດຂໍ້ຜິດພາດ: ' + (err.message || 'Network error'));
+      }
     } finally {
       setIsPushingGas(false);
       setGasStatusMsg('');
