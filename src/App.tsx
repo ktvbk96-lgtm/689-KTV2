@@ -73,7 +73,7 @@ export function mergeRoomsSafely(
 ): Room[] {
   const isWithinGracePeriod = Date.now() - lastLocalActionTime < 10000; // 10s grace period
 
-  return localRooms.map((local) => {
+  const merged = localRooms.map((local) => {
     const remote = remoteRooms.find((r) => r.id === local.id || (r.name && r.name === local.name));
     if (!remote) return local;
 
@@ -93,8 +93,39 @@ export function mergeRoomsSafely(
       }
     }
 
-    return remote;
+    // Explicitly guarantee that if remote cleared the room to available, all session fields are completely wiped
+    if (remote.status === 'available') {
+      return {
+        ...local,
+        ...remote,
+        status: 'available' as const,
+        pricingType: 'fixed_hourly' as const,
+        openedAt: undefined,
+        targetEndTime: undefined,
+        bookedHours: 0,
+        openedByStaffId: undefined,
+        openedByStaffName: undefined,
+        packageId: undefined,
+        packageName: undefined,
+        isPaid: undefined,
+        orders: [],
+      };
+    }
+
+    return {
+      ...local,
+      ...remote,
+    };
   });
+
+  // Append any rooms that exist in remote but not local
+  for (const r of remoteRooms) {
+    if (!merged.some((m) => m.id === r.id || (r.name && m.name === r.name))) {
+      merged.push(r);
+    }
+  }
+
+  return merged;
 }
 
 export default function App() {
