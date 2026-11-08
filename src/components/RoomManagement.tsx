@@ -361,6 +361,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
           openedByStaffName: staff?.name,
           isPaid: isOpenRoomPaid,
           orders: [],
+          updatedAt: new Date().toISOString(),
         };
       }
       return r;
@@ -376,6 +377,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
     const updatedRoom: Room = {
       ...room,
       isPaid: newPaid,
+      updatedAt: new Date().toISOString(),
     };
     const updatedRooms = rooms.map((r) => (r.id === room.id ? updatedRoom : r));
     onUpdateRooms(updatedRooms);
@@ -595,6 +597,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
       : undefined;
 
     // Immediately reset room state back to available with 00:00 time and 0 hours
+    const nowIso = new Date().toISOString();
     const clearedRoom: Room = {
       ...room,
       status: 'available',
@@ -608,6 +611,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
       packageName: undefined,
       isPaid: undefined,
       orders: [],
+      updatedAt: nowIso,
     };
     const updated = rooms.map((r) =>
       r.id === room.id || (room.name && r.name === room.name) ? clearedRoom : r
@@ -626,6 +630,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
     );
     if (!confirmed) return;
 
+    const nowIso = new Date().toISOString();
     const updatedRooms = rooms.map((r) => {
       if (r.id === room.id || (room.name && r.name === room.name)) {
         return {
@@ -641,6 +646,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
           packageName: undefined,
           isPaid: undefined,
           orders: [],
+          updatedAt: nowIso,
         };
       }
       return r;
@@ -664,6 +670,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
       return;
     }
     if (window.confirm('ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການເຄຼຍທຸກຫ້ອງໃຫ້ເປັນຫ້ອງວ່າງຄືເກົ່າ?\n* ທຸກຫ້ອງຈະກັບມາເປັນສະຖານະພ້ອມໃຊ້ງານ ແລະ ເວລາ 00:00!')) {
+      const nowIso = new Date().toISOString();
       const updated = rooms.map((r) => ({
         ...r,
         status: 'available' as const,
@@ -677,6 +684,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
         packageName: undefined,
         isPaid: undefined,
         orders: [],
+        updatedAt: nowIso,
       }));
       onUpdateRooms(updated);
     }

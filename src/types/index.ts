@@ -87,6 +87,7 @@ export interface Room {
   openedByStaffName?: string;
   isPaid?: boolean; // ລູກຄ້າຈ່າຍແລ້ວ / ຊຳລະຄ່າຫ້ອງແລ້ວ (ຖ້າຕິກແລ້ວບໍ່ຕ້ອງຄິດໄລ່ເງິນ ຄິດໄລ່ແຕ່ເວລາ)
   orders: RoomOrder[];
+  updatedAt?: string; // ISO string for mutation versioning & race condition protection
 }
 
 export interface DebtPaymentEntry {

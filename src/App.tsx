@@ -61,6 +61,42 @@ import { GoogleSheetsSyncModal } from './components/GoogleSheetsSyncModal';
 import { BluetoothModal } from './components/BluetoothModal';
 import { getThemeConfig } from './lib/theme';
 
+/**
+ * Smart Conflict Resolution for Rooms:
+ * Prevents remote stale listeners, SSE, or in-flight background requests from overwriting
+ * locally cleared rooms back to 'in_use' (fixes race conditions during clearing rooms).
+ */
+export function mergeRoomsSafely(
+  localRooms: Room[],
+  remoteRooms: Room[],
+  lastLocalActionTime: number
+): Room[] {
+  const isWithinGracePeriod = Date.now() - lastLocalActionTime < 10000; // 10s grace period
+
+  return localRooms.map((local) => {
+    const remote = remoteRooms.find((r) => r.id === local.id || (r.name && r.name === local.name));
+    if (!remote) return local;
+
+    // 1. If local room was recently cleared (status === 'available') within grace period,
+    // and remote still says 'in_use', reject the stale remote state!
+    if (isWithinGracePeriod && local.status === 'available' && remote.status !== 'available') {
+      return local;
+    }
+
+    // 2. Timestamp comparison if both have updatedAt
+    const localTime = local.updatedAt ? new Date(local.updatedAt).getTime() : 0;
+    const remoteTime = remote.updatedAt ? new Date(remote.updatedAt).getTime() : 0;
+
+    if (remoteTime > 0 && localTime > 0) {
+      if (remoteTime < localTime && isWithinGracePeriod) {
+        return local;
+      }
+    }
+
+    return remote;
+  });
+}
+
 export default function App() {
   // Authentication & Role
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
@@ -88,7 +124,6 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState<string>('');
 
   // Google Apps Script Real-time Sync & Multi-Device States
-  // Google Apps Script Real-time Sync & Multi-Device States
   const [syncStatus, setSyncStatus] = useState<'idle' | 'loading' | 'success' | 'error' | 'syncing'>('idle');
   const [syncMessage, setSyncMessage] = useState<string>('');
 
@@ -100,6 +135,7 @@ export default function App() {
   const debtsRef = useRef<DebtRecord[]>(debts);
   const billsRef = useRef<BillRecord[]>(bills);
   const isPushingRef = useRef<boolean>(false);
+  const lastRoomLocalActionTimeRef = useRef<number>(0);
 
   useEffect(() => {
     productsRef.current = products;
@@ -133,9 +169,11 @@ export default function App() {
 
         // 1. Rooms
         if (Array.isArray(remoteData.rooms)) {
-          if (JSON.stringify(roomsRef.current) !== JSON.stringify(remoteData.rooms)) {
-            setRooms(remoteData.rooms);
-            saveStoredRooms(remoteData.rooms);
+          const mergedRooms = mergeRoomsSafely(roomsRef.current, remoteData.rooms, lastRoomLocalActionTimeRef.current);
+          if (JSON.stringify(roomsRef.current) !== JSON.stringify(mergedRooms)) {
+            setRooms(mergedRooms);
+            roomsRef.current = mergedRooms;
+            saveStoredRooms(mergedRooms);
             changed = true;
           }
         }
@@ -231,9 +269,11 @@ export default function App() {
       // 1. Rooms
       const rRooms = remoteData.rooms ?? remoteData.saveRooms?.rooms;
       if (Array.isArray(rRooms)) {
-        if (JSON.stringify(roomsRef.current) !== JSON.stringify(rRooms)) {
-          setRooms(rRooms);
-          saveStoredRooms(rRooms);
+        const mergedRooms = mergeRoomsSafely(roomsRef.current, rRooms, lastRoomLocalActionTimeRef.current);
+        if (JSON.stringify(roomsRef.current) !== JSON.stringify(mergedRooms)) {
+          setRooms(mergedRooms);
+          roomsRef.current = mergedRooms;
+          saveStoredRooms(mergedRooms);
           changed = true;
         }
       }
@@ -426,6 +466,7 @@ export default function App() {
       setSyncMessage(isManual ? 'ກຳລັງດຶງຂໍ້ມູນລ່າສຸດ...' : 'ກວດສອບ ແລະ ດຶງຂໍ້ມູນລ່າສຸດຈາກ Google Sheets...');
     }
 
+    const fetchStartTime = Date.now();
     try {
       // 7.5s AbortController timeout prevents freezing or infinite spinning
       const res = await fetchLatestDataFromGas(settings.gasWebAppUrl, 7500);
@@ -438,19 +479,24 @@ export default function App() {
           const newStr = JSON.stringify(res.data.products);
           if (currentStr !== newStr) {
             setProducts(res.data.products);
+            productsRef.current = res.data.products;
             saveStoredProducts(res.data.products);
             hasAnyUpdates = true;
           }
         }
 
-        // 2. Sync Rooms if remote changed
+        // 2. Sync Rooms if remote changed (Safely guarded against in-flight race conditions)
         if (res.data.rooms && Array.isArray(res.data.rooms)) {
-          const currentStr = JSON.stringify(roomsRef.current);
-          const newStr = JSON.stringify(res.data.rooms);
-          if (currentStr !== newStr) {
-            setRooms(res.data.rooms);
-            saveStoredRooms(res.data.rooms);
-            hasAnyUpdates = true;
+          if (fetchStartTime >= lastRoomLocalActionTimeRef.current) {
+            const mergedRooms = mergeRoomsSafely(roomsRef.current, res.data.rooms, lastRoomLocalActionTimeRef.current);
+            const currentStr = JSON.stringify(roomsRef.current);
+            const newStr = JSON.stringify(mergedRooms);
+            if (currentStr !== newStr) {
+              setRooms(mergedRooms);
+              roomsRef.current = mergedRooms;
+              saveStoredRooms(mergedRooms);
+              hasAnyUpdates = true;
+            }
           }
         }
 
@@ -771,6 +817,8 @@ export default function App() {
       return r;
     });
 
+    lastRoomLocalActionTimeRef.current = Date.now();
+    roomsRef.current = updatedRooms;
     setRooms(updatedRooms);
     saveStoredRooms(updatedRooms);
     triggerGasSync('saveRooms', { rooms: updatedRooms, products: updatedProducts });
@@ -895,6 +943,8 @@ export default function App() {
       return r;
     });
 
+    lastRoomLocalActionTimeRef.current = Date.now();
+    roomsRef.current = updatedRooms;
     setRooms(updatedRooms);
     saveStoredRooms(updatedRooms);
     triggerGasSync('saveRooms', { rooms: updatedRooms, products: latestProducts });
@@ -1142,6 +1192,8 @@ export default function App() {
             currentStaff={currentStaff}
             currentRole={currentRole}
             onUpdateRooms={(updated) => {
+              lastRoomLocalActionTimeRef.current = Date.now();
+              roomsRef.current = updated;
               setRooms(updated);
               saveStoredRooms(updated);
               triggerGasSync('saveRooms', { rooms: updated });
