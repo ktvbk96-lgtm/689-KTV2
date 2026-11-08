@@ -35,6 +35,10 @@ export function listenToFirebaseStore(onUpdate: (data: any) => void): () => void
 
 function sanitizeForFirestore(val: any): any {
   if (val === undefined) return null;
+  // Prevent Firestore 1MB single document quota rejection by stripping large data URI image strings
+  if (typeof val === 'string' && val.length > 500 && val.startsWith('data:image')) {
+    return '';
+  }
   if (val === null || typeof val !== 'object') return val;
   if (Array.isArray(val)) return val.map(sanitizeForFirestore);
   const out: Record<string, any> = {};
@@ -57,6 +61,7 @@ export async function pushToFirebaseStore(payload: any): Promise<boolean> {
       },
       { merge: true }
     );
+    console.log('Firebase store updated successfully');
     return true;
   } catch (err: any) {
     console.warn('Firestore push note:', err.message);

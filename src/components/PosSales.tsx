@@ -47,8 +47,8 @@ interface PosSalesProps {
     discount: number,
     paymentMethod: 'cash' | 'transfer',
     cashReceived?: number
-  ) => void;
-  onTransferToRoom: (roomId: string, items: CartItem[]) => void;
+  ) => void | Promise<any>;
+  onTransferToRoom: (roomId: string, items: CartItem[]) => void | Promise<any>;
 }
 
 export const PosSales: React.FC<PosSalesProps> = ({
@@ -373,7 +373,7 @@ export const PosSales: React.FC<PosSalesProps> = ({
   const subtotal = cart.reduce((acc, item) => acc + getItemUnitPrice(item) * item.quantity, 0);
   const total = Math.max(0, subtotal - discountAmount);
 
-  const handleCompleteSale = () => {
+  const handleCompleteSale = async () => {
     if (cart.length === 0) {
       alert('ກະຕ່າວ່າງເປົ່າ! ກະລຸນາເລືອກສິນຄ້າກ່ອນ');
       return;
@@ -399,7 +399,7 @@ export const PosSales: React.FC<PosSalesProps> = ({
       return;
     }
 
-    onCheckoutPosSale(
+    await onCheckoutPosSale(
       cart,
       discountAmount,
       'cash'
@@ -407,9 +407,9 @@ export const PosSales: React.FC<PosSalesProps> = ({
     clearCart();
   };
 
-  const handleTransferConfirm = (roomId: string) => {
+  const handleTransferConfirm = async (roomId: string) => {
     if (cart.length === 0) return;
-    onTransferToRoom(roomId, cart);
+    await onTransferToRoom(roomId, cart);
     clearCart();
     setShowRoomSelectModal(false);
   };

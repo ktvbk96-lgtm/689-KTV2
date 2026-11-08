@@ -167,6 +167,7 @@ export default function App() {
   const billsRef = useRef<BillRecord[]>(bills);
   const isPushingRef = useRef<boolean>(false);
   const lastRoomLocalActionTimeRef = useRef<number>(0);
+  const lastLocalActionTimeRef = useRef<number>(Date.now());
 
   useEffect(() => {
     productsRef.current = products;
@@ -196,6 +197,12 @@ export default function App() {
   useEffect(() => {
     const cleanup = initMultiDeviceSync({
       onDataReceived: (remoteData) => {
+        // Prevent stale remote snapshots from overwriting fresh local updates
+        const remoteTime = remoteData.lastUpdated ? new Date(remoteData.lastUpdated).getTime() : 0;
+        if (remoteTime > 0 && remoteTime < lastLocalActionTimeRef.current) {
+          return;
+        }
+
         let changed = false;
 
         // 1. Rooms
@@ -209,11 +216,19 @@ export default function App() {
           }
         }
 
-        // 2. Products
+        // 2. Products (Preserve local image URLs if remote stripped them to save network)
         if (Array.isArray(remoteData.products)) {
-          if (JSON.stringify(productsRef.current) !== JSON.stringify(remoteData.products)) {
-            setProducts(remoteData.products);
-            saveStoredProducts(remoteData.products);
+          const mergedProducts = remoteData.products.map((rp: Product) => {
+            const local = productsRef.current.find((lp) => lp.id === rp.id);
+            return {
+              ...rp,
+              imageUrl: rp.imageUrl || local?.imageUrl || '',
+            };
+          });
+          if (JSON.stringify(productsRef.current) !== JSON.stringify(mergedProducts)) {
+            setProducts(mergedProducts);
+            productsRef.current = mergedProducts;
+            saveStoredProducts(mergedProducts);
             changed = true;
           }
         }
@@ -246,11 +261,21 @@ export default function App() {
           }
         }
 
-        // 6. Bills
+        // 6. Bills (Union merge so no recent local bills are dropped)
         if (Array.isArray(remoteData.bills)) {
-          if (JSON.stringify(billsRef.current) !== JSON.stringify(remoteData.bills)) {
-            setBills(remoteData.bills);
-            updateStoredBills(remoteData.bills);
+          const localBills = billsRef.current;
+          const map = new Map<string, BillRecord>();
+          remoteData.bills.forEach((b: BillRecord) => map.set(b.id, b));
+          localBills.forEach((b: BillRecord) => {
+            if (!map.has(b.id)) map.set(b.id, b);
+          });
+          const mergedBills = Array.from(map.values()).sort(
+            (a, b) => new Date(b.endTime || 0).getTime() - new Date(a.endTime || 0).getTime()
+          );
+          if (JSON.stringify(billsRef.current) !== JSON.stringify(mergedBills)) {
+            setBills(mergedBills);
+            billsRef.current = mergedBills;
+            updateStoredBills(mergedBills);
             changed = true;
           }
         } else if (remoteData.bill) {
@@ -258,6 +283,7 @@ export default function App() {
           if (!billsRef.current.some((b) => b.id === singleBill.id)) {
             const updated = [singleBill, ...billsRef.current];
             setBills(updated);
+            billsRef.current = updated;
             updateStoredBills(updated);
             changed = true;
           }
@@ -302,6 +328,12 @@ export default function App() {
         return;
       }
 
+      // Prevent stale Firestore document from overwriting fresh local updates
+      const remoteTime = remoteData.lastUpdated ? new Date(remoteData.lastUpdated).getTime() : 0;
+      if (remoteTime > 0 && remoteTime < lastLocalActionTimeRef.current) {
+        return;
+      }
+
       let changed = false;
 
       // 1. Rooms
@@ -316,12 +348,20 @@ export default function App() {
         }
       }
 
-      // 2. Products
+      // 2. Products (Safely merge to keep rich local image URLs if remote stripped them)
       const rProducts = remoteData.products ?? remoteData.saveProducts?.products;
       if (Array.isArray(rProducts)) {
-        if (JSON.stringify(productsRef.current) !== JSON.stringify(rProducts)) {
-          setProducts(rProducts);
-          saveStoredProducts(rProducts);
+        const mergedProducts = rProducts.map((rp: Product) => {
+          const local = productsRef.current.find((lp) => lp.id === rp.id);
+          return {
+            ...rp,
+            imageUrl: rp.imageUrl || local?.imageUrl || '',
+          };
+        });
+        if (JSON.stringify(productsRef.current) !== JSON.stringify(mergedProducts)) {
+          setProducts(mergedProducts);
+          productsRef.current = mergedProducts;
+          saveStoredProducts(mergedProducts);
           changed = true;
         }
       }
@@ -331,6 +371,7 @@ export default function App() {
       if (Array.isArray(rPackages)) {
         if (JSON.stringify(packagesRef.current) !== JSON.stringify(rPackages)) {
           setPackages(rPackages);
+          packagesRef.current = rPackages;
           saveStoredPackages(rPackages);
           changed = true;
         }
@@ -341,6 +382,7 @@ export default function App() {
       if (Array.isArray(rStaff)) {
         if (JSON.stringify(staffRef.current) !== JSON.stringify(rStaff)) {
           setStaffList(rStaff);
+          staffRef.current = rStaff;
           saveStoredStaff(rStaff);
           changed = true;
         }
@@ -351,17 +393,28 @@ export default function App() {
       if (Array.isArray(rDebts)) {
         if (JSON.stringify(debtsRef.current) !== JSON.stringify(rDebts)) {
           setDebts(rDebts);
+          debtsRef.current = rDebts;
           saveStoredDebts(rDebts);
           changed = true;
         }
       }
 
-      // 6. Bills
+      // 6. Bills (Union merge so no recent local bills are dropped)
       const rBills = remoteData.bills ?? remoteData.saveBills?.bills;
       if (Array.isArray(rBills)) {
-        if (JSON.stringify(billsRef.current) !== JSON.stringify(rBills)) {
-          setBills(rBills);
-          updateStoredBills(rBills);
+        const localBills = billsRef.current;
+        const map = new Map<string, BillRecord>();
+        rBills.forEach((b: BillRecord) => map.set(b.id, b));
+        localBills.forEach((b: BillRecord) => {
+          if (!map.has(b.id)) map.set(b.id, b);
+        });
+        const mergedBills = Array.from(map.values()).sort(
+          (a, b) => new Date(b.endTime || 0).getTime() - new Date(a.endTime || 0).getTime()
+        );
+        if (JSON.stringify(billsRef.current) !== JSON.stringify(mergedBills)) {
+          setBills(mergedBills);
+          billsRef.current = mergedBills;
+          updateStoredBills(mergedBills);
           changed = true;
         }
       } else if (remoteData.bill ?? remoteData.saveBill?.bill) {
@@ -369,6 +422,7 @@ export default function App() {
         if (!billsRef.current.some((b) => b.id === singleBill.id)) {
           const updated = [singleBill, ...billsRef.current];
           setBills(updated);
+          billsRef.current = updated;
           updateStoredBills(updated);
           changed = true;
         }
@@ -440,6 +494,9 @@ export default function App() {
     const currentPackages = payload.packages !== undefined ? payload.packages : getStoredPackages();
     const currentStaff = payload.staff !== undefined ? payload.staff : getStoredStaff();
 
+    const timestamp = new Date().toISOString();
+    lastLocalActionTimeRef.current = Date.now();
+
     const enrichedPayload = {
       ...payload,
       bills: currentBills,
@@ -448,6 +505,7 @@ export default function App() {
       rooms: currentRooms,
       packages: currentPackages,
       staff: currentStaff,
+      lastUpdated: timestamp,
     };
 
     // 1. Instantly push to Backend Server & SSE to notify all iOS, Android & Windows devices
@@ -463,11 +521,14 @@ export default function App() {
       const firestoreData: any = {
         lastSenderId: deviceId,
         lastAction: action,
-        lastUpdated: new Date().toISOString(),
+        lastUpdated: timestamp,
         bills: currentBills,
         debts: currentDebts,
-        ...enrichedPayload,
-        [action]: enrichedPayload,
+        products: currentProducts,
+        rooms: currentRooms,
+        packages: currentPackages,
+        staff: currentStaff,
+        settings: settings,
       };
       await pushToFirebaseStore(firestoreData);
     } catch (e) {
@@ -732,7 +793,7 @@ export default function App() {
   };
 
   // Checkout POS Sale directly (Supports both single bottle & pack x24)
-  const handleCheckoutPosSale = (
+  const handleCheckoutPosSale = async (
     cart: CartItem[],
     discount: number,
     paymentMethod: 'cash' | 'transfer',
@@ -814,14 +875,16 @@ export default function App() {
     // Immediately save to Sales Summary (bills storage & state & real-time sync)
     saveStoredBill(newBill);
     const updatedBills = getStoredBills();
+    billsRef.current = updatedBills;
     setBills(updatedBills);
-    triggerGasSync('saveBill', { bill: newBill, bills: updatedBills, products: updatedProducts });
+    lastLocalActionTimeRef.current = Date.now();
+    await triggerGasSync('saveBill', { bill: newBill, bills: updatedBills, products: updatedProducts });
 
     setActiveBillingRecord(newBill);
   };
 
   // Transfer Cart items to a KTV Room (Multi-unit aware)
-  const handleTransferToRoom = (roomId: string, cart: CartItem[]) => {
+  const handleTransferToRoom = async (roomId: string, cart: CartItem[]) => {
     const targetRoom = rooms.find((r) => r.id === roomId);
     if (!targetRoom) return;
 
@@ -873,15 +936,16 @@ export default function App() {
     });
 
     lastRoomLocalActionTimeRef.current = Date.now();
+    lastLocalActionTimeRef.current = Date.now();
     roomsRef.current = updatedRooms;
     setRooms(updatedRooms);
     saveStoredRooms(updatedRooms);
-    triggerGasSync('saveRooms', { rooms: updatedRooms, products: updatedProducts });
+    await triggerGasSync('saveRooms', { rooms: updatedRooms, products: updatedProducts });
     showToast(`ໂອນ ${cart.length} ລາຍການ ເຂົ້າ ${targetRoom.name} ແລະ ຫັກສະຕັອກສຳເລັດແລ້ວ!`);
   };
 
   // Checkout KTV Room
-  const handleCheckoutRoom = (
+  const handleCheckoutRoom = async (
     room: Room,
     roomCharge: number,
     durationMinutes: number,
@@ -993,63 +1057,70 @@ export default function App() {
           packageName: undefined,
           isPaid: undefined,
           orders: [],
+          updatedAt: new Date().toISOString(),
         };
       }
       return r;
     });
 
     lastRoomLocalActionTimeRef.current = Date.now();
+    lastLocalActionTimeRef.current = Date.now();
     roomsRef.current = updatedRooms;
     setRooms(updatedRooms);
     saveStoredRooms(updatedRooms);
-    triggerGasSync('saveRooms', { rooms: updatedRooms, products: latestProducts });
 
     // Immediately save bill to Sales Summary (bills storage & state & real-time sync)
     saveStoredBill(newBill);
     const updatedBills = getStoredBills();
+    billsRef.current = updatedBills;
     setBills(updatedBills);
-    triggerGasSync('saveBill', { bill: newBill, bills: updatedBills, products: latestProducts, rooms: updatedRooms });
+
+    await triggerGasSync('saveBill', { bill: newBill, bills: updatedBills, products: latestProducts, rooms: updatedRooms });
 
     setActiveBillingRecord(newBill);
   };
 
   // Finalize payment from billing modal
-  const handleConfirmBillingPayment = (completedBill: BillRecord) => {
+  const handleConfirmBillingPayment = async (completedBill: BillRecord) => {
     saveStoredBill(completedBill);
     const updatedBills = getStoredBills();
+    billsRef.current = updatedBills;
     setBills(updatedBills);
-    triggerGasSync('saveBill', { bill: completedBill, bills: updatedBills });
+    lastLocalActionTimeRef.current = Date.now();
 
     // CRITICAL: Guarantee room is completely cleared back to available when billing is confirmed!
+    let updatedRoomsToSync = roomsRef.current;
     if (completedBill.roomName || completedBill.roomId) {
-      setRooms((prevRooms) => {
-        const updated = prevRooms.map((r) => {
-          if (
-            (completedBill.roomId && r.id === completedBill.roomId) ||
-            (completedBill.roomName && r.name === completedBill.roomName)
-          ) {
-            return {
-              ...r,
-              status: 'available' as const,
-              pricingType: 'fixed_hourly' as const,
-              openedAt: undefined,
-              targetEndTime: undefined,
-              bookedHours: 0,
-              openedByStaffId: undefined,
-              openedByStaffName: undefined,
-              packageId: undefined,
-              packageName: undefined,
-              isPaid: undefined,
-              orders: [],
-            };
-          }
-          return r;
-        });
-        saveStoredRooms(updated);
-        triggerGasSync('saveRooms', { rooms: updated });
-        return updated;
+      updatedRoomsToSync = roomsRef.current.map((r) => {
+        if (
+          (completedBill.roomId && r.id === completedBill.roomId) ||
+          (completedBill.roomName && r.name === completedBill.roomName)
+        ) {
+          return {
+            ...r,
+            status: 'available' as const,
+            pricingType: 'fixed_hourly' as const,
+            openedAt: undefined,
+            targetEndTime: undefined,
+            bookedHours: 0,
+            openedByStaffId: undefined,
+            openedByStaffName: undefined,
+            packageId: undefined,
+            packageName: undefined,
+            isPaid: undefined,
+            orders: [],
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        return r;
       });
+      lastRoomLocalActionTimeRef.current = Date.now();
+      roomsRef.current = updatedRoomsToSync;
+      setRooms(updatedRoomsToSync);
+      saveStoredRooms(updatedRoomsToSync);
     }
+
+    await triggerGasSync('saveBill', { bill: completedBill, bills: updatedBills, rooms: updatedRoomsToSync });
 
     // If checked out as debt, auto-create Debt Record
     if (completedBill.payment?.method === 'debt') {
@@ -1262,10 +1333,12 @@ export default function App() {
             products={products}
             currentRole={currentRole}
             settings={settings}
-            onSaveProducts={(updated) => {
+            onSaveProducts={async (updated) => {
               setProducts(updated);
+              productsRef.current = updated;
               saveStoredProducts(updated);
-              triggerGasSync('saveProducts', { products: updated });
+              lastLocalActionTimeRef.current = Date.now();
+              await triggerGasSync('saveProducts', { products: updated });
               showToast('✅ ບັນທຶກ ແລະ ອັບເດດສະຕັອກສິນຄ້າສຳເລັດແລ້ວ!');
             }}
           />
@@ -1279,10 +1352,12 @@ export default function App() {
             settings={settings}
             currentRole={currentRole}
             currentStaff={currentStaff}
-            onSaveDebts={(updated) => {
+            onSaveDebts={async (updated) => {
               setDebts(updated);
+              debtsRef.current = updated;
               saveStoredDebts(updated);
-              triggerGasSync('saveDebts', { debts: updated });
+              lastLocalActionTimeRef.current = Date.now();
+              await triggerGasSync('saveDebts', { debts: updated });
               showToast('ອັບເດດຂໍ້ມູນຍອດຄ້າງຊຳລະສຳເລັດແລ້ວ!');
             }}
             onOpenBluetoothModal={() => setShowBluetoothModal(true)}
@@ -1297,25 +1372,31 @@ export default function App() {
             currentRole={currentRole}
             onSyncAllToSheets={handleBulkSyncAllToSheets}
             isSyncingSheets={isSyncingAllSheets}
-            onDeleteBill={(billId) => {
+            onDeleteBill={async (billId) => {
               const updated = billsRef.current.filter((b) => b.id !== billId);
               setBills(updated);
+              billsRef.current = updated;
               updateStoredBills(updated);
-              triggerGasSync('saveBills', { bills: updated });
+              lastLocalActionTimeRef.current = Date.now();
+              await triggerGasSync('saveBills', { bills: updated });
               showToast('ລຶບໃບບິນສຳເລັດແລ້ວ!');
             }}
-            onDeleteBills={(billIds) => {
+            onDeleteBills={async (billIds) => {
               const idSet = new Set(billIds);
               const updated = billsRef.current.filter((b) => !idSet.has(b.id));
               setBills(updated);
+              billsRef.current = updated;
               updateStoredBills(updated);
-              triggerGasSync('saveBills', { bills: updated });
+              lastLocalActionTimeRef.current = Date.now();
+              await triggerGasSync('saveBills', { bills: updated });
               showToast(`ລຶບຂໍ້ມູນ ${billIds.length} ໃບບິນສຳເລັດແລ້ວ!`);
             }}
-            onClearAllBills={() => {
+            onClearAllBills={async () => {
               setBills([]);
+              billsRef.current = [];
               updateStoredBills([]);
-              triggerGasSync('saveBills', { bills: [] });
+              lastLocalActionTimeRef.current = Date.now();
+              await triggerGasSync('saveBills', { bills: [] });
               showToast('ລ້າງປະຫວັດບິນທັງໝົດສຳເລັດແລ້ວ!');
             }}
             onReprintBill={(bill) => setActiveBillingRecord(bill)}
@@ -1333,42 +1414,56 @@ export default function App() {
             products={products}
             bills={bills}
             debts={debts}
-            onSaveSettings={(newSettings) => {
+            onSaveSettings={async (newSettings) => {
               setSettings(newSettings);
               saveStoredSettings(newSettings);
-              triggerGasSync('saveSettings', { settings: newSettings });
+              lastLocalActionTimeRef.current = Date.now();
+              await triggerGasSync('saveSettings', { settings: newSettings });
               showToast('ບັນທຶກການຕັ້ງຄ່າຮ້ານສຳເລັດແລ້ວ!');
             }}
-            onSaveStaff={(newStaff) => {
+            onSaveStaff={async (newStaff) => {
               setStaffList(newStaff);
+              staffRef.current = newStaff;
               saveStoredStaff(newStaff);
-              triggerGasSync('saveStaff', { staff: newStaff });
+              lastLocalActionTimeRef.current = Date.now();
+              await triggerGasSync('saveStaff', { staff: newStaff });
             }}
-            onSavePackages={(newPkgs) => {
+            onSavePackages={async (newPkgs) => {
               setPackages(newPkgs);
+              packagesRef.current = newPkgs;
               saveStoredPackages(newPkgs);
-              triggerGasSync('savePackages', { packages: newPkgs });
+              lastLocalActionTimeRef.current = Date.now();
+              await triggerGasSync('savePackages', { packages: newPkgs });
             }}
-            onSaveRooms={(newRooms) => {
+            onSaveRooms={async (newRooms) => {
+              lastRoomLocalActionTimeRef.current = Date.now();
+              lastLocalActionTimeRef.current = Date.now();
               setRooms(newRooms);
+              roomsRef.current = newRooms;
               saveStoredRooms(newRooms);
-              triggerGasSync('saveRooms', { rooms: newRooms });
+              await triggerGasSync('saveRooms', { rooms: newRooms });
               showToast('ບັນທຶກຂໍ້ມູນຫ້ອງ KTV ສຳເລັດແລ້ວ!');
             }}
-            onSaveProducts={(newProducts) => {
+            onSaveProducts={async (newProducts) => {
               setProducts(newProducts);
+              productsRef.current = newProducts;
               saveStoredProducts(newProducts);
-              triggerGasSync('saveProducts', { products: newProducts });
+              lastLocalActionTimeRef.current = Date.now();
+              await triggerGasSync('saveProducts', { products: newProducts });
             }}
-            onSaveBills={(newBills) => {
+            onSaveBills={async (newBills) => {
               setBills(newBills);
+              billsRef.current = newBills;
               updateStoredBills(newBills);
-              triggerGasSync('saveBills', { bills: newBills });
+              lastLocalActionTimeRef.current = Date.now();
+              await triggerGasSync('saveBills', { bills: newBills });
             }}
-            onSaveDebts={(newDebts) => {
+            onSaveDebts={async (newDebts) => {
               setDebts(newDebts);
+              debtsRef.current = newDebts;
               saveStoredDebts(newDebts);
-              triggerGasSync('saveDebts', { debts: newDebts });
+              lastLocalActionTimeRef.current = Date.now();
+              await triggerGasSync('saveDebts', { debts: newDebts });
             }}
             onMasterReset={() => {
               setProducts(INITIAL_PRODUCTS);

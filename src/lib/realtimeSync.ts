@@ -18,6 +18,8 @@ export interface SyncPayload {
   debts?: DebtRecord[];
   bills?: BillRecord[];
   bill?: BillRecord;
+  lastUpdated?: string;
+  lastSenderId?: string;
 }
 
 export type SyncAction =
