@@ -23,6 +23,7 @@ import {
   Trash2,
   Pencil,
   RotateCcw,
+  RefreshCw,
 } from 'lucide-react';
 import { Room, RoomPackage, Product, StaffMember, AppSettings, CartItem, Role, RoomPricingType } from '../types';
 import { formatCurrency } from '../lib/storage';
@@ -36,7 +37,7 @@ interface RoomManagementProps {
   settings: AppSettings;
   currentRole?: Role;
   currentStaff?: StaffMember;
-  onUpdateRooms: (updatedRooms: Room[]) => void;
+  onUpdateRooms: (updatedRooms: Room[]) => Promise<any> | void;
   onCheckoutRoom: (
     room: Room,
     roomCharge: number,
@@ -130,6 +131,8 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
   const [bookedHours, setBookedHours] = useState<number>(4); // Default 4 hours as requested!
   const [openedByStaffId, setOpenedByStaffId] = useState<string>(currentStaff?.id || staffList[0]?.id || '');
   const [isOpenRoomPaid, setIsOpenRoomPaid] = useState<boolean>(false);
+  const [clearingRoomId, setClearingRoomId] = useState<string | null>(null);
+  const [isClearingAll, setIsClearingAll] = useState<boolean>(false);
 
   // Time selection & editing states for opening a room
   const [openStartTimeInput, setOpenStartTimeInput] = useState<string>(() => toHHMM(new Date()));
@@ -624,16 +627,61 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
   };
 
   // Force Clear Room back to available (ເຄຼຍຫ້ອງວ່າງ & ລ້າງຂໍ້ມູນທຸກຢ່າງ)
-  const handleForceClearRoom = (room: Room) => {
+  const handleForceClearRoom = async (room: Room) => {
     const confirmed = window.confirm(
       `ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການເຄຼຍ "${room.name}" ໃຫ້ເປັນຫ້ອງວ່າງຄືເກົ່າ? \n\n* ລາຍການສັ່ງ ແລະ ເວລາທັງໝົດຈະຖືກລ້າງອອກ!`
     );
     if (!confirmed) return;
 
-    const nowIso = new Date().toISOString();
-    const updatedRooms = rooms.map((r) => {
-      if (r.id === room.id || (room.name && r.name === room.name)) {
-        return {
+    setClearingRoomId(room.id);
+    try {
+      const nowIso = new Date().toISOString();
+      const updatedRooms = rooms.map((r) => {
+        if (r.id === room.id || (room.name && r.name === room.name)) {
+          return {
+            ...r,
+            status: 'available' as const,
+            pricingType: 'fixed_hourly' as const,
+            openedAt: undefined,
+            targetEndTime: undefined,
+            bookedHours: 0,
+            openedByStaffId: undefined,
+            openedByStaffName: undefined,
+            packageId: undefined,
+            packageName: undefined,
+            isPaid: undefined,
+            orders: [],
+            updatedAt: nowIso,
+          };
+        }
+        return r;
+      });
+
+      await onUpdateRooms(updatedRooms);
+      setSelectedRoomForDetails(null);
+      setOpeningRoom(null);
+    } finally {
+      setClearingRoomId(null);
+    }
+  };
+
+  // Clear all rooms back to available (00:00)
+  const handleClearAllRooms = async () => {
+    if (currentRole !== 'admin') {
+      alert('ສະເພາະ Admin ເທົ່ານັ້ນທີ່ສາມາດເຄຼຍທຸກຫ້ອງພ້ອມກັນໄດ້!');
+      return;
+    }
+    const pin = window.prompt('⚠️ ຢືນຢັນເຄຼຍທຸກຫ້ອງໃຫ້ເປັນຫ້ອງວ່າງ (Reset to 00:00)\nກະລຸນາປ້ອນລະຫັດ Admin PIN:');
+    if (!pin) return;
+    if (pin !== settings.adminPin && pin !== '8888') {
+      alert('ລະຫັດ Admin PIN ບໍ່ຖືກຕ້ອງ!');
+      return;
+    }
+    if (window.confirm('ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການເຄຼຍທຸກຫ້ອງໃຫ້ເປັນຫ້ອງວ່າງຄືເກົ່າ?\n* ທຸກຫ້ອງຈະກັບມາເປັນສະຖານະພ້ອມໃຊ້ງານ ແລະ ເວລາ 00:00!')) {
+      setIsClearingAll(true);
+      try {
+        const nowIso = new Date().toISOString();
+        const updated = rooms.map((r) => ({
           ...r,
           status: 'available' as const,
           pricingType: 'fixed_hourly' as const,
@@ -647,46 +695,11 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
           isPaid: undefined,
           orders: [],
           updatedAt: nowIso,
-        };
+        }));
+        await onUpdateRooms(updated);
+      } finally {
+        setIsClearingAll(false);
       }
-      return r;
-    });
-
-    onUpdateRooms(updatedRooms);
-    setSelectedRoomForDetails(null);
-    setOpeningRoom(null);
-  };
-
-  // Clear all rooms back to available (00:00)
-  const handleClearAllRooms = () => {
-    if (currentRole !== 'admin') {
-      alert('ສະເພາະ Admin ເທົ່ານັ້ນທີ່ສາມາດເຄຼຍທຸກຫ້ອງພ້ອມກັນໄດ້!');
-      return;
-    }
-    const pin = window.prompt('⚠️ ຢືນຢັນເຄຼຍທຸກຫ້ອງໃຫ້ເປັນຫ້ອງວ່າງ (Reset to 00:00)\nກະລຸນາປ້ອນລະຫັດ Admin PIN:');
-    if (!pin) return;
-    if (pin !== settings.adminPin && pin !== '8888') {
-      alert('ລະຫັດ Admin PIN ບໍ່ຖືກຕ້ອງ!');
-      return;
-    }
-    if (window.confirm('ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການເຄຼຍທຸກຫ້ອງໃຫ້ເປັນຫ້ອງວ່າງຄືເກົ່າ?\n* ທຸກຫ້ອງຈະກັບມາເປັນສະຖານະພ້ອມໃຊ້ງານ ແລະ ເວລາ 00:00!')) {
-      const nowIso = new Date().toISOString();
-      const updated = rooms.map((r) => ({
-        ...r,
-        status: 'available' as const,
-        pricingType: 'fixed_hourly' as const,
-        openedAt: undefined,
-        targetEndTime: undefined,
-        bookedHours: 0,
-        openedByStaffId: undefined,
-        openedByStaffName: undefined,
-        packageId: undefined,
-        packageName: undefined,
-        isPaid: undefined,
-        orders: [],
-        updatedAt: nowIso,
-      }));
-      onUpdateRooms(updated);
     }
   };
 
@@ -736,12 +749,22 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
           {currentRole === 'admin' && inUseCount > 0 && (
             <button
               type="button"
+              disabled={isClearingAll}
               onClick={handleClearAllRooms}
-              className="px-3 py-1.5 rounded-xl bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 hover:text-white flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+              className="px-3 py-1.5 rounded-xl bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 hover:text-white flex items-center gap-1.5 transition-all cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
               title="Admin ເຄຼຍທຸກຫ້ອງທີ່ກຳລັງໃຊ້ງານໃຫ້ເປັນຫ້ອງວ່າງ 00:00"
             >
-              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-              <span>ເຄຼຍທຸກຫ້ອງ (00:00)</span>
+              {isClearingAll ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 text-rose-400 animate-spin" />
+                  <span>ກຳລັງເຄຼຍທຸກຫ້ອງ...</span>
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                  <span>ເຄຼຍທຸກຫ້ອງ (00:00)</span>
+                </>
+              )}
             </button>
           )}
         </div>
@@ -1093,12 +1116,22 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
 
                     <button
                       type="button"
+                      disabled={clearingRoomId === room.id}
                       onClick={() => handleForceClearRoom(room)}
-                      className="w-full py-1.5 px-3 rounded-xl bg-slate-900/80 hover:bg-rose-950/70 border border-slate-800 hover:border-rose-800 text-slate-400 hover:text-rose-300 text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                      className="w-full py-1.5 px-3 rounded-xl bg-slate-900/80 hover:bg-rose-950/70 border border-slate-800 hover:border-rose-800 text-slate-400 hover:text-rose-300 text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                       title="ເຄຼຍຫ້ອງໃຫ້ເປັນຫ້ອງວ່າງ (ລ້າງເວລາເປັນ 00:00 & ລ້າງລາຍການ)"
                     >
-                      <Trash2 className="w-3 h-3 text-rose-400" />
-                      <span>ເຄຼຍຫ້ອງໃຫ້ວ່າງ (Reset to 00:00)</span>
+                      {clearingRoomId === room.id ? (
+                        <>
+                          <RefreshCw className="w-3 h-3 text-rose-400 animate-spin" />
+                          <span>ກຳລັງເຄຼຍຫ້ອງ... (Clearing...)</span>
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 className="w-3 h-3 text-rose-400" />
+                          <span>ເຄຼຍຫ້ອງໃຫ້ວ່າງ (Reset to 00:00)</span>
+                        </>
+                      )}
                     </button>
                   </div>
                 ) : (
@@ -2071,12 +2104,22 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                 </button>
                 <button
                   type="button"
+                  disabled={clearingRoomId === selectedRoomForDetails.id}
                   onClick={() => handleForceClearRoom(selectedRoomForDetails)}
-                  className="py-2.5 px-3 rounded-xl bg-slate-800/80 hover:bg-rose-950 border border-slate-700 hover:border-rose-700 text-slate-400 hover:text-rose-300 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                  className="py-2.5 px-3 rounded-xl bg-slate-800/80 hover:bg-rose-950 border border-slate-700 hover:border-rose-700 text-slate-400 hover:text-rose-300 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   title="ເຄຼຍຫ້ອງໃຫ້ເປັນຫ້ອງວ່າງຄືເກົ່າ (ລ້າງລາຍການທັງໝົດ)"
                 >
-                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                  <span className="hidden sm:inline">ເຄຼຍຫ້ອງວ່າງ</span>
+                  {clearingRoomId === selectedRoomForDetails.id ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 text-rose-400 animate-spin" />
+                      <span className="hidden sm:inline">ກຳລັງເຄຼຍ...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                      <span className="hidden sm:inline">ເຄຼຍຫ້ອງວ່າງ</span>
+                    </>
+                  )}
                 </button>
               </div>
 

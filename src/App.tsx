@@ -390,10 +390,10 @@ export default function App() {
     };
   }, []);
 
-  const triggerGasSync = (
+  const triggerGasSync = async (
     action: SyncAction,
     payload: any
-  ) => {
+  ): Promise<boolean> => {
     // Ensure bills, debts, products, and rooms are always captured in full so all devices and forms get immediate Sales Summary, Debt, Room & Stock sync!
     const currentBills = payload.bills !== undefined ? payload.bills : getStoredBills();
     const currentDebts = payload.debts !== undefined ? payload.debts : getStoredDebts();
@@ -413,7 +413,7 @@ export default function App() {
     };
 
     // 1. Instantly push to Backend Server & SSE to notify all iOS, Android & Windows devices
-    pushMultiDeviceUpdate(action, enrichedPayload);
+    await pushMultiDeviceUpdate(action, enrichedPayload);
 
     // 2. Also push to Firebase Firestore Cloud (ktv-e97cb)
     const deviceId = getDeviceId();
@@ -429,14 +429,15 @@ export default function App() {
     pushToFirebaseStore(firestoreData);
 
     // 3. Also forward to Google Sheets Web App if configured
-    if (!settings.gasWebAppUrl || settings.realtimeSyncEnabled === false) return;
+    if (!settings.gasWebAppUrl || settings.realtimeSyncEnabled === false) return true;
 
-    // Pause polling temporarily during local push
+    // Pause polling temporarily during local push (7s lock to allow Sheets write)
     isPushingRef.current = true;
     setSyncStatus('syncing');
     setSyncMessage('ກຳລັງຊິ້ງຂໍ້ມູນລົງ Google Sheets...');
 
-    sendDataToGas(settings.gasWebAppUrl, action, payload).then((res) => {
+    try {
+      const res = await sendDataToGas(settings.gasWebAppUrl, action, payload);
       if (res.success) {
         setSyncStatus('success');
         setSyncMessage('ຊິ້ງຂໍ້ມູນລົງ Google Sheets ສຳເລັດແລ້ວ');
@@ -445,16 +446,20 @@ export default function App() {
         setSettings(updatedSettings);
         saveStoredSettings(updatedSettings);
         setTimeout(() => setSyncStatus('idle'), 2500);
+        return true;
       } else {
         setSyncStatus('error');
         setSyncMessage(res.error || 'ຊິ້ງຂໍ້ມູນບໍ່ສຳເລັດ');
         setTimeout(() => setSyncStatus('idle'), 4000);
+        return false;
       }
-      // Re-enable polling after 3.5s to allow Google Sheets write buffer to commit
+    } catch {
+      return false;
+    } finally {
       setTimeout(() => {
         isPushingRef.current = false;
-      }, 3500);
-    });
+      }, 7000);
+    }
   };
 
   // Function to fetch latest data from Google Sheets (Multi-device auto loading with timeout & diffing)
@@ -1191,12 +1196,12 @@ export default function App() {
             settings={settings}
             currentStaff={currentStaff}
             currentRole={currentRole}
-            onUpdateRooms={(updated) => {
+            onUpdateRooms={async (updated) => {
               lastRoomLocalActionTimeRef.current = Date.now();
               roomsRef.current = updated;
               setRooms(updated);
               saveStoredRooms(updated);
-              triggerGasSync('saveRooms', { rooms: updated });
+              await triggerGasSync('saveRooms', { rooms: updated });
             }}
             onCheckoutRoom={handleCheckoutRoom}
           />
