@@ -21,11 +21,22 @@ export interface Product {
   unit: string; // ແກ້ວ, ຕຸກ, ຈານ, ຊຸດ, ກະປ໋ອງ
   requireSeller: boolean; // ຕ້ອງເລືອກຜູ້ຂາຍ/ພະນັກງານເສີບ
   imageUrl?: string;
+  // Multi-unit inventory fields (ຂາຍຫຼາຍໜ່ວຍ: ແກ້ວ/ຂວດ vs ແພັກ/ລັງ)
+  hasMultiUnit?: boolean; // ເປີດໃຊ້ງານຫຼາຍໜ່ວຍ
+  packUnit?: string; // ຊື່ໜ່ວຍແພັກ ເຊັ່ນ "ແພັກ", "ລັງ", "ກ່ອງ"
+  packMultiplier?: number; // ຈຳນວນໜ່ວຍຍ່ອຍຕໍ່ແພັກ ເຊັ່ນ 24 (1 ແພັກ = 24 ແກ້ວ)
+  packSalePrice?: number; // ລາຄາຂາຍແບບແພັກ
+  packCostPrice?: number; // ຕົ້ນທຶນແບບແພັກ
+  packsInStock?: number; // ຈຳນວນແພັກຄົງເຫຼືອໃນສະຕັອກ (Packs in stock)
+  looseBottles?: number; // ຈຳນວນເສດຂວດ/ແກ້ວທີ່ເຫຼືອ (0-23)
 }
 
 export interface CartItem {
   product: Product;
   quantity: number;
+  selectedUnitType?: 'single' | 'pack'; // 'single' (ແກ້ວ/ຂວດ) ຫຼື 'pack' (ແພັກ/ລັງ)
+  unitLabel?: string; // "ແກ້ວ" ຫຼື "ແພັກ"
+  multiplier?: number; // 1 ສຳລັບ single, 24 ສຳລັບ pack
   sellerId?: string;
   sellerName?: string;
   customPrice?: number; // ປ້ອນລາຄາເອງ (Override Price)
@@ -49,11 +60,15 @@ export interface RoomOrder {
   id: string;
   product: Product;
   quantity: number;
+  selectedUnitType?: 'single' | 'pack'; // 'single' ຫຼື 'pack'
+  unitLabel?: string; // "ແກ້ວ" ຫຼື "ແພັກ"
+  multiplier?: number; // 1 ຫຼື 24
   price: number;
   orderedAt: string;
   sellerId?: string;
   sellerName?: string;
   customPrice?: number;
+  isStockDeducted?: boolean;
 }
 
 export interface Room {
@@ -138,6 +153,8 @@ export interface BillRecord {
     productName: string;
     unit: string;
     quantity: number;
+    multiplier?: number; // 1 ສຳລັບ single, 24 ສຳລັບ pack
+    selectedUnitType?: 'single' | 'pack';
     price: number;
     total: number;
     sellerId?: string;

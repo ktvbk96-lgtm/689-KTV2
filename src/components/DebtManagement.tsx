@@ -282,8 +282,14 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
   };
 
   // Create New Debt Record
-  const handleCreateDebt = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleCreateDebt = (e?: React.FormEvent) => {
+    if (e && e.preventDefault) e.preventDefault();
+
+    // Dismiss mobile virtual keyboard so viewport does not jump
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+
     if (!newCustomerName.trim()) {
       setAddFormError('ກະລຸນາປ້ອນຊື່ລູກຄ້າ / ຜູ້ຕິດໜີ້');
       return;
@@ -339,8 +345,14 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
   };
 
   // Submit Payment for a Debt
-  const handleSubmitPayment = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmitPayment = (e?: React.FormEvent) => {
+    if (e && e.preventDefault) e.preventDefault();
+
+    // Dismiss mobile virtual keyboard so viewport does not jump
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+
     if (!payingDebt) return;
 
     if (!paymentAmount || paymentAmount <= 0) {
@@ -397,8 +409,14 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
   };
 
   // Save Edit Debt Record
-  const handleSaveEdit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSaveEdit = (e?: React.FormEvent) => {
+    if (e && e.preventDefault) e.preventDefault();
+
+    // Dismiss mobile virtual keyboard so viewport does not jump
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+
     if (!editingDebt) return;
     if (!editCustomerName.trim()) {
       setEditFormError('ກະລຸນາປ້ອນຊື່ລູກຄ້າ / ຜູ້ຕິດໜີ້');
@@ -1011,13 +1029,13 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
                     <button
                       type="button"
                       onClick={() => handleOpenPayment(debt)}
-                      className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20 flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
+                      className="flex-1 min-h-[40px] py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-95 text-white font-bold text-xs shadow-md shadow-emerald-600/20 flex items-center justify-center gap-1.5 cursor-pointer touch-manipulation"
                     >
                       <CreditCard className="w-3.5 h-3.5" />
                       <span>ຮັບຊຳລະເງິນ</span>
                     </button>
                   ) : (
-                    <span className="text-xs font-bold text-emerald-400 flex items-center gap-1 py-1">
+                    <span className="text-xs font-bold text-emerald-400 flex items-center gap-1 py-1 min-h-[40px]">
                       <CheckCircle2 className="w-4 h-4" />
                       <span>ຊຳລະສຳເລັດແລ້ວ</span>
                     </span>
@@ -1028,7 +1046,7 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
                     <button
                       type="button"
                       onClick={() => setHistoryDebt(debt)}
-                      className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-all cursor-pointer"
+                      className="min-h-[40px] min-w-[40px] p-2 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 hover:text-white transition-all cursor-pointer touch-manipulation flex items-center justify-center"
                       title="ເບິ່ງປະຫວັດການຈ່າຍເງິນ"
                     >
                       <History className="w-4 h-4" />
@@ -1039,9 +1057,9 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
                   <button
                     type="button"
                     onClick={() => handleStartEdit(debt)}
-                    className={`p-2 rounded-xl transition-all cursor-pointer ${
+                    className={`min-h-[40px] min-w-[40px] p-2 rounded-xl transition-all cursor-pointer touch-manipulation flex items-center justify-center ${
                       canEdit
-                        ? 'bg-slate-800 hover:bg-slate-700 text-sky-400 hover:text-sky-300'
+                        ? 'bg-slate-800 hover:bg-slate-700 active:scale-95 text-sky-400 hover:text-sky-300'
                         : 'bg-slate-800/40 text-slate-600 hover:text-slate-500 cursor-not-allowed'
                     }`}
                     title={canEdit ? 'ແກ້ໄຂລາຍການຕິດໜີ້' : 'ສິດແກ້ໄຂສະເພາະ Admin (ຕັ້ງຄ່າໄດ້ໃນເມນູຕັ້ງຄ່າ)'}
@@ -1056,7 +1074,7 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
                       setPrintingDebt(debt);
                       handlePrintBt(debt);
                     }}
-                    className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-amber-300 transition-all cursor-pointer"
+                    className="min-h-[40px] min-w-[40px] p-2 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-amber-400 hover:text-amber-300 transition-all cursor-pointer touch-manipulation flex items-center justify-center"
                     title="ພິມໃບຕິດໜີ້ / ໃບຮັບເງິນ (ESC/POS)"
                   >
                     <Printer className="w-4 h-4" />
@@ -1066,9 +1084,9 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
                   <button
                     type="button"
                     onClick={() => handleDeleteDebt(debt)}
-                    className={`p-2 rounded-xl transition-all cursor-pointer ${
+                    className={`min-h-[40px] min-w-[40px] p-2 rounded-xl transition-all cursor-pointer touch-manipulation flex items-center justify-center ${
                       canDelete
-                        ? 'bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400'
+                        ? 'bg-slate-800 hover:bg-rose-950 active:scale-95 text-slate-400 hover:text-rose-400'
                         : 'bg-slate-800/40 text-slate-600 hover:text-slate-500 cursor-not-allowed'
                     }`}
                     title={canDelete ? 'ລຶບລາຍການຕິດໜີ້' : 'ສິດລຶບສະເພາະ Admin (ຕັ້ງຄ່າໄດ້ໃນເມນູຕັ້ງຄ່າ)'}
@@ -1086,8 +1104,8 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
       {/* MODAL: ADD NEW DEBT RECORD (+ ບັນທຶກລູກຄ້າຕິດໜີ້ໃໝ່)                     */}
       {/* ========================================================================= */}
       {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="bg-slate-900 border border-slate-700 rounded-3xl p-6 w-full max-w-xl shadow-2xl text-white my-6 space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-700 rounded-3xl p-5 sm:p-6 w-full max-w-xl shadow-2xl text-white my-auto max-h-[92dvh] overflow-y-auto space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <div className="flex items-center gap-2.5">
                 <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
@@ -1105,7 +1123,7 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
               <button
                 type="button"
                 onClick={() => setShowAddModal(false)}
-                className="p-1.5 rounded-xl hover:bg-slate-800 text-slate-400 cursor-pointer"
+                className="p-2 rounded-xl hover:bg-slate-800 text-slate-400 cursor-pointer touch-manipulation"
               >
                 <X className="w-6 h-6" />
               </button>
@@ -1118,7 +1136,7 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
               </div>
             )}
 
-            <form onSubmit={handleCreateDebt} className="space-y-4">
+            <form onSubmit={handleCreateDebt} noValidate className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {/* Customer Name */}
                 <div className="sm:col-span-2">
@@ -1127,7 +1145,6 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
                   </label>
                   <input
                     type="text"
-                    required
                     value={newCustomerName}
                     onChange={(e) => setNewCustomerName(e.target.value)}
                     placeholder="ຕົວຢ່າງ: ທ່ານ ສົມພອນ, ນາງ ດາວັນ"
@@ -1293,13 +1310,17 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
-                  className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+                  className="flex-1 min-h-[44px] py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-[0.98] text-slate-300 text-xs sm:text-sm font-semibold cursor-pointer touch-manipulation flex items-center justify-center"
                 >
                   ຍົກເລີກ
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 hover:from-amber-600 hover:to-purple-700 text-white font-black text-xs shadow-lg shadow-rose-500/25 cursor-pointer"
+                  onClick={(e) => {
+                    if (e.isDefaultPrevented()) return;
+                    handleCreateDebt(e);
+                  }}
+                  className="flex-1 min-h-[44px] py-2.5 px-4 rounded-xl bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 hover:from-amber-600 hover:to-purple-700 active:scale-[0.98] text-white font-black text-xs sm:text-sm shadow-lg shadow-rose-500/25 cursor-pointer touch-manipulation flex items-center justify-center"
                 >
                   ບັນທຶກຕິດໜີ້ (Save Debt)
                 </button>
@@ -1313,8 +1334,8 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
       {/* MODAL: RECORD PAYMENT (ຮັບຊຳລະເງິນຕິດໜີ້)                                  */}
       {/* ========================================================================= */}
       {payingDebt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="bg-slate-900 border border-slate-700 rounded-3xl p-6 w-full max-w-md shadow-2xl text-white space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-700 rounded-3xl p-5 sm:p-6 w-full max-w-md shadow-2xl text-white my-auto max-h-[92dvh] overflow-y-auto space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <div className="flex items-center gap-2.5">
                 <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
@@ -1332,9 +1353,9 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
               <button
                 type="button"
                 onClick={() => setPayingDebt(null)}
-                className="p-1.5 rounded-xl hover:bg-slate-800 text-slate-400 cursor-pointer"
+                className="p-2 rounded-xl hover:bg-slate-800 text-slate-400 cursor-pointer touch-manipulation"
               >
-                <X className="w-5 h-5" />
+                <X className="w-6 h-6" />
               </button>
             </div>
 
@@ -1366,7 +1387,7 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
               </div>
             )}
 
-            <form onSubmit={handleSubmitPayment} className="space-y-3.5">
+            <form onSubmit={handleSubmitPayment} noValidate className="space-y-3.5">
               {/* Payment Amount Input */}
               <div>
                 <div className="flex items-center justify-between mb-1">
@@ -1453,13 +1474,17 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
                 <button
                   type="button"
                   onClick={() => setPayingDebt(null)}
-                  className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+                  className="flex-1 min-h-[44px] py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-[0.98] text-slate-300 text-xs sm:text-sm font-semibold cursor-pointer touch-manipulation flex items-center justify-center"
                 >
                   ຍົກເລີກ
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs shadow-lg shadow-emerald-600/25 cursor-pointer"
+                  onClick={(e) => {
+                    if (e.isDefaultPrevented()) return;
+                    handleSubmitPayment(e);
+                  }}
+                  className="flex-1 min-h-[44px] py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-[0.98] text-white font-black text-xs sm:text-sm shadow-lg shadow-emerald-600/25 cursor-pointer touch-manipulation flex items-center justify-center"
                 >
                   ຢືນຢັນຮັບຊຳລະ
                 </button>
@@ -1655,8 +1680,8 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
       {/* MODAL: EDIT DEBT RECORD (ແກ້ໄຂລາຍການຕິດໜີ້ - Admin/Authorized Staff)       */}
       {/* ========================================================================= */}
       {editingDebt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="bg-slate-900 border border-slate-700 rounded-3xl p-6 w-full max-w-xl shadow-2xl text-white my-6 space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-700 rounded-3xl p-5 sm:p-6 w-full max-w-xl shadow-2xl text-white my-auto max-h-[92dvh] overflow-y-auto space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <div className="flex items-center gap-2.5">
                 <div className="w-10 h-10 rounded-2xl bg-sky-500/20 border border-sky-500/40 flex items-center justify-center text-sky-400">
@@ -1674,7 +1699,7 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
               <button
                 type="button"
                 onClick={() => setEditingDebt(null)}
-                className="p-1.5 rounded-xl hover:bg-slate-800 text-slate-400 cursor-pointer"
+                className="p-2 rounded-xl hover:bg-slate-800 text-slate-400 cursor-pointer touch-manipulation"
               >
                 <X className="w-6 h-6" />
               </button>
@@ -1687,7 +1712,7 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
               </div>
             )}
 
-            <form onSubmit={handleSaveEdit} className="space-y-4">
+            <form onSubmit={handleSaveEdit} noValidate className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="sm:col-span-2">
                   <label className="block text-xs font-bold text-slate-300 mb-1">
@@ -1695,7 +1720,6 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
                   </label>
                   <input
                     type="text"
-                    required
                     value={editCustomerName}
                     onChange={(e) => setEditCustomerName(e.target.value)}
                     className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white font-bold focus:outline-none focus:ring-2 focus:ring-sky-500"
@@ -1851,13 +1875,17 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
                 <button
                   type="button"
                   onClick={() => setEditingDebt(null)}
-                  className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+                  className="flex-1 min-h-[44px] py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-[0.98] text-slate-300 text-xs sm:text-sm font-semibold cursor-pointer touch-manipulation flex items-center justify-center"
                 >
                   ຍົກເລີກ
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs shadow-lg shadow-sky-600/25 cursor-pointer"
+                  onClick={(e) => {
+                    if (e.isDefaultPrevented()) return;
+                    handleSaveEdit(e);
+                  }}
+                  className="flex-1 min-h-[44px] py-2.5 px-4 rounded-xl bg-sky-600 hover:bg-sky-500 active:scale-[0.98] text-white font-bold text-xs sm:text-sm shadow-lg shadow-sky-600/25 cursor-pointer touch-manipulation flex items-center justify-center"
                 >
                   ບັນທຶກການແກ້ໄຂ
                 </button>

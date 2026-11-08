@@ -30,14 +30,32 @@ export const getStoredProducts = (): Product[] => {
     const list: Product[] = JSON.parse(data);
     let updated = false;
     const enriched = list.map((item) => {
-      if (!item.imageUrl) {
-        const init = INITIAL_PRODUCTS.find((p) => p.id === item.id);
-        if (init?.imageUrl) {
-          updated = true;
-          return { ...item, imageUrl: init.imageUrl };
-        }
+      let itemChanged = false;
+      const init = INITIAL_PRODUCTS.find((p) => p.id === item.id);
+      let newItem = { ...item };
+
+      if (!newItem.imageUrl && init?.imageUrl) {
+        newItem.imageUrl = init.imageUrl;
+        itemChanged = true;
       }
-      return item;
+
+      if (newItem.hasMultiUnit === undefined && init?.hasMultiUnit) {
+        newItem.hasMultiUnit = init.hasMultiUnit;
+        newItem.packUnit = newItem.packUnit || init.packUnit;
+        newItem.packMultiplier = newItem.packMultiplier || init.packMultiplier;
+        newItem.packSalePrice = newItem.packSalePrice || init.packSalePrice;
+        newItem.packCostPrice = newItem.packCostPrice || init.packCostPrice;
+        itemChanged = true;
+      }
+
+      if (newItem.hasMultiUnit) {
+        const mult = newItem.packMultiplier || 24;
+        newItem.packsInStock = Math.floor((Number(newItem.stock) || 0) / mult);
+        newItem.looseBottles = (Number(newItem.stock) || 0) % mult;
+      }
+
+      if (itemChanged) updated = true;
+      return newItem;
     });
     if (updated) {
       localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(enriched));
@@ -49,7 +67,18 @@ export const getStoredProducts = (): Product[] => {
 };
 
 export const saveStoredProducts = (products: Product[]) => {
-  localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(products));
+  const synced = products.map((p) => {
+    if (p.hasMultiUnit) {
+      const mult = p.packMultiplier || 24;
+      return {
+        ...p,
+        packsInStock: Math.floor((Number(p.stock) || 0) / mult),
+        looseBottles: (Number(p.stock) || 0) % mult,
+      };
+    }
+    return p;
+  });
+  localStorage.setItem(STORAGE_KEYS.PRODUCTS, JSON.stringify(synced));
   window.dispatchEvent(new Event('689ktv_products_updated'));
 };
 

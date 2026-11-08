@@ -79,7 +79,12 @@ function doGet(e) {
         minStockAlert: Number(row[6]) || 5,
         unit: String(row[7] || 'ແກ້ວ'),
         requireSeller: row[8] === true || String(row[8]).toLowerCase() === 'true' || String(row[8]) === 'ແມ່ນ (Yes)',
-        imageUrl: String(row[9] || '')
+        imageUrl: String(row[9] || ''),
+        hasMultiUnit: row[10] === true || String(row[10]).toLowerCase() === 'true' || String(row[10]) === 'ແມ່ນ (Yes)',
+        packUnit: String(row[11] || 'ແພັກ'),
+        packMultiplier: Number(row[12]) || 24,
+        packSalePrice: Number(row[13]) || 0,
+        packCostPrice: Number(row[14]) || 0
       };
     });
 
@@ -203,6 +208,8 @@ function doPost(e) {
       updateDebtsSheet(ss, data.debts);
     } else if (action === 'saveBill' && data.bill) {
       appendBillRecord(ss, data.bill);
+    } else if (action === 'deductMultiUnitStock' && data.items) {
+      deductMultiUnitStockInSheet(ss, data.items);
     } else if (action === 'syncAll') {
       if (data.products) updateProductsSheet(ss, data.products);
       if (data.rooms) updateRoomsSheet(ss, data.rooms);
@@ -255,22 +262,17 @@ function getSheetDataAsJson(ss, sheetName, rowMapper) {
 }
 
 function updateProductsSheet(ss, products) {
-  var sheet = getOrCreateSheet(ss, 'ສະຕັອກ_Inventory', [
+  var headers = [
     'ລະຫັດສິນຄ້າ (ID)', 'ຊື່ສິນຄ້າ (Name)', 'ໝວດໝູ່ (Category)',
     'ຕົ້ນທຶນ (Cost)', 'ລາຄາຂາຍ (Price)', 'ຈຳນວນສະຕັອກ (Stock)',
     'ເຕືອນສະຕັອກຕ່ຳ (Alert)', 'ຫົວໜ່ວຍ (Unit)', 'ຕ້ອງເລືອກຜູ້ຂາຍ (Require Seller)',
-    'ລິ້ງຮູບພາບ (Image URL)'
-  ]);
+    'ລິ້ງຮູບພາບ (Image URL)', 'ຂາຍຫຼາຍໜ່ວຍ (MultiUnit)', 'ໜ່ວຍແພັກ (PackUnit)',
+    'ຈຳນວນຕໍ່ແພັກ (Multiplier)', 'ລາຄາຂາຍແພັກ (PackPrice)', 'ຕົ້ນທຶນແພັກ (PackCost)'
+  ];
+  var sheet = getOrCreateSheet(ss, 'ສະຕັອກ_Inventory', headers);
 
   sheet.clearContents();
-  var rows = [
-    [
-      'ລະຫັດສິນຄ້າ (ID)', 'ຊື່ສິນຄ້າ (Name)', 'ໝວດໝູ່ (Category)',
-      'ຕົ້ນທຶນ (Cost)', 'ລາຄາຂາຍ (Price)', 'ຈຳນວນສະຕັອກ (Stock)',
-      'ເຕືອນສະຕັອກຕ່ຳ (Alert)', 'ຫົວໜ່ວຍ (Unit)', 'ຕ້ອງເລືອກຜູ້ຂາຍ (Require Seller)',
-      'ລິ້ງຮູບພາບ (Image URL)'
-    ]
-  ];
+  var rows = [headers];
 
   for (var i = 0; i < products.length; i++) {
     var p = products[i];
@@ -284,11 +286,50 @@ function updateProductsSheet(ss, products) {
       p.minStockAlert || 5,
       p.unit || 'ແກ້ວ',
       p.requireSeller ? 'ແມ່ນ (Yes)' : 'ບໍ່ແມ່ນ (No)',
-      p.imageUrl || ''
+      p.imageUrl || '',
+      p.hasMultiUnit ? 'ແມ່ນ (Yes)' : 'ບໍ່ແມ່ນ (No)',
+      p.packUnit || 'ແພັກ',
+      p.packMultiplier || 24,
+      p.packSalePrice || 0,
+      p.packCostPrice || 0
     ]);
   }
 
   sheet.getRange(1, 1, rows.length, rows[0].length).setValues(rows);
+}
+
+/**
+ * ຫັກສະຕັອກສິນຄ້າຫຼາຍຫົວໜ່ວຍໂດຍກົງໃນ Google Sheets
+ * ຮອງຮັບການຂາຍທັງແບບ 'ແກ້ວ' (ຫັກໂດຍກົງ) ແລະ 'ແພັກ' (ຫັກ ຈຳນວນແພັກ x 24 ແກ້ວ)
+ */
+function deductMultiUnitStockInSheet(ss, itemsToDeduct) {
+  var sheet = ss.getSheetByName('ສະຕັອກ_Inventory');
+  if (!sheet) return;
+  var lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return;
+
+  var data = sheet.getRange(2, 1, lastRow - 1, 15).getValues();
+  for (var i = 0; i < data.length; i++) {
+    var prodId = String(data[i][0]);
+    var currentStock = Number(data[i][5]) || 0;
+    var defaultMultiplier = Number(data[i][12]) || 24;
+
+    var matchedItems = itemsToDeduct.filter(function(item) {
+      return item.productId === prodId;
+    });
+
+    if (matchedItems.length > 0) {
+      var totalDeduct = 0;
+      for (var j = 0; j < matchedItems.length; j++) {
+        var it = matchedItems[j];
+        var isPack = it.selectedUnitType === 'pack' || it.unitType === 'pack';
+        var mult = it.multiplier || (isPack ? defaultMultiplier : 1);
+        totalDeduct += (Number(it.quantity) || 0) * mult;
+      }
+      var newStock = Math.max(0, currentStock - totalDeduct);
+      sheet.getRange(i + 2, 6).setValue(newStock);
+    }
+  }
 }
 
 function updateRoomsSheet(ss, rooms) {

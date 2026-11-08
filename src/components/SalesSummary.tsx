@@ -37,9 +37,18 @@ import {
   CheckSquare,
   Square,
   RotateCcw,
+  Printer,
+  Clock,
+  CheckCircle2,
+  ExternalLink,
 } from 'lucide-react';
 import { BillRecord, Product, AppSettings, ProductCategory, Role } from '../types';
 import { formatCurrency } from '../lib/storage';
+import {
+  printReceiptAsImageViaBluetooth,
+  getBluetoothStatus,
+  isBluetoothBlockedError,
+} from '../lib/bluetoothPrinter';
 
 interface SalesSummaryProps {
   bills: BillRecord[];
@@ -51,6 +60,9 @@ interface SalesSummaryProps {
   onDeleteBill?: (billId: string) => void;
   onDeleteBills?: (billIds: string[]) => void;
   onClearAllBills?: () => void;
+  onReprintBill?: (bill: BillRecord) => void;
+  bluetoothConnected?: boolean;
+  onOpenBluetoothSetup?: () => void;
 }
 
 export const SalesSummary: React.FC<SalesSummaryProps> = ({
@@ -63,6 +75,9 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
   onDeleteBill,
   onDeleteBills,
   onClearAllBills,
+  onReprintBill,
+  bluetoothConnected,
+  onOpenBluetoothSetup,
 }) => {
   // Choice 1: Overall Summary vs Choice 2: Itemized & Profit Breakdown vs Choice 3: Bills & Delete
   const [activeChoice, setActiveChoice] = useState<'overall' | 'itemized' | 'bills'>('itemized');
@@ -100,8 +115,35 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
   const [billsTimeScope, setBillsTimeScope] = useState<'filtered' | 'all'>('filtered');
   const [selectedBillIds, setSelectedBillIds] = useState<Set<string>>(new Set());
 
-  // Bill inspect modal
+  // Bill inspect & receipt modal
   const [inspectedBill, setInspectedBill] = useState<BillRecord | null>(null);
+  const [inspectedBillMode, setInspectedBillMode] = useState<'receipt' | 'financial'>('receipt');
+  const [isPrintingBt, setIsPrintingBt] = useState<boolean>(false);
+  const [printSuccess, setPrintSuccess] = useState<boolean>(false);
+  const [printError, setPrintError] = useState<string>('');
+
+  const handlePrintBillBluetooth = async (bill: BillRecord) => {
+    setIsPrintingBt(true);
+    setPrintError('');
+    setPrintSuccess(false);
+    try {
+      const ok = await printReceiptAsImageViaBluetooth(bill, settings);
+      if (ok) {
+        setPrintSuccess(true);
+        setTimeout(() => setPrintSuccess(false), 3000);
+      } else {
+        setPrintError('ບໍ່ສາມາດພິມຜ່ານ Bluetooth ໄດ້ ກະລຸນາກວດສອບເຄື່ອງພິມ');
+      }
+    } catch (err: any) {
+      if (isBluetoothBlockedError(err)) {
+        if (onOpenBluetoothSetup) onOpenBluetoothSetup();
+      } else {
+        setPrintError(err.message || 'ເກີດຂໍ້ຜິດພາດໃນການພິມ Bluetooth');
+      }
+    } finally {
+      setIsPrintingBt(false);
+    }
+  };
 
   // In-App Admin Delete Confirmation Modal
   const [deleteModal, setDeleteModal] = useState<{
@@ -1797,17 +1839,31 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                           <td className="py-3 px-4 text-center">
                             <div className="flex items-center justify-center gap-1.5">
                               <button
-                                onClick={() => setInspectedBill(b)}
-                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white cursor-pointer"
-                                title="ເບິ່ງລາຍລະອຽດບິນ"
+                                type="button"
+                                onClick={() => {
+                                  setInspectedBill(b);
+                                  setInspectedBillMode('receipt');
+                                }}
+                                className="p-1.5 rounded-lg bg-sky-950/70 hover:bg-sky-900 border border-sky-700/80 text-sky-300 hover:text-white cursor-pointer touch-manipulation flex items-center gap-1 text-[11px] font-bold"
+                                title="ກວດສອບລາຍລະອຽດໃບເສັດຫ້ອງນີ້"
                               >
-                                <Eye className="w-3.5 h-3.5" />
+                                <Receipt className="w-3.5 h-3.5 text-sky-400" />
+                                <span className="hidden sm:inline">ໃບເສັດ</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => (onReprintBill ? onReprintBill(b) : handlePrintBillBluetooth(b))}
+                                className="p-1.5 rounded-lg bg-amber-950/70 hover:bg-amber-900 border border-amber-700/80 text-amber-300 hover:text-white cursor-pointer touch-manipulation flex items-center gap-1 text-[11px] font-bold"
+                                title="ພິມໃບເສັດຄືນ (Reprint)"
+                              >
+                                <Printer className="w-3.5 h-3.5 text-amber-400" />
+                                <span className="hidden sm:inline">ພິມຄືນ</span>
                               </button>
                               {onDeleteBill && (
                                 <button
                                   type="button"
                                   onClick={() => openDeleteSingleBill(b)}
-                                  className="p-1.5 rounded-lg bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 hover:text-white cursor-pointer transition-all"
+                                  className="p-1.5 rounded-lg bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 hover:text-white cursor-pointer transition-all touch-manipulation"
                                   title="Admin ລຶບໃບບິນນີ້"
                                 >
                                   <Trash2 className="w-3.5 h-3.5 text-rose-400" />
@@ -2054,16 +2110,30 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                           <td className="py-3 px-4 text-center">
                             <div className="flex items-center justify-center gap-1.5">
                               <button
-                                onClick={() => setInspectedBill(b)}
-                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white cursor-pointer"
-                                title="ເບິ່ງລາຍລະອຽດບິນ"
+                                type="button"
+                                onClick={() => {
+                                  setInspectedBill(b);
+                                  setInspectedBillMode('receipt');
+                                }}
+                                className="p-1.5 rounded-lg bg-sky-950/70 hover:bg-sky-900 border border-sky-700/80 text-sky-300 hover:text-white cursor-pointer touch-manipulation flex items-center gap-1 text-[11px] font-bold"
+                                title="ກວດສອບລາຍລະອຽດໃບເສັດຫ້ອງນີ້"
                               >
-                                <Eye className="w-3.5 h-3.5" />
+                                <Receipt className="w-3.5 h-3.5 text-sky-400" />
+                                <span className="hidden sm:inline">ໃບເສັດ</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => (onReprintBill ? onReprintBill(b) : handlePrintBillBluetooth(b))}
+                                className="p-1.5 rounded-lg bg-amber-950/70 hover:bg-amber-900 border border-amber-700/80 text-amber-300 hover:text-white cursor-pointer touch-manipulation flex items-center gap-1 text-[11px] font-bold"
+                                title="ພິມໃບເສັດຄືນ (Reprint)"
+                              >
+                                <Printer className="w-3.5 h-3.5 text-amber-400" />
+                                <span className="hidden sm:inline">ພິມຄືນ</span>
                               </button>
                               <button
                                 type="button"
                                 onClick={() => openDeleteSingleBill(b)}
-                                className="p-1.5 rounded-lg bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 hover:text-white cursor-pointer transition-all"
+                                className="p-1.5 rounded-lg bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 hover:text-white cursor-pointer transition-all touch-manipulation"
                                 title="Admin ລຶບໃບບິນນີ້"
                               >
                                 <Trash2 className="w-3.5 h-3.5 text-rose-400" />
@@ -2081,150 +2151,331 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
         </div>
       )}
 
-      {/* Modal: View Individual Bill Details with Cost & Profit */}
+      {/* Modal: View Individual Bill Details with Authentic Thermal Receipt & Reprint */}
       {inspectedBill && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 w-full max-w-md shadow-2xl text-white">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
-              <div>
-                <h4 className="font-bold text-sm text-slate-100">
-                  ລາຍລະອຽດໃບບິນ: {inspectedBill.billNumber}
-                </h4>
-                <p className="text-[11px] text-slate-400">
-                  {new Date(inspectedBill.endTime).toLocaleString('lo-LA')} | ຜູ້ດຳເນີນການ: {inspectedBill.staffName}
-                </p>
-              </div>
-              <button
-                onClick={() => setInspectedBill(null)}
-                className="p-1 rounded-xl hover:bg-slate-800 text-slate-400 cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-2 text-xs mb-4 max-h-60 overflow-y-auto pr-1">
-              {inspectedBill.startTime && (
-                <div className="flex justify-between py-1 border-b border-slate-800 text-[11px] text-slate-300">
-                  <span>ເວລາເປີດ - ສິ້ນສຸດ:</span>
-                  <span className="font-mono font-bold text-amber-300">
-                    {new Date(inspectedBill.startTime).toLocaleTimeString('lo-LA', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      hour12: false,
-                    })}{' '}
-                    ຫາ{' '}
-                    {new Date(inspectedBill.endTime).toLocaleTimeString('lo-LA', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      hour12: false,
-                    })}
-                  </span>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-700 rounded-3xl p-5 sm:p-6 w-full max-w-lg shadow-2xl text-white my-auto max-h-[94dvh] overflow-y-auto space-y-3.5">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-sky-500/20 border border-sky-500/40 flex items-center justify-center text-sky-400">
+                  <Receipt className="w-6 h-6" />
                 </div>
-              )}
-              {inspectedBill.timeRangeFormatted && (
-                <div className="flex justify-between py-0.5 text-[10px] text-slate-400">
-                  <span>ກຳນົດໄລຍະເວລາ:</span>
-                  <span>{inspectedBill.timeRangeFormatted}</span>
-                </div>
-              )}
-              {inspectedBill.roomCharge > 0 && (
-                <div className="flex justify-between py-1 border-b border-slate-800">
-                  <span>ຄ່າຫ້ອງ ({inspectedBill.roomName})</span>
-                  <span className="font-mono text-amber-400">
-                    {formatCurrency(inspectedBill.roomCharge, settings.currencySymbol)}
-                  </span>
-                </div>
-              )}
-
-              {inspectedBill.items.map((it, idx) => {
-                const matched =
-                  productLookup.get(it.productId) ||
-                  productLookup.get(it.productName.trim().toLowerCase());
-                const cost =
-                  it.costPrice !== undefined ? it.costPrice : matched?.costPrice ?? 0;
-                const itemTotalCost = it.quantity * cost;
-                const itemProfit = it.total - itemTotalCost;
-
-                return (
-                  <div key={idx} className="py-1.5 border-b border-slate-800/60">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <span className="font-semibold text-slate-200">{it.productName}</span>
-                        <span className="text-[10px] text-slate-400 block">
-                          {it.quantity} {it.unit} × {formatCurrency(it.price, '')}
-                          {it.sellerName ? ` (ຜູ້ຂາຍ: ${it.sellerName})` : ''}
-                        </span>
-                      </div>
-                      <span className="font-mono text-slate-200 font-bold">
-                        {formatCurrency(it.total, settings.currencySymbol)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center text-[10px] text-slate-400 mt-0.5 pt-0.5 border-t border-slate-800/40">
-                      <span>ຕົ້ນທຶນ: {formatCurrency(itemTotalCost, '')}</span>
-                      <span className="text-emerald-400 font-bold font-mono">
-                        ກຳໄລ: +{formatCurrency(itemProfit, settings.currencySymbol)}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Bill Financial Summary */}
-            {(() => {
-              const { billItemsCost, billProfit } = getBillCostAndProfit(inspectedBill);
-              return (
-                <div className="space-y-1.5 pt-2 border-t border-slate-800 text-xs">
-                  <div className="flex justify-between text-slate-400">
-                    <span>ລວມເງິນ:</span>
-                    <span>{formatCurrency(inspectedBill.subtotal, settings.currencySymbol)}</span>
-                  </div>
-                  {inspectedBill.discount > 0 && (
-                    <div className="flex justify-between text-rose-400">
-                      <span>ສ່ວນຫຼຸດ:</span>
-                      <span>-{formatCurrency(inspectedBill.discount, settings.currencySymbol)}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between text-slate-400">
-                    <span>ຕົ້ນທຶນສິນຄ້ານຳເຂົ້າ:</span>
-                    <span className="font-mono text-rose-400">
-                      {formatCurrency(billItemsCost, settings.currencySymbol)}
+                <div>
+                  <h4 className="font-black text-base text-slate-100 flex items-center gap-2">
+                    <span>ໃບເສັດ: {inspectedBill.billNumber}</span>
+                    <span className="text-[10px] bg-purple-900/60 text-purple-300 border border-purple-700/60 px-2 py-0.5 rounded-full">
+                      {inspectedBill.roomName || 'POS ຂາຍໜ້າຮ້ານ'}
                     </span>
-                  </div>
-                  <div className="flex justify-between text-sm font-bold text-amber-300 pt-1 border-t border-slate-800">
-                    <span>ຍອດສຸດທິ:</span>
-                    <span>{formatCurrency(inspectedBill.total, settings.currencySymbol)}</span>
-                  </div>
-                  <div className="flex justify-between text-base font-black text-emerald-400 pt-1 border-t border-slate-700 bg-emerald-950/40 px-2.5 py-1.5 rounded-xl">
-                    <span>ຍອດກຳໄລບິນນີ້:</span>
-                    <span>+{formatCurrency(billProfit, settings.currencySymbol)}</span>
-                  </div>
+                  </h4>
+                  <p className="text-[11px] text-slate-400">
+                    {new Date(inspectedBill.endTime).toLocaleString('lo-LA')} • ຜູ້ດຳເນີນການ: {inspectedBill.staffName}
+                  </p>
                 </div>
-              );
-            })()}
-
-            <div className="mt-4 flex items-center gap-2">
+              </div>
               <button
                 type="button"
                 onClick={() => setInspectedBill(null)}
-                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+                className="p-2 rounded-xl hover:bg-slate-800 text-slate-400 cursor-pointer touch-manipulation"
               >
-                ປິດ
+                <X className="w-5 h-5" />
               </button>
-              {onDeleteBill && (
+            </div>
+
+            {/* View Mode Toggle: Receipt View vs Cost & Profit Analysis */}
+            <div className="grid grid-cols-2 gap-2 bg-slate-950 p-1 rounded-2xl border border-slate-800 text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => setInspectedBillMode('receipt')}
+                className={`py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer touch-manipulation ${
+                  inspectedBillMode === 'receipt'
+                    ? 'bg-sky-600 text-white shadow-md shadow-sky-600/30'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Receipt className="w-3.5 h-3.5" />
+                <span>ໃບເສັດຮັບເງິນ (Receipt)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setInspectedBillMode('financial')}
+                className={`py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer touch-manipulation ${
+                  inspectedBillMode === 'financial'
+                    ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Coins className="w-3.5 h-3.5" />
+                <span>ຕົ້ນທຶນ & ກຳໄລ (Financial)</span>
+              </button>
+            </div>
+
+            {/* Print feedback alerts */}
+            {printSuccess && (
+              <div className="p-3 rounded-xl bg-emerald-950/80 border border-emerald-700 text-emerald-300 text-xs font-semibold flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>✓ ພິມໃບເສັດຜ່ານ Bluetooth ສຳເລັດຮຽບຮ້ອຍແລ້ວ!</span>
+              </div>
+            )}
+            {printError && (
+              <div className="p-3 rounded-xl bg-rose-950/80 border border-rose-800 text-rose-300 text-xs font-semibold flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{printError}</span>
+              </div>
+            )}
+
+            {/* Content: Mode 1 - Authentic Thermal Receipt Preview */}
+            {inspectedBillMode === 'receipt' ? (
+              <div className="bg-white text-slate-900 rounded-2xl p-4 sm:p-5 font-mono text-[12px] shadow-inner border border-slate-300 space-y-2 select-text">
+                {/* Store Header */}
+                <div className="text-center space-y-0.5 pb-2">
+                  <div className="text-base font-black tracking-wide text-slate-900">
+                    {settings.shopName || '689 KTV & RESTAURANT'}
+                  </div>
+                  {settings.shopPhone && (
+                    <div className="text-[11px] text-slate-600">
+                      ໂທ: {settings.shopPhone}
+                    </div>
+                  )}
+                  {settings.shopAddress && (
+                    <div className="text-[10px] text-slate-500">
+                      {settings.shopAddress}
+                    </div>
+                  )}
+                  <div className="text-[10px] text-slate-500 pt-0.5">
+                    *** ໃບເສັດຮັບເງິນ / RECEIPT ***
+                  </div>
+                </div>
+
+                <div className="border-b border-dashed border-slate-400 pb-1.5 text-[11px] space-y-0.5">
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">ເລກທີບິນ:</span>
+                    <span className="font-bold">{inspectedBill.billNumber}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">ວັນທີ-ເວລາ:</span>
+                    <span>{new Date(inspectedBill.endTime).toLocaleString('lo-LA')}</span>
+                  </div>
+                  <div className="flex justify-between font-bold">
+                    <span className="text-slate-600">ຫ້ອງ KTV / ຈຸດຂາຍ:</span>
+                    <span className="text-purple-700">{inspectedBill.roomName || 'POS ຂາຍໜ້າຮ້ານ'}</span>
+                  </div>
+                  {inspectedBill.startTime && (
+                    <div className="flex justify-between text-[10px] text-slate-600">
+                      <span>ເວລາເປີດ-ປິດ:</span>
+                      <span>
+                        {new Date(inspectedBill.startTime).toLocaleTimeString('lo-LA', { hour: '2-digit', minute: '2-digit' })} - {new Date(inspectedBill.endTime).toLocaleTimeString('lo-LA', { hour: '2-digit', minute: '2-digit' })}
+                        {inspectedBill.durationMinutes ? ` (${Math.floor(inspectedBill.durationMinutes / 60)} ຊມ ${inspectedBill.durationMinutes % 60} ນາທີ)` : ''}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-[10px] text-slate-600">
+                    <span>ພະນັກງານ:</span>
+                    <span>{inspectedBill.staffName}</span>
+                  </div>
+                </div>
+
+                {/* Items Table */}
+                <div className="py-1 space-y-1.5 border-b border-dashed border-slate-400">
+                  <div className="flex justify-between font-bold text-[11px] text-slate-700 pb-0.5 border-b border-slate-300">
+                    <span>ລາຍການ</span>
+                    <span>ລວມ</span>
+                  </div>
+
+                  {/* KTV Room Charge Line */}
+                  {inspectedBill.roomCharge > 0 && (
+                    <div className="flex justify-between text-slate-800">
+                      <div>
+                        <div className="font-bold">ຄ່າຫ້ອງ ({inspectedBill.roomName})</div>
+                        <div className="text-[10px] text-slate-500">
+                          {inspectedBill.durationMinutes ? `${Math.floor(inspectedBill.durationMinutes / 60)} ຊມ ${inspectedBill.durationMinutes % 60} ນາທີ` : 'ນັບຕາມເວລາ'}
+                        </div>
+                      </div>
+                      <div className="font-bold">
+                        {formatCurrency(inspectedBill.roomCharge, settings.currencySymbol)}
+                      </div>
+                    </div>
+                  )}
+
+                  {inspectedBill.isRoomChargePaid && (
+                    <div className="flex justify-between text-emerald-700 text-[11px] font-bold">
+                      <span>ຄ່າຫ້ອງ ({inspectedBill.roomName}):</span>
+                      <span>ຈ່າຍແລ້ວ (0 ₭)</span>
+                    </div>
+                  )}
+
+                  {/* Products & Services List */}
+                  {inspectedBill.items.map((it, idx) => (
+                    <div key={idx} className="flex justify-between items-start text-slate-800">
+                      <div className="pr-2">
+                        <div className="font-semibold">{it.productName}</div>
+                        <div className="text-[10px] text-slate-500">
+                          {it.quantity} {it.unit} × {formatCurrency(it.price, '')}
+                          {it.sellerName ? ` • ຜູ້ເສີບ: ${it.sellerName}` : ''}
+                        </div>
+                      </div>
+                      <div className="font-bold text-right shrink-0">
+                        {formatCurrency(it.total, settings.currencySymbol)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Bill Financial Totals */}
+                <div className="space-y-1 pt-1 text-[11px]">
+                  <div className="flex justify-between text-slate-600">
+                    <span>ລວມເງິນ (Subtotal):</span>
+                    <span>{formatCurrency(inspectedBill.subtotal, settings.currencySymbol)}</span>
+                  </div>
+                  {inspectedBill.discount > 0 && (
+                    <div className="flex justify-between text-rose-600 font-bold">
+                      <span>ສ່ວນຫຼຸດ (Discount):</span>
+                      <span>-{formatCurrency(inspectedBill.discount, settings.currencySymbol)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-sm font-black text-slate-900 pt-1 border-t border-slate-400">
+                    <span>ຍອດລວມສຸດທິ (Total):</span>
+                    <span>{formatCurrency(inspectedBill.total, settings.currencySymbol)}</span>
+                  </div>
+                  <div className="flex justify-between text-[10px] text-slate-500">
+                    <span>ການຊຳລະ:</span>
+                    <span>{inspectedBill.payment?.method === 'transfer' ? 'ເງິນໂອນ (Transfer)' : 'ເງິນສົດ (Cash)'}</span>
+                  </div>
+                </div>
+
+                {/* Receipt Footer */}
+                <div className="text-center text-[10px] text-slate-500 pt-2 border-t border-dashed border-slate-400">
+                  🙏 ຂອບໃຈລູກຄ້າທຸກທ່ານທີ່ມາອຸດໜູນ 689 KTV 🙏
+                </div>
+              </div>
+            ) : (
+              /* Content: Mode 2 - Financial & Profit Breakdown for Business */
+              <div className="space-y-3 bg-slate-950 p-4 rounded-2xl border border-slate-800 text-xs">
+                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                  {inspectedBill.items.map((it, idx) => {
+                    const matched =
+                      productLookup.get(it.productId) ||
+                      productLookup.get(it.productName.trim().toLowerCase());
+                    const cost =
+                      it.costPrice !== undefined ? it.costPrice : matched?.costPrice ?? 0;
+                    const itemTotalCost = it.quantity * cost;
+                    const itemProfit = it.total - itemTotalCost;
+
+                    return (
+                      <div key={idx} className="py-1.5 border-b border-slate-800/60">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <span className="font-semibold text-slate-200">{it.productName}</span>
+                            <span className="text-[10px] text-slate-400 block">
+                              {it.quantity} {it.unit} × {formatCurrency(it.price, '')}
+                              {it.sellerName ? ` (ຜູ້ຂາຍ: ${it.sellerName})` : ''}
+                            </span>
+                          </div>
+                          <span className="font-mono text-slate-200 font-bold">
+                            {formatCurrency(it.total, settings.currencySymbol)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center text-[10px] text-slate-400 mt-0.5 pt-0.5 border-t border-slate-800/40">
+                          <span>ຕົ້ນທຶນ: {formatCurrency(itemTotalCost, '')}</span>
+                          <span className="text-emerald-400 font-bold font-mono">
+                            ກຳໄລ: +{formatCurrency(itemProfit, settings.currencySymbol)}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {(() => {
+                  const { billItemsCost, billProfit } = getBillCostAndProfit(inspectedBill);
+                  return (
+                    <div className="space-y-1.5 pt-2 border-t border-slate-800 text-xs">
+                      <div className="flex justify-between text-slate-400">
+                        <span>ລວມເງິນ:</span>
+                        <span>{formatCurrency(inspectedBill.subtotal, settings.currencySymbol)}</span>
+                      </div>
+                      {inspectedBill.discount > 0 && (
+                        <div className="flex justify-between text-rose-400">
+                          <span>ສ່ວນຫຼຸດ:</span>
+                          <span>-{formatCurrency(inspectedBill.discount, settings.currencySymbol)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between text-slate-400">
+                        <span>ຕົ້ນທຶນສິນຄ້ານຳເຂົ້າ:</span>
+                        <span className="font-mono text-rose-400">
+                          {formatCurrency(billItemsCost, settings.currencySymbol)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-sm font-bold text-amber-300 pt-1 border-t border-slate-800">
+                        <span>ຍອດສຸດທິ:</span>
+                        <span>{formatCurrency(inspectedBill.total, settings.currencySymbol)}</span>
+                      </div>
+                      <div className="flex justify-between text-base font-black text-emerald-400 pt-1 border-t border-slate-700 bg-emerald-950/40 px-2.5 py-1.5 rounded-xl">
+                        <span>ຍອດກຳໄລບິນນີ້:</span>
+                        <span>+{formatCurrency(billProfit, settings.currencySymbol)}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* Reprint & Action Buttons */}
+            <div className="space-y-2 pt-1 border-t border-slate-800">
+              <div className="grid grid-cols-2 gap-2">
+                {/* Print via Bluetooth */}
+                <button
+                  type="button"
+                  onClick={() => handlePrintBillBluetooth(inspectedBill)}
+                  disabled={isPrintingBt}
+                  className="py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-600 hover:to-rose-600 active:scale-95 text-white text-xs font-bold shadow-md shadow-rose-500/20 flex items-center justify-center gap-1.5 cursor-pointer touch-manipulation disabled:opacity-50"
+                  title="ພິມໃບເສັດຄືນຜ່ານ Bluetooth Thermal Printer"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>{isPrintingBt ? 'ກຳລັງພິມ...' : '🖨️ ພິມຄືນ Bluetooth'}</span>
+                </button>
+
+                {/* Full Billing & Thermal Screen */}
                 <button
                   type="button"
                   onClick={() => {
-                    const toDelete = inspectedBill;
-                    openDeleteSingleBill(toDelete);
+                    const toReprint = inspectedBill;
+                    setInspectedBill(null);
+                    if (onReprintBill) {
+                      onReprintBill(toReprint);
+                    }
                   }}
-                  className="py-2.5 px-4 rounded-xl bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 hover:text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all"
-                  title="Admin ລຶບໃບບິນນີ້ອອກຈາກລະບົບ"
+                  className="py-2.5 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 active:scale-95 text-white text-xs font-bold shadow-md shadow-sky-600/20 flex items-center justify-center gap-1.5 cursor-pointer touch-manipulation"
+                  title="ເປີດໜ້າຈໍພິມເຕັມຮູບແບບ (ປັບຂະໜາດເຈ້ຍ 58mm/80mm, ຟອນ ແລະ ເປີເຊັນ)"
                 >
-                  <Trash2 className="w-4 h-4 text-rose-400" />
-                  <span>ລຶບໃບບິນນີ້ (Admin)</span>
+                  <ExternalLink className="w-4 h-4" />
+                  <span>🔍 ເປີດໜ້າຈໍພິມເຕັມ</span>
                 </button>
-              )}
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setInspectedBill(null)}
+                  className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 text-xs font-semibold cursor-pointer touch-manipulation"
+                >
+                  ປິດ
+                </button>
+                {onDeleteBill && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const toDelete = inspectedBill;
+                      openDeleteSingleBill(toDelete);
+                    }}
+                    className="py-2.5 px-4 rounded-xl bg-rose-950/80 hover:bg-rose-900 border border-rose-800 active:scale-95 text-rose-300 hover:text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all touch-manipulation"
+                    title="Admin ລຶບໃບບິນນີ້ອອກຈາກລະບົບ"
+                  >
+                    <Trash2 className="w-4 h-4 text-rose-400" />
+                    <span>ລຶບໃບບິນ (Admin)</span>
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>

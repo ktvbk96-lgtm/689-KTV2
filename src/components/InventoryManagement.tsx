@@ -18,11 +18,15 @@ import {
   Image as ImageIcon,
   Sparkles,
   RotateCcw,
+  PlusCircle,
+  PackagePlus,
+  Package,
 } from 'lucide-react';
 import { Product, ProductCategory, Role, AppSettings } from '../types';
 import { formatCurrency } from '../lib/storage';
 import { INITIAL_PRODUCTS } from '../lib/initialData';
 import { FormattedNumberInput } from './FormattedNumberInput';
+import { calculateAvailablePacksAndSingles } from '../lib/multiUnitInventory';
 
 interface InventoryManagementProps {
   products: Product[];
@@ -45,6 +49,11 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [isAddingNew, setIsAddingNew] = useState<boolean>(false);
 
+  // Dedicated Restock (ບວກສະຕັອກເພີ່ມ) State
+  const [restockProduct, setRestockProduct] = useState<Product | null>(null);
+  const [restockAddAmount, setRestockAddAmount] = useState<number>(20);
+  const [restockUnitType, setRestockUnitType] = useState<'single' | 'pack'>('single');
+
   // Form State
   const [formData, setFormData] = useState<Partial<Product>>({
     name: '',
@@ -56,6 +65,11 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
     unit: 'ແກ້ວ',
     requireSeller: false,
     imageUrl: '',
+    hasMultiUnit: false,
+    packUnit: 'ແພັກ',
+    packMultiplier: 24,
+    packSalePrice: 0,
+    packCostPrice: 0,
   });
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -162,26 +176,46 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
     reader.readAsDataURL(file);
   };
 
-  const handleSaveProduct = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.name) {
-      alert('ກະລຸນາປ້ອນຊື່ສິນຄ້າ!');
+  const handleSaveProduct = (e?: React.FormEvent) => {
+    if (e && e.preventDefault) {
+      e.preventDefault();
+    }
+
+    // Dismiss mobile virtual keyboard so viewport does not jump
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+
+    const trimmedName = (formData.name || '').trim();
+    if (!trimmedName) {
+      alert('⚠️ ກະລຸນາປ້ອນຊື່ສິນຄ້າ / ເມນູ!');
       return;
     }
+
+    const finalUnit = (formData.unit || '').trim() || 'ອັນ';
 
     let updatedList: Product[];
     if (isAddingNew) {
       const newProd: Product = {
         id: formData.id || 'prod-' + Date.now(),
-        name: formData.name,
+        name: trimmedName,
         category: (formData.category as ProductCategory) || 'other',
         costPrice: Number(formData.costPrice) || 0,
         salePrice: Number(formData.salePrice) || 0,
         stock: Number(formData.stock) || 0,
         minStockAlert: Number(formData.minStockAlert) || 5,
-        unit: formData.unit || 'ອັນ',
+        unit: finalUnit,
         requireSeller: !!formData.requireSeller,
         imageUrl: formData.imageUrl?.trim() || undefined,
+        hasMultiUnit: !!formData.hasMultiUnit,
+        packUnit: formData.hasMultiUnit ? (formData.packUnit?.trim() || 'ແພັກ') : undefined,
+        packMultiplier: formData.hasMultiUnit ? (Number(formData.packMultiplier) || 24) : undefined,
+        packSalePrice: formData.hasMultiUnit
+          ? (Number(formData.packSalePrice) || (Number(formData.salePrice) * (Number(formData.packMultiplier) || 24)))
+          : undefined,
+        packCostPrice: formData.hasMultiUnit
+          ? (Number(formData.packCostPrice) || (Number(formData.costPrice) * (Number(formData.packMultiplier) || 24)))
+          : undefined,
       };
       updatedList = [newProd, ...products];
     } else if (editingProduct) {
@@ -189,15 +223,24 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
         p.id === editingProduct.id
           ? ({
               ...p,
-              name: formData.name!,
+              name: trimmedName,
               category: (formData.category as ProductCategory) || p.category,
               costPrice: Number(formData.costPrice) || 0,
               salePrice: Number(formData.salePrice) || 0,
               stock: Number(formData.stock) || 0,
               minStockAlert: Number(formData.minStockAlert) || 5,
-              unit: formData.unit || p.unit,
+              unit: finalUnit,
               requireSeller: !!formData.requireSeller,
               imageUrl: formData.imageUrl?.trim() || undefined,
+              hasMultiUnit: !!formData.hasMultiUnit,
+              packUnit: formData.hasMultiUnit ? (formData.packUnit?.trim() || 'ແພັກ') : undefined,
+              packMultiplier: formData.hasMultiUnit ? (Number(formData.packMultiplier) || 24) : undefined,
+              packSalePrice: formData.hasMultiUnit
+                ? (Number(formData.packSalePrice) || (Number(formData.salePrice) * (Number(formData.packMultiplier) || 24)))
+                : undefined,
+              packCostPrice: formData.hasMultiUnit
+                ? (Number(formData.packCostPrice) || (Number(formData.costPrice) * (Number(formData.packMultiplier) || 24)))
+                : undefined,
             } as Product)
           : p
       );
@@ -271,6 +314,37 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
       return p;
     });
     onSaveProducts(updated);
+  };
+
+  const handleOpenRestockModal = (prod: Product) => {
+    setRestockProduct(prod);
+    setRestockUnitType(prod.hasMultiUnit ? 'pack' : 'single');
+    setRestockAddAmount(prod.hasMultiUnit ? 1 : 20);
+  };
+
+  const handleConfirmRestock = (e?: React.FormEvent) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    if (!restockProduct) return;
+    const isPack = restockUnitType === 'pack' && !!restockProduct.hasMultiUnit;
+    const multiplier = isPack ? (restockProduct.packMultiplier || 24) : 1;
+    const entered = Number(restockAddAmount) || 0;
+    if (entered <= 0) {
+      alert('ກະລຸນາປ້ອນຈຳນວນທີ່ຕ້ອງການເພີ່ມ / ຕື່ມເຂົ້າ ຫຼາຍກວ່າ 0!');
+      return;
+    }
+    const toAdd = entered * multiplier;
+    const oldStock = restockProduct.stock;
+    const newStock = Math.max(0, oldStock + toAdd);
+    const updated = products.map((p) =>
+      p.id === restockProduct.id ? { ...p, stock: newStock } : p
+    );
+    onSaveProducts(updated);
+    setRestockProduct(null);
+    setRestockAddAmount(20);
+    setRestockUnitType('single');
   };
 
   return (
@@ -502,20 +576,41 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
                         )}
                       </td>
 
-                      {/* Quantity */}
+                      {/* Quantity & Quick Restock */}
                       <td className="py-3 px-4 text-center">
-                        <span
-                          className={`font-mono text-sm font-black ${
-                            isOutOfStock
-                              ? 'text-rose-400 underline decoration-rose-500'
-                              : isLowStock
-                              ? 'text-amber-400'
-                              : 'text-slate-200'
-                          }`}
-                        >
-                          {prod.stock}
-                        </span>{' '}
-                        <span className="text-[10px] text-slate-400">{prod.unit}</span>
+                        <div className="flex flex-col items-center gap-1">
+                          <div>
+                            <span
+                              className={`font-mono text-base font-black ${
+                                isOutOfStock
+                                  ? 'text-rose-400 underline decoration-rose-500'
+                                  : isLowStock
+                                  ? 'text-amber-400'
+                                  : 'text-slate-100'
+                              }`}
+                            >
+                              {prod.stock}
+                            </span>{' '}
+                            <span className="text-[11px] text-slate-400">{prod.unit}</span>
+                            {prod.hasMultiUnit && (
+                              <span className="text-[10px] font-mono font-bold text-emerald-400 block">
+                                ({calculateAvailablePacksAndSingles(prod.stock, prod.packMultiplier || 24, prod.unit, prod.packUnit || 'ແພັກ').packs} {prod.packUnit || 'ແພັກ'}{prod.stock % (prod.packMultiplier || 24) > 0 ? ` +${prod.stock % (prod.packMultiplier || 24)}` : ''})
+                              </span>
+                            )}
+                          </div>
+
+                          {prod.category !== 'service' && (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenRestockModal(prod)}
+                              className="px-2 py-0.5 rounded-lg bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-700/80 text-emerald-300 hover:text-white text-[10px] font-bold flex items-center gap-1 cursor-pointer touch-manipulation transition-all active:scale-95 shadow-sm"
+                              title={`ກົດຕື່ມສະຕັອກ ${prod.name} (ບວກເພີ່ມ)`}
+                            >
+                              <PlusCircle className="w-3 h-3 text-emerald-400" />
+                              <span>+ ຕື່ມສະຕັອກ</span>
+                            </button>
+                          )}
+                        </div>
                       </td>
 
                       {/* Quick Adjust Buttons */}
@@ -523,23 +618,36 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
                         {prod.category !== 'service' ? (
                           <div className="inline-flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
                             <button
+                              type="button"
                               onClick={() => handleQuickAdjustStock(prod.id, -1)}
-                              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold cursor-pointer"
+                              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold cursor-pointer touch-manipulation"
+                              title="ລົດລົງ 1"
                             >
                               -1
                             </button>
                             <button
+                              type="button"
                               onClick={() => handleQuickAdjustStock(prod.id, 5)}
-                              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-emerald-900/60 text-emerald-300 text-xs font-bold cursor-pointer"
+                              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-emerald-900/60 text-emerald-300 text-xs font-bold cursor-pointer touch-manipulation"
+                              title="ເພີ່ມ 5"
                             >
                               +5
                             </button>
                             <button
+                              type="button"
                               onClick={() => handleQuickAdjustStock(prod.id, 12)}
-                              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-amber-900/60 text-amber-300 text-xs font-bold cursor-pointer"
+                              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-amber-900/60 text-amber-300 text-xs font-bold cursor-pointer touch-manipulation"
                               title="ເພີ່ມ 1 ລັງ (12)"
                             >
                               +12
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleQuickAdjustStock(prod.id, 20)}
+                              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-sky-900/60 text-sky-300 text-xs font-bold cursor-pointer touch-manipulation"
+                              title="ເພີ່ມ 20 ອັນ"
+                            >
+                              +20
                             </button>
                           </div>
                         ) : (
@@ -551,19 +659,21 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
                       <td className="py-3 px-4 text-center">
                         <div className="flex items-center justify-center gap-1.5">
                           <button
+                            type="button"
                             onClick={() => handleOpenEditModal(prod)}
-                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                            className="min-w-[36px] min-h-[36px] p-2 sm:p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 hover:text-white transition-all cursor-pointer touch-manipulation flex items-center justify-center shadow-sm"
                             title="ແກ້ໄຂສິນຄ້າ ແລະ ຮູບພາບ"
                           >
-                            <Edit className="w-3.5 h-3.5" />
+                            <Edit className="w-4 h-4 text-amber-400" />
                           </button>
                           {currentRole === 'admin' && (
                             <button
+                              type="button"
                               onClick={() => handleDeleteProduct(prod.id, prod.name)}
-                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
+                              className="min-w-[36px] min-h-[36px] p-2 sm:p-1.5 rounded-xl bg-slate-800 hover:bg-rose-950 active:scale-95 text-slate-400 hover:text-rose-400 transition-all cursor-pointer touch-manipulation flex items-center justify-center shadow-sm"
                               title="ລຶບສິນຄ້າ"
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              <Trash2 className="w-4 h-4" />
                             </button>
                           )}
                         </div>
@@ -579,25 +689,26 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
 
       {/* Modal: Add or Edit Product (Includes Image Upload & URL) */}
       {(isAddingNew || editingProduct) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 w-full max-w-lg shadow-2xl text-white my-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 w-full max-w-lg shadow-2xl text-white my-auto max-h-[92dvh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
               <h3 className="font-bold text-base text-slate-100 flex items-center gap-2">
                 <ImageIcon className="w-5 h-5 text-amber-400" />
                 <span>{isAddingNew ? 'ເພີ່ມສິນຄ້າ / ເມນູໃໝ່' : 'ແກ້ໄຂສິນຄ້າ ແລະ ຮູບພາບ'}</span>
               </h3>
               <button
+                type="button"
                 onClick={() => {
                   setIsAddingNew(false);
                   setEditingProduct(null);
                 }}
-                className="p-1 rounded-xl hover:bg-slate-800 text-slate-400 cursor-pointer"
+                className="p-2 rounded-xl hover:bg-slate-800 text-slate-400 cursor-pointer touch-manipulation"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveProduct} className="space-y-4">
+            <form onSubmit={handleSaveProduct} noValidate className="space-y-4">
               {/* Product Photo Upload Section */}
               <div className="p-3.5 rounded-2xl bg-slate-800/60 border border-slate-700 space-y-2.5">
                 <label className="block text-xs font-bold text-amber-300">
@@ -683,11 +794,10 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
 
               <div>
                 <label className="block text-xs text-slate-400 mb-1">
-                  ຊື່ສິນຄ້າ (Product Name):
+                  ຊື່ສິນຄ້າ (Product Name): <span className="text-rose-400">*</span>
                 </label>
                 <input
                   type="text"
-                  required
                   value={formData.name || ''}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   placeholder="ຕົວຢ່າງ: ເບຍລາວ ຂວດໃຫຍ່, ນ້ຳດື່ມ, ປີກໄກ່ທອດ..."
@@ -718,7 +828,6 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
                   <label className="block text-xs text-slate-400 mb-1">ຫົວໜ່ວຍ (Unit):</label>
                   <input
                     type="text"
-                    required
                     value={formData.unit || ''}
                     onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
                     placeholder="ແກ້ວ, ຕຸກ, ຈານ, ຊຸດ, ກະປ໋ອງ..."
@@ -768,6 +877,26 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
                     }
                     className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
+                  {/* Quick Add Chips in Edit Modal */}
+                  <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                    <span className="text-[10px] text-slate-400">ບວກເພີ່ມ:</span>
+                    {[5, 10, 12, 20, 24, 50].map((num) => (
+                      <button
+                        key={num}
+                        type="button"
+                        onClick={() =>
+                          setFormData((prev) => ({
+                            ...prev,
+                            stock: Math.max(0, (Number(prev.stock) || 0) + num),
+                          }))
+                        }
+                        className="px-1.5 py-0.5 rounded-md bg-emerald-500/10 hover:bg-emerald-500/20 active:scale-95 text-emerald-400 border border-emerald-500/30 text-[10px] font-mono font-bold cursor-pointer touch-manipulation transition-all"
+                        title={`ບວກເພີ່ມ ${num}`}
+                      >
+                        +{num}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div>
@@ -783,6 +912,100 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
                     className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
+              </div>
+
+              {/* Multi-unit Inventory Configuration (ຂາຍຫຼາຍໜ່ວຍ: ແກ້ວ & ແພັກ/ລັງ) */}
+              <div className="p-3.5 rounded-2xl bg-slate-800/60 border border-slate-700 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                      <Package className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="font-bold text-xs text-slate-200 block">
+                        ຂາຍຫຼາຍໜ່ວຍ (Multi-Unit: ແກ້ວ/ຂວດ & ແພັກ/ລັງ)
+                      </span>
+                      <span className="text-[11px] text-slate-400">
+                        ເປີດໃຫ້ສິນຄ້າຂາຍໄດ້ທັງແບບດ່ຽວ ແລະ ແບບແພັກ (1 ແພັກ = 24 ແກ້ວ)
+                      </span>
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={!!formData.hasMultiUnit}
+                    onChange={(e) => setFormData({ ...formData, hasMultiUnit: e.target.checked })}
+                    className="w-5 h-5 accent-emerald-500 cursor-pointer"
+                  />
+                </div>
+
+                {formData.hasMultiUnit && (
+                  <div className="pt-2.5 border-t border-slate-700/80 space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] text-slate-300 mb-1 font-semibold">
+                          ຊື່ໜ່ວຍແພັກ (Pack Unit):
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.packUnit || ''}
+                          onChange={(e) => setFormData({ ...formData, packUnit: e.target.value })}
+                          placeholder="ແພັກ, ລັງ, ກ່ອງ..."
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] text-slate-300 mb-1 font-semibold">
+                          ຈຳນວນ {formData.unit || 'ແກ້ວ'} ຕໍ່ 1 {formData.packUnit || 'ແພັກ'}:
+                        </label>
+                        <input
+                          type="number"
+                          min="2"
+                          value={formData.packMultiplier ?? 24}
+                          onChange={(e) =>
+                            setFormData({ ...formData, packMultiplier: Math.max(2, parseInt(e.target.value) || 2) })
+                          }
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono font-bold text-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] text-slate-300 mb-1">
+                          ລາຄາຂາຍແບບ {formData.packUnit || 'ແພັກ'} ({settings.currencySymbol}):
+                        </label>
+                        <FormattedNumberInput
+                          value={formData.packSalePrice || ''}
+                          onChange={(num) => setFormData({ ...formData, packSalePrice: num })}
+                          placeholder={formatCurrency((Number(formData.salePrice) || 0) * (Number(formData.packMultiplier) || 24), '')}
+                          suffix={settings.currencySymbol}
+                          showHelper={true}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono font-bold text-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] text-slate-300 mb-1">
+                          ຕົ້ນທຶນແບບ {formData.packUnit || 'ແພັກ'} ({settings.currencySymbol}):
+                        </label>
+                        <FormattedNumberInput
+                          value={formData.packCostPrice || ''}
+                          onChange={(num) => setFormData({ ...formData, packCostPrice: num })}
+                          placeholder={formatCurrency((Number(formData.costPrice) || 0) * (Number(formData.packMultiplier) || 24), '')}
+                          suffix={settings.currencySymbol}
+                          showHelper={true}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-[11px] text-emerald-300 flex items-center justify-between font-mono">
+                      <span>ສະຫຼຸບ: 1 {formData.packUnit || 'ແພັກ'} = {formData.packMultiplier || 24} {formData.unit || 'ແກ້ວ'}</span>
+                      <span>ລາຄາສະເລ່ຍ: {Math.round(((Number(formData.packSalePrice) || (Number(formData.salePrice) || 0) * (Number(formData.packMultiplier) || 24)) / (Number(formData.packMultiplier) || 24))).toLocaleString()} {settings.currencySymbol}/{formData.unit || 'ແກ້ວ'}</span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Require Seller Flag */}
@@ -810,15 +1033,272 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
                     setIsAddingNew(false);
                     setEditingProduct(null);
                   }}
-                  className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+                  className="flex-1 min-h-[44px] py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-[0.98] text-slate-300 text-xs sm:text-sm font-semibold cursor-pointer touch-manipulation flex items-center justify-center"
                 >
                   ຍົກເລີກ
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-600 hover:to-rose-600 text-white text-xs font-bold shadow-lg shadow-rose-500/20 cursor-pointer"
+                  onClick={(e) => {
+                    // Fallback directly on touch/click in case native submit is delayed
+                    if (e.isDefaultPrevented()) return;
+                    handleSaveProduct(e);
+                  }}
+                  className="flex-1 min-h-[44px] py-2.5 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-600 hover:to-rose-600 active:scale-[0.98] text-white text-xs sm:text-sm font-bold shadow-lg shadow-rose-500/20 cursor-pointer touch-manipulation flex items-center justify-center"
                 >
                   ບັນທຶກສິນຄ້າ & ຮູບພາບ
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* Dedicated Restock Modal: ຕື່ມສະຕັອກສິນຄ້າ (ບວກເພີ່ມອັດຕະໂນມັດ) */}
+      {/* ============================================================== */}
+      {restockProduct && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-emerald-500/30 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl shadow-emerald-950/40 my-auto">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 bg-gradient-to-r from-emerald-950/70 via-slate-900 to-slate-900 border-b border-emerald-500/20 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                  <PackagePlus className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white flex items-center gap-2">
+                    ຕື່ມສະຕັອກສິນຄ້າ (Restock)
+                  </h3>
+                  <p className="text-xs text-emerald-400/90 font-medium">
+                    ບວກຈຳນວນເພີ່ມໃສ່ສະຕັອກເດີມອັດຕະໂນມັດ
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRestockProduct(null)}
+                className="w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition-all cursor-pointer touch-manipulation"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Form */}
+            <form
+              onSubmit={handleConfirmRestock}
+              className="p-5 sm:p-6 space-y-4"
+              autoComplete="off"
+            >
+              {/* Target Product Badge */}
+              <div className="p-3.5 rounded-2xl bg-slate-800/70 border border-slate-700/80 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[11px] text-slate-400">ສິນຄ້າທີ່ເລືອກ:</div>
+                  <div className="text-sm font-black text-white truncate">
+                    {restockProduct.name}
+                  </div>
+                  <div className="text-[11px] text-slate-400">
+                    ໝວດໝູ່: {categories.find((c) => c.id === restockProduct.category)?.label || restockProduct.category}
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-[11px] text-slate-400">ສະຕັອກເດີມ:</div>
+                  <div className="text-lg font-mono font-black text-amber-400">
+                    {restockProduct.stock}{' '}
+                    <span className="text-xs text-slate-400 font-normal">
+                      {restockProduct.unit}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Multi-unit Restock Toggle (Single bottle vs Pack/Crate) */}
+              {restockProduct.hasMultiUnit && (
+                <div className="p-1.5 bg-slate-950/80 rounded-2xl border border-slate-700/80 flex gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRestockUnitType('single');
+                      setRestockAddAmount(20);
+                    }}
+                    className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer touch-manipulation ${
+                      restockUnitType === 'single'
+                        ? 'bg-amber-500 text-slate-950 shadow-md font-black'
+                        : 'text-slate-300 hover:text-white bg-slate-800/60'
+                    }`}
+                  >
+                    <span>🍾 ຕື່ມແບບ {restockProduct.unit}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRestockUnitType('pack');
+                      setRestockAddAmount(1);
+                    }}
+                    className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer touch-manipulation ${
+                      restockUnitType === 'pack'
+                        ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-md font-black'
+                        : 'text-slate-300 hover:text-white bg-slate-800/60'
+                    }`}
+                  >
+                    <span>📦 ຕື່ມແບບ {restockProduct.packUnit || 'ແພັກ'} (x{restockProduct.packMultiplier || 24} {restockProduct.unit})</span>
+                  </button>
+                </div>
+              )}
+
+              {/* Input for Add Quantity */}
+              <div>
+                <label className="block text-xs font-bold text-slate-200 mb-1.5 flex items-center justify-between">
+                  <span>
+                    ຈຳນວນທີ່ຕ້ອງການບວກເພີ່ມ (+):
+                  </span>
+                  <span className="text-[11px] text-emerald-400 font-normal">
+                    {restockUnitType === 'pack'
+                      ? `1 ${restockProduct.packUnit || 'ແພັກ'} = ${restockProduct.packMultiplier || 24} ${restockProduct.unit}`
+                      : 'ປ້ອນຕົວເລກທີ່ມາຕື່ມ'}
+                  </span>
+                </label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    autoFocus
+                    value={restockAddAmount || ''}
+                    onChange={(e) => setRestockAddAmount(Math.max(0, parseInt(e.target.value) || 0))}
+                    placeholder={restockUnitType === 'pack' ? '1' : '20'}
+                    className="w-full bg-slate-950 border-2 border-emerald-500/50 rounded-2xl px-4 py-3 text-lg font-mono font-bold text-emerald-300 placeholder-slate-600 focus:outline-none focus:ring-4 focus:ring-emerald-500/20 focus:border-emerald-400"
+                  />
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400">
+                    {restockUnitType === 'pack' ? (restockProduct.packUnit || 'ແພັກ') : restockProduct.unit}
+                  </span>
+                </div>
+              </div>
+
+              {/* Quick Preset Buttons */}
+              <div>
+                <div className="text-[11px] font-semibold text-slate-400 mb-2">
+                  ກົດເລືອກຈຳນວນດ່ວນ (Presets):
+                </div>
+                <div className="grid grid-cols-4 gap-2">
+                  {restockUnitType === 'pack'
+                    ? [
+                        { label: '+1 ແພັກ', val: 1 },
+                        { label: '+2 ແພັກ', val: 2 },
+                        { label: '+3 ແພັກ', val: 3 },
+                        { label: '+4 ແພັກ', val: 4 },
+                        { label: '+5 ແພັກ', val: 5 },
+                        { label: '+10 ແພັກ', val: 10 },
+                        { label: '+20 ແພັກ', val: 20 },
+                        { label: '+50 ແພັກ', val: 50 },
+                      ].map((chip) => (
+                        <button
+                          key={chip.val}
+                          type="button"
+                          onClick={() => setRestockAddAmount(chip.val)}
+                          className={`min-h-[40px] px-2 py-1.5 rounded-xl text-xs font-bold font-mono transition-all border cursor-pointer touch-manipulation flex items-center justify-center text-center ${
+                            restockAddAmount === chip.val
+                              ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-md shadow-emerald-500/30'
+                              : 'bg-slate-800/80 hover:bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
+                          }`}
+                        >
+                          {chip.label}
+                        </button>
+                      ))
+                    : [
+                        { label: '+5', val: 5 },
+                        { label: '+10', val: 10 },
+                        { label: '+12 (1 ລັງ)', val: 12 },
+                        { label: '+20', val: 20 },
+                        { label: '+24 (2 ລັງ)', val: 24 },
+                        { label: '+30', val: 30 },
+                        { label: '+50', val: 50 },
+                        { label: '+100', val: 100 },
+                      ].map((chip) => (
+                        <button
+                          key={chip.val}
+                          type="button"
+                          onClick={() => setRestockAddAmount(chip.val)}
+                          className={`min-h-[40px] px-2 py-1.5 rounded-xl text-xs font-bold font-mono transition-all border cursor-pointer touch-manipulation flex items-center justify-center text-center ${
+                            restockAddAmount === chip.val
+                              ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-md shadow-emerald-500/30'
+                              : 'bg-slate-800/80 hover:bg-slate-800 border-slate-700 text-slate-300 hover:text-white'
+                          }`}
+                        >
+                          {chip.label}
+                        </button>
+                      ))}
+                </div>
+              </div>
+
+              {/* Live Calculation Preview Card */}
+              {(() => {
+                const isPack = restockUnitType === 'pack' && !!restockProduct.hasMultiUnit;
+                const multiplier = isPack ? (restockProduct.packMultiplier || 24) : 1;
+                const baseQtyToAdd = (Number(restockAddAmount) || 0) * multiplier;
+                const newTotalBase = Math.max(0, restockProduct.stock + baseQtyToAdd);
+                const packSummary = calculateAvailablePacksAndSingles(
+                  newTotalBase,
+                  restockProduct.packMultiplier || 24,
+                  restockProduct.unit,
+                  restockProduct.packUnit || 'ແພັກ'
+                );
+
+                return (
+                  <div className="p-4 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 space-y-2">
+                    <div className="text-[11px] font-bold text-emerald-400 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>ສະຫຼຸບການບວກສະຕັອກ (Live Summary):</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs text-slate-300 pt-1 border-t border-emerald-500/20 font-mono">
+                      <span>ສະຕັອກເດີມ:</span>
+                      <span className="font-bold text-slate-300">
+                        {restockProduct.stock} {restockProduct.unit}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs text-emerald-400 font-mono">
+                      <span>+ ບວກເພີ່ມເຂົ້າ:</span>
+                      <span className="font-bold text-emerald-400">
+                        +{Number(restockAddAmount) || 0} {isPack ? (restockProduct.packUnit || 'ແພັກ') : restockProduct.unit}
+                        {isPack && ` (${baseQtyToAdd} ${restockProduct.unit})`}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm text-white pt-2 border-t border-emerald-500/30 font-mono">
+                      <span className="font-black text-amber-300">ລວມສະຕັອກໃໝ່ທີ່ຈະໄດ້:</span>
+                      <span className="text-base font-black text-emerald-400 bg-emerald-950/80 px-2.5 py-0.5 rounded-lg border border-emerald-500/40">
+                        {newTotalBase} {restockProduct.unit}
+                        {restockProduct.hasMultiUnit && (
+                          <span className="text-[11px] text-slate-300 font-normal block text-right">
+                            ({packSummary.packs} {restockProduct.packUnit || 'ແພັກ'}{packSummary.singles > 0 ? ` +${packSummary.singles}` : ''})
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Modal Actions */}
+              <div className="flex gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setRestockProduct(null)}
+                  className="flex-1 min-h-[46px] py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-[0.98] text-slate-300 text-xs sm:text-sm font-semibold cursor-pointer touch-manipulation flex items-center justify-center transition-all"
+                >
+                  ຍົກເລີກ
+                </button>
+                <button
+                  type="submit"
+                  onClick={(e) => {
+                    if (e.isDefaultPrevented()) return;
+                    handleConfirmRestock(e);
+                  }}
+                  className="flex-1 min-h-[46px] py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:from-emerald-500 hover:to-teal-500 active:scale-[0.98] text-white text-xs sm:text-sm font-black shadow-lg shadow-emerald-600/30 cursor-pointer touch-manipulation flex items-center justify-center gap-1.5 transition-all"
+                >
+                  <PackagePlus className="w-4 h-4" />
+                  <span>
+                    ຢືນຢັນບວກສະຕັອກ (+{Number(restockAddAmount) || 0} {restockUnitType === 'pack' ? (restockProduct.packUnit || 'ແພັກ') : restockProduct.unit})
+                  </span>
                 </button>
               </div>
             </form>

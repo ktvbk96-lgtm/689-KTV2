@@ -45,6 +45,7 @@ import { appendBillToSheet, syncInventoryToSheet } from './lib/googleSheets';
 import { fetchLatestDataFromGas, sendDataToGas, GasFullDataPayload } from './lib/gasSyncService';
 import { initMultiDeviceSync, pushMultiDeviceUpdate, SyncAction, getDeviceId } from './lib/realtimeSync';
 import { listenToFirebaseStore, pushToFirebaseStore } from './lib/firebaseSync';
+import { deductMultiUnitStockFromCatalog } from './lib/multiUnitInventory';
 import { RefreshCw, CheckCircle2, AlertCircle, Smartphone, Monitor, Globe, Zap } from 'lucide-react';
 
 import { Navbar } from './components/Navbar';
@@ -353,13 +354,22 @@ export default function App() {
     action: SyncAction,
     payload: any
   ) => {
-    // Ensure bills and debts are always captured in full so all devices get immediate Sales Summary & Debt sync
+    // Ensure bills, debts, products, and rooms are always captured in full so all devices and forms get immediate Sales Summary, Debt, Room & Stock sync!
     const currentBills = payload.bills !== undefined ? payload.bills : getStoredBills();
     const currentDebts = payload.debts !== undefined ? payload.debts : getStoredDebts();
+    const currentProducts = payload.products !== undefined ? payload.products : getStoredProducts();
+    const currentRooms = payload.rooms !== undefined ? payload.rooms : getStoredRooms();
+    const currentPackages = payload.packages !== undefined ? payload.packages : getStoredPackages();
+    const currentStaff = payload.staff !== undefined ? payload.staff : getStoredStaff();
+
     const enrichedPayload = {
       ...payload,
       bills: currentBills,
       debts: currentDebts,
+      products: currentProducts,
+      rooms: currentRooms,
+      packages: currentPackages,
+      staff: currentStaff,
     };
 
     // 1. Instantly push to Backend Server & SSE to notify all iOS, Android & Windows devices
@@ -596,18 +606,16 @@ export default function App() {
     setTimeout(() => setToastMessage(''), 3500);
   };
 
-  // Helper: Deduct stock from products
-  const deductProductsStock = (itemsToDeduct: { productId: string; quantity: number }[]) => {
-    const updated = products.map((prod) => {
-      const match = itemsToDeduct.find((i) => i.productId === prod.id);
-      if (match && prod.category !== 'service') {
-        return {
-          ...prod,
-          stock: Math.max(0, prod.stock - match.quantity),
-        };
-      }
-      return prod;
-    });
+  // Helper: Deduct stock from products (Multi-unit aware: single bottle vs pack x24)
+  const deductProductsStock = (
+    itemsToDeduct: {
+      productId: string;
+      quantity: number;
+      multiplier?: number;
+      selectedUnitType?: 'single' | 'pack';
+    }[]
+  ) => {
+    const updated = deductMultiUnitStockFromCatalog(products, itemsToDeduct);
     setProducts(updated);
     saveStoredProducts(updated);
     triggerGasSync('saveProducts', { products: updated });
@@ -622,26 +630,38 @@ export default function App() {
     showToast(`ຍິນດີຕ້ອນຮັບ ${staffMember?.name || (role === 'admin' ? 'Admin' : 'ພະນັກງານ')} ເຂົ້າສູ່ 689 KTV!`);
   };
 
-  // Checkout POS Sale directly
+  // Checkout POS Sale directly (Supports both single bottle & pack x24)
   const handleCheckoutPosSale = (
     cart: CartItem[],
     discount: number,
     paymentMethod: 'cash' | 'transfer',
     cashReceived?: number
   ) => {
-    const subtotal = cart.reduce(
-      (sum, item) =>
-        sum + (item.customPrice !== undefined ? item.customPrice : item.product.salePrice) * item.quantity,
-      0
-    );
+    const subtotal = cart.reduce((sum, item) => {
+      const isPack = item.selectedUnitType === 'pack' && !!item.product.hasMultiUnit;
+      const mult = item.multiplier || (isPack ? (item.product.packMultiplier || 24) : 1);
+      const price =
+        item.customPrice !== undefined
+          ? item.customPrice
+          : isPack && item.product.packSalePrice
+          ? item.product.packSalePrice
+          : item.product.salePrice * (isPack ? mult : 1);
+      return sum + price * item.quantity;
+    }, 0);
+
     const total = Math.max(0, subtotal - discount);
     const dateNow = new Date();
     const dateStr = dateNow.toISOString().slice(0, 10).replace(/-/g, '');
     const billNumber = `689-${dateStr}-${(bills.length + 1).toString().padStart(3, '0')}`;
 
-    // Deduct stock
-    deductProductsStock(
-      cart.map((c) => ({ productId: c.product.id, quantity: c.quantity }))
+    // Deduct stock with proper unit multiplier (single = x1, pack = x24 bottles)
+    const updatedProducts = deductProductsStock(
+      cart.map((c) => ({
+        productId: c.product.id,
+        quantity: c.quantity,
+        multiplier: c.multiplier || (c.selectedUnitType === 'pack' ? (c.product.packMultiplier || 24) : 1),
+        selectedUnitType: c.selectedUnitType,
+      }))
     );
 
     const newBill: BillRecord = {
@@ -651,17 +671,31 @@ export default function App() {
       endTime: dateNow.toISOString(),
       roomCharge: 0,
       items: cart.map((c) => {
-        const unitPrice = c.customPrice !== undefined ? c.customPrice : c.product.salePrice;
+        const isPack = c.selectedUnitType === 'pack' && !!c.product.hasMultiUnit;
+        const multiplier = c.multiplier || (isPack ? (c.product.packMultiplier || 24) : 1);
+        const unitLabel = c.unitLabel || (isPack ? (c.product.packUnit || 'ແພັກ') : c.product.unit);
+        const unitPrice =
+          c.customPrice !== undefined
+            ? c.customPrice
+            : isPack && c.product.packSalePrice
+            ? c.product.packSalePrice
+            : c.product.salePrice * (isPack ? multiplier : 1);
+        const costPrice = isPack
+          ? (c.product.packCostPrice || c.product.costPrice * multiplier)
+          : c.product.costPrice;
+
         return {
           productId: c.product.id,
-          productName: c.product.name,
-          unit: c.product.unit,
+          productName: isPack ? `${c.product.name} (${unitLabel} x${multiplier})` : c.product.name,
+          unit: unitLabel,
           quantity: c.quantity,
+          multiplier,
+          selectedUnitType: c.selectedUnitType,
           price: unitPrice,
           total: unitPrice * c.quantity,
           sellerId: c.sellerId,
           sellerName: c.sellerName,
-          costPrice: c.product.costPrice,
+          costPrice,
         };
       }),
       subtotal,
@@ -676,30 +710,54 @@ export default function App() {
       staffName: currentStaff?.name || (currentRole === 'admin' ? 'Admin' : 'ພະນັກງານ'),
     };
 
+    // Immediately save to Sales Summary (bills storage & state & real-time sync)
+    saveStoredBill(newBill);
+    const updatedBills = getStoredBills();
+    setBills(updatedBills);
+    triggerGasSync('saveBill', { bill: newBill, bills: updatedBills, products: updatedProducts });
+
     setActiveBillingRecord(newBill);
   };
 
-  // Transfer Cart items to a KTV Room
+  // Transfer Cart items to a KTV Room (Multi-unit aware)
   const handleTransferToRoom = (roomId: string, cart: CartItem[]) => {
     const targetRoom = rooms.find((r) => r.id === roomId);
     if (!targetRoom) return;
 
-    // Deduct stock immediately
-    deductProductsStock(
-      cart.map((c) => ({ productId: c.product.id, quantity: c.quantity }))
+    // Deduct stock immediately (handles multiplier e.g. 1 pack * 24 bottles)
+    const updatedProducts = deductProductsStock(
+      cart.map((c) => ({
+        productId: c.product.id,
+        quantity: c.quantity,
+        multiplier: c.multiplier || (c.selectedUnitType === 'pack' ? (c.product.packMultiplier || 24) : 1),
+        selectedUnitType: c.selectedUnitType,
+      }))
     );
 
     const newOrders = cart.map((c) => {
-      const unitPrice = c.customPrice !== undefined ? c.customPrice : c.product.salePrice;
+      const isPack = c.selectedUnitType === 'pack' && !!c.product.hasMultiUnit;
+      const multiplier = c.multiplier || (isPack ? (c.product.packMultiplier || 24) : 1);
+      const unitLabel = c.unitLabel || (isPack ? (c.product.packUnit || 'ແພັກ') : c.product.unit);
+      const unitPrice =
+        c.customPrice !== undefined
+          ? c.customPrice
+          : isPack && c.product.packSalePrice
+          ? c.product.packSalePrice
+          : c.product.salePrice * (isPack ? multiplier : 1);
+
       return {
         id: 'ord-' + Date.now() + Math.random().toString(36).substr(2, 4),
         product: c.product,
         quantity: c.quantity,
+        selectedUnitType: c.selectedUnitType,
+        unitLabel,
+        multiplier,
         price: unitPrice,
         orderedAt: new Date().toISOString(),
         sellerId: c.sellerId,
         sellerName: c.sellerName,
         customPrice: c.customPrice,
+        isStockDeducted: true,
       };
     });
 
@@ -715,8 +773,8 @@ export default function App() {
 
     setRooms(updatedRooms);
     saveStoredRooms(updatedRooms);
-    triggerGasSync('saveRooms', { rooms: updatedRooms });
-    showToast(`ໂອນ ${cart.length} ລາຍການ ເຂົ້າ ${targetRoom.name} ສຳເລັດແລ້ວ!`);
+    triggerGasSync('saveRooms', { rooms: updatedRooms, products: updatedProducts });
+    showToast(`ໂອນ ${cart.length} ລາຍການ ເຂົ້າ ${targetRoom.name} ແລະ ຫັກສະຕັອກສຳເລັດແລ້ວ!`);
   };
 
   // Checkout KTV Room
@@ -772,17 +830,24 @@ export default function App() {
       pricingType: room.pricingType,
       roomCharge: effectiveRoomCharge,
       isRoomChargePaid: !!room.isPaid,
-      items: room.orders.map((o) => ({
-        productId: o.product.id,
-        productName: o.product.name,
-        unit: o.product.unit,
-        quantity: o.quantity,
-        price: o.price,
-        total: o.price * o.quantity,
-        sellerId: o.sellerId,
-        sellerName: o.sellerName,
-        costPrice: o.product.costPrice,
-      })),
+      items: room.orders.map((o) => {
+        const isPack = o.selectedUnitType === 'pack' && !!o.product.hasMultiUnit;
+        const multiplier = o.multiplier || (isPack ? (o.product.packMultiplier || 24) : 1);
+        const unitLabel = o.unitLabel || (isPack ? (o.product.packUnit || 'ແພັກ') : o.product.unit);
+        return {
+          productId: o.product.id,
+          productName: isPack ? `${o.product.name} (${unitLabel} x${multiplier})` : o.product.name,
+          unit: unitLabel,
+          quantity: o.quantity,
+          multiplier,
+          selectedUnitType: o.selectedUnitType,
+          price: o.price,
+          total: o.price * o.quantity,
+          sellerId: o.sellerId,
+          sellerName: o.sellerName,
+          costPrice: isPack ? (o.product.packCostPrice || o.product.costPrice * multiplier) : o.product.costPrice,
+        };
+      }),
       subtotal,
       discount: 0,
       tax: 0,
@@ -794,6 +859,20 @@ export default function App() {
       },
       staffName: currentStaff?.name || (currentRole === 'admin' ? 'Admin' : 'ພະນັກງານ'),
     };
+
+    // Deduct stock for any room orders not yet deducted (Multi-unit aware: single bottle vs pack x24)
+    const undeductedOrders = (room.orders || []).filter((o: any) => !o.isStockDeducted && o.product?.category !== 'service');
+    let latestProducts = products;
+    if (undeductedOrders.length > 0) {
+      latestProducts = deductProductsStock(
+        undeductedOrders.map((o) => ({
+          productId: o.product.id,
+          quantity: o.quantity,
+          multiplier: o.multiplier || (o.selectedUnitType === 'pack' ? (o.product.packMultiplier || 24) : 1),
+          selectedUnitType: o.selectedUnitType,
+        }))
+      );
+    }
 
     // Reset room status to available - CLEAR EVERYTHING COMPLETELY (hours: 0, orders: [], session dates cleared)
     const updatedRooms = rooms.map((r) => {
@@ -818,7 +897,13 @@ export default function App() {
 
     setRooms(updatedRooms);
     saveStoredRooms(updatedRooms);
-    triggerGasSync('saveRooms', { rooms: updatedRooms });
+    triggerGasSync('saveRooms', { rooms: updatedRooms, products: latestProducts });
+
+    // Immediately save bill to Sales Summary (bills storage & state & real-time sync)
+    saveStoredBill(newBill);
+    const updatedBills = getStoredBills();
+    setBills(updatedBills);
+    triggerGasSync('saveBill', { bill: newBill, bills: updatedBills, products: latestProducts, rooms: updatedRooms });
 
     setActiveBillingRecord(newBill);
   };
@@ -945,7 +1030,7 @@ export default function App() {
   return (
     <div
       style={appFontSizeStyle}
-      className={`min-h-screen ${themeConfig.bgClass} flex flex-col font-sans selection:bg-rose-500 selection:text-white transition-colors duration-300`}
+      className={`w-full min-h-[100dvh] overflow-x-hidden ${themeConfig.bgClass} flex flex-col font-sans selection:bg-rose-500 selection:text-white transition-colors duration-300`}
     >
       {/* 4-Digit PIN Lock Screen Modal (Right after opening or when locked) */}
       {!isAuthenticated && (
@@ -1025,11 +1110,11 @@ export default function App() {
         </div>
       </div>
 
-      {/* Toast Notification Banner */}
+      {/* Toast Notification Banner (Centered on Mobile & Tablet, Bottom-Right on Desktop) */}
       {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-50 bg-gradient-to-r from-rose-600 to-amber-600 text-white px-4 py-2.5 rounded-2xl shadow-2xl border border-white/20 text-xs font-bold animate-bounce flex items-center gap-2">
-          <span>✨</span>
-          <span>{toastMessage}</span>
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 sm:left-auto sm:right-6 sm:translate-x-0 z-50 bg-gradient-to-r from-rose-600 via-amber-600 to-emerald-600 text-white px-5 py-3 rounded-2xl shadow-2xl border border-white/20 text-xs sm:text-sm font-bold flex items-center gap-2.5 max-w-[92vw] text-center pointer-events-none transition-all animate-bounce">
+          <span className="text-base">✨</span>
+          <span className="break-words">{toastMessage}</span>
         </div>
       )}
 
@@ -1074,6 +1159,7 @@ export default function App() {
               setProducts(updated);
               saveStoredProducts(updated);
               triggerGasSync('saveProducts', { products: updated });
+              showToast('✅ ບັນທຶກ ແລະ ອັບເດດສະຕັອກສິນຄ້າສຳເລັດແລ້ວ!');
             }}
           />
         )}
@@ -1125,6 +1211,9 @@ export default function App() {
               triggerGasSync('saveBills', { bills: [] });
               showToast('ລ້າງປະຫວັດບິນທັງໝົດສຳເລັດແລ້ວ!');
             }}
+            onReprintBill={(bill) => setActiveBillingRecord(bill)}
+            bluetoothConnected={bluetoothConnected}
+            onOpenBluetoothSetup={() => setShowBluetoothModal(true)}
           />
         )}
 

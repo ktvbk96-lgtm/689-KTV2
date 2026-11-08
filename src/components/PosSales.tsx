@@ -21,6 +21,8 @@ import {
   Check,
   X,
   DollarSign,
+  Package,
+  Boxes,
 } from 'lucide-react';
 import { Product, ProductCategory, CartItem, StaffMember, Room, AppSettings } from '../types';
 import { formatCurrency } from '../lib/storage';
@@ -29,6 +31,10 @@ import {
   formatWithSeparators,
   parseCleanNumber,
 } from './FormattedNumberInput';
+import {
+  calculateAvailablePacksAndSingles,
+  checkMultiUnitStockAvailability,
+} from '../lib/multiUnitInventory';
 
 interface PosSalesProps {
   products: Product[];
@@ -61,6 +67,7 @@ export const PosSales: React.FC<PosSalesProps> = ({
 
   // Seller selection modal for items that require seller
   const [pendingProduct, setPendingProduct] = useState<Product | null>(null);
+  const [pendingUnitType, setPendingUnitType] = useState<'single' | 'pack'>('single');
   const [pendingQty, setPendingQty] = useState<number>(1);
   const [pendingPrice, setPendingPrice] = useState<string>('');
   const [selectedSellerId, setSelectedSellerId] = useState<string>('');
@@ -164,25 +171,47 @@ export const PosSales: React.FC<PosSalesProps> = ({
   });
 
   const getItemUnitPrice = (item: CartItem) => {
-    return item.customPrice !== undefined ? item.customPrice : item.product.salePrice;
+    if (item.customPrice !== undefined) return item.customPrice;
+    const isPack = item.selectedUnitType === 'pack' && !!item.product.hasMultiUnit;
+    if (isPack) {
+      return item.product.packSalePrice && item.product.packSalePrice > 0
+        ? item.product.packSalePrice
+        : item.product.salePrice * (item.multiplier || item.product.packMultiplier || 24);
+    }
+    return item.product.salePrice;
   };
 
-  const handleProductClick = (product: Product) => {
+  const handleProductClick = (product: Product, unitType: 'single' | 'pack' = 'single') => {
     if (product.stock <= 0 && product.category !== 'service') {
       alert(`ສິນຄ້າ "${product.name}" ໝົດສະຕັອກແລ້ວ! ບໍ່ສາມາດຂາຍໄດ້`);
       return;
     }
 
+    const isPack = unitType === 'pack' && !!product.hasMultiUnit;
+    const multiplier = isPack ? (product.packMultiplier || 24) : 1;
+
+    if (product.category !== 'service' && product.stock < multiplier) {
+      const packLabel = product.packUnit || 'ແພັກ';
+      alert(
+        `⚠️ ສະຕັອກບໍ່ພໍຂາຍແບບ ${packLabel}!\nສິນຄ້າ "${product.name}" ເຫຼືອພຽງ ${product.stock} ${product.unit} (1 ${packLabel} ຕ້ອງການ ${multiplier} ${product.unit})`
+      );
+      return;
+    }
+
     if (product.requireSeller) {
       setPendingProduct(product);
+      setPendingUnitType(unitType);
       setPendingQty(1);
-      setPendingPrice(formatWithSeparators(product.salePrice));
+      const defaultPrice = isPack
+        ? (product.packSalePrice && product.packSalePrice > 0 ? product.packSalePrice : product.salePrice * multiplier)
+        : product.salePrice;
+      setPendingPrice(formatWithSeparators(defaultPrice));
       setSelectedSellerId(''); // ComboBox starts blank/empty as requested!
       setSellerModalError('');
       return;
     }
 
-    addToCart(product, 1);
+    addToCart(product, 1, undefined, undefined, undefined, unitType);
   };
 
   const confirmSellerSelection = () => {
@@ -199,7 +228,7 @@ export const PosSales: React.FC<PosSalesProps> = ({
       return;
     }
     const seller = staffList.find((s) => s.id === selectedSellerId);
-    addToCart(pendingProduct, pendingQty, selectedSellerId, seller?.name, numericPrice);
+    addToCart(pendingProduct, pendingQty, selectedSellerId, seller?.name, numericPrice, pendingUnitType);
     setPendingProduct(null);
     setSellerModalError('');
   };
@@ -209,25 +238,27 @@ export const PosSales: React.FC<PosSalesProps> = ({
     quantity: number,
     sellerId?: string,
     sellerName?: string,
-    customPrice?: number
+    customPrice?: number,
+    unitType: 'single' | 'pack' = 'single'
   ) => {
+    const isPack = unitType === 'pack' && !!product.hasMultiUnit;
+    const multiplier = isPack ? (product.packMultiplier || 24) : 1;
+    const unitLabel = isPack ? (product.packUnit || 'ແພັກ') : product.unit;
+
+    const check = checkMultiUnitStockAvailability(product, cart, quantity, unitType);
+    if (!check.isAvailable) {
+      alert(check.errorMessage || `ສະຕັອກບໍ່ພຽງພໍ!`);
+      return;
+    }
+
     setCart((prev) => {
       const existingIndex = prev.findIndex(
         (item) =>
           item.product.id === product.id &&
           item.sellerId === sellerId &&
-          item.customPrice === customPrice
+          item.customPrice === customPrice &&
+          (item.selectedUnitType || 'single') === unitType
       );
-
-      const currentQtyInCart = existingIndex > -1 ? prev[existingIndex].quantity : 0;
-      const totalRequested = currentQtyInCart + quantity;
-
-      if (product.category !== 'service' && totalRequested > product.stock) {
-        alert(
-          `ບໍ່ສາມາດເພີ່ມໄດ້! ສະຕັອກຄົງເຫຼືອພຽງ ${product.stock} ${product.unit} (ໃນກະຕ່າແລ້ວ ${currentQtyInCart})`
-        );
-        return prev;
-      }
 
       if (existingIndex > -1) {
         const updated = [...prev];
@@ -240,6 +271,9 @@ export const PosSales: React.FC<PosSalesProps> = ({
         {
           product,
           quantity,
+          selectedUnitType: unitType,
+          unitLabel,
+          multiplier,
           sellerId,
           sellerName,
           customPrice,
@@ -255,8 +289,16 @@ export const PosSales: React.FC<PosSalesProps> = ({
     }
 
     const item = cart[index];
-    if (item.product.category !== 'service' && newQty > item.product.stock) {
-      alert(`ສະຕັອກສິນຄ້າ "${item.product.name}" ມີພຽງ ${item.product.stock} ${item.product.unit}`);
+    const otherItems = cart.filter((_, idx) => idx !== index);
+    const check = checkMultiUnitStockAvailability(
+      item.product,
+      otherItems,
+      newQty,
+      item.selectedUnitType || 'single'
+    );
+
+    if (!check.isAvailable) {
+      alert(check.errorMessage || `ສະຕັອກສິນຄ້າ "${item.product.name}" ບໍ່ພຽງພໍ!`);
       return;
     }
 
@@ -544,7 +586,7 @@ export const PosSales: React.FC<PosSalesProps> = ({
                         </span>
                       </div>
 
-                      {/* Stock Alert Badge */}
+                      {/* Stock Alert Badge (Multi-unit aware) */}
                       <div className="absolute top-1.5 right-1.5">
                         {isOutOfStock ? (
                           <span className="flex items-center gap-1 text-[9px] font-bold text-rose-300 bg-rose-950/90 border border-rose-700 px-1.5 py-0.5 rounded-full animate-pulse shadow">
@@ -555,6 +597,10 @@ export const PosSales: React.FC<PosSalesProps> = ({
                           <span className="flex items-center gap-1 text-[9px] font-bold text-amber-300 bg-amber-950/90 border border-amber-600 px-1.5 py-0.5 rounded-full shadow">
                             <AlertTriangle className="w-2.5 h-2.5 text-amber-400" />
                             <span>ໃກ້ໝົດ ({product.stock})</span>
+                          </span>
+                        ) : product.hasMultiUnit ? (
+                          <span className="text-[9px] font-bold text-emerald-300 bg-slate-900/90 px-1.5 py-0.5 rounded-md backdrop-blur-sm border border-emerald-500/40">
+                            {calculateAvailablePacksAndSingles(product.stock, product.packMultiplier || 24, product.unit, product.packUnit || 'ແພັກ').formatted}
                           </span>
                         ) : (
                           <span className="text-[9px] font-medium text-slate-200 bg-slate-900/80 px-1.5 py-0.5 rounded-md backdrop-blur-sm border border-slate-700/60">
@@ -569,6 +615,14 @@ export const PosSales: React.FC<PosSalesProps> = ({
                       {product.name}
                     </h3>
 
+                    {/* Multi-unit pack multiplier indicator */}
+                    {product.hasMultiUnit && (
+                      <div className="flex items-center gap-1 text-[10px] text-amber-300 font-semibold mb-1">
+                        <Package className="w-3 h-3 text-amber-400 shrink-0" />
+                        <span>1 {product.packUnit || 'ແພັກ'} = {product.packMultiplier || 24} {product.unit}</span>
+                      </div>
+                    )}
+
                     {product.requireSeller && (
                       <span className="inline-flex items-center gap-1 text-[10px] text-fuchsia-300 bg-fuchsia-950/60 px-1.5 py-0.5 rounded border border-fuchsia-800/50 mb-1">
                         <User className="w-3 h-3" />
@@ -577,24 +631,91 @@ export const PosSales: React.FC<PosSalesProps> = ({
                     )}
                   </div>
 
-                  <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between">
-                    <span className={`text-sm font-extrabold font-mono ${catStyle.priceColor}`}>
-                      {formatCurrency(product.salePrice, settings.currencySymbol)}
-                    </span>
-
-                    {isOutOfStock ? (
-                      <span className="text-[11px] font-bold text-rose-500 bg-rose-500/10 px-2 py-1 rounded-xl">
-                        ຫ້າມຂາຍ
-                      </span>
-                    ) : (
+                  {/* Multi-Unit Selling Buttons vs Standard Single Button */}
+                  {product.hasMultiUnit ? (
+                    <div className="mt-2.5 pt-2 border-t border-slate-800/80 space-y-1.5">
+                      {/* Button A: ຂາຍແບບແກ້ວ/ຂວດ */}
                       <button
                         type="button"
-                        className={`p-1.5 rounded-xl bg-slate-800 ${catStyle.btnBg} text-slate-300 transition-all shadow-sm`}
+                        disabled={isOutOfStock}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleProductClick(product, 'single');
+                        }}
+                        className="w-full min-h-[38px] py-1.5 px-2 rounded-xl bg-slate-800/90 hover:bg-slate-750 active:scale-[0.98] text-left flex items-center justify-between border border-slate-700 transition-all cursor-pointer touch-manipulation disabled:opacity-40"
+                        title={`ກົດຂາຍ 1 ${product.unit}`}
                       >
-                        <Plus className="w-4 h-4" />
+                        <span className="text-[11px] font-bold text-slate-200 flex items-center gap-1">
+                          <span>🍾</span>
+                          <span>1 {product.unit}</span>
+                        </span>
+                        <span className="text-xs font-mono font-bold text-amber-400">
+                          {formatCurrency(product.salePrice, settings.currencySymbol)}
+                        </span>
                       </button>
-                    )}
-                  </div>
+
+                      {/* Button B: ຂາຍແບບແພັກ/ລັງ */}
+                      {(() => {
+                        const mult = product.packMultiplier || 24;
+                        const packLabel = product.packUnit || 'ແພັກ';
+                        const packPrice =
+                          product.packSalePrice && product.packSalePrice > 0
+                            ? product.packSalePrice
+                            : product.salePrice * mult;
+                        const canSellPack = product.stock >= mult || product.category === 'service';
+
+                        return (
+                          <button
+                            type="button"
+                            disabled={!canSellPack}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleProductClick(product, 'pack');
+                            }}
+                            className={`w-full min-h-[38px] py-1.5 px-2 rounded-xl text-left flex items-center justify-between border transition-all cursor-pointer touch-manipulation active:scale-[0.98] ${
+                              canSellPack
+                                ? 'bg-gradient-to-r from-emerald-950/90 to-teal-950/90 hover:from-emerald-900 hover:to-teal-900 border-emerald-600/60 text-white shadow-sm'
+                                : 'bg-slate-900/60 border-slate-800 text-slate-500 opacity-60 cursor-not-allowed'
+                            }`}
+                            title={canSellPack ? `ກົດຂາຍ 1 ${packLabel} (ລວມ ${mult} ${product.unit})` : `ສະຕັອກບໍ່ພໍສຳລັບ 1 ${packLabel}`}
+                          >
+                            <span className="text-[11px] font-bold flex items-center gap-1">
+                              <span>📦</span>
+                              <span>1 {packLabel} <span className="text-[10px] opacity-80 font-normal">({mult})</span></span>
+                            </span>
+                            <span className="text-xs font-mono font-black text-emerald-400">
+                              {canSellPack ? formatCurrency(packPrice, settings.currencySymbol) : 'ແພັກໝົດ'}
+                            </span>
+                          </button>
+                        );
+                      })()}
+                    </div>
+                  ) : (
+                    /* Standard Single Price & Plus Button */
+                    <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between">
+                      <span className={`text-sm font-extrabold font-mono ${catStyle.priceColor}`}>
+                        {formatCurrency(product.salePrice, settings.currencySymbol)}
+                      </span>
+
+                      {isOutOfStock ? (
+                        <span className="text-[11px] font-bold text-rose-500 bg-rose-500/10 px-2 py-1 rounded-xl">
+                          ຫ້າມຂາຍ
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleProductClick(product, 'single');
+                          }}
+                          className={`min-h-[36px] min-w-[36px] p-2 rounded-xl bg-slate-800 ${catStyle.btnBg} text-slate-300 transition-all shadow-sm cursor-pointer touch-manipulation flex items-center justify-center`}
+                          title={`ກົດຂາຍ 1 ${product.unit}`}
+                        >
+                          <Plus className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -648,9 +769,29 @@ export const PosSales: React.FC<PosSalesProps> = ({
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1 min-w-0">
-                          <h4 className="text-xs font-bold text-slate-100 truncate">
-                            {item.product.name}
-                          </h4>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <h4 className="text-xs font-bold text-slate-100 truncate">
+                              {item.product.name}
+                            </h4>
+                            {item.selectedUnitType === 'pack' ? (
+                              <span className="text-[10px] font-black text-emerald-300 bg-emerald-950/90 border border-emerald-500/50 px-1.5 py-0.5 rounded-md font-mono flex items-center gap-1">
+                                <span>📦</span>
+                                <span>{item.unitLabel || 'ແພັກ'} (x{item.multiplier || item.product.packMultiplier || 24})</span>
+                              </span>
+                            ) : item.product.hasMultiUnit ? (
+                              <span className="text-[10px] font-semibold text-amber-300 bg-amber-950/70 border border-amber-500/30 px-1.5 py-0.5 rounded-md font-mono flex items-center gap-1">
+                                <span>🍾</span>
+                                <span>{item.unitLabel || item.product.unit}</span>
+                              </span>
+                            ) : null}
+                          </div>
+
+                          {/* Equivalent calculation for pack */}
+                          {item.selectedUnitType === 'pack' && (
+                            <div className="text-[10px] text-emerald-400 font-mono mt-0.5">
+                              {item.quantity} {item.unitLabel || 'ແພັກ'} = {item.quantity * (item.multiplier || item.product.packMultiplier || 24)} {item.product.unit}
+                            </div>
+                          )}
 
                           {/* Price & Custom Price Input */}
                           <div className="flex items-center gap-2 mt-1">
@@ -669,7 +810,7 @@ export const PosSales: React.FC<PosSalesProps> = ({
                                 <button
                                   type="button"
                                   onClick={() => handleSaveCustomPrice(idx)}
-                                  className="p-1 rounded bg-emerald-600 text-white cursor-pointer"
+                                  className="p-1 rounded bg-emerald-600 text-white cursor-pointer touch-manipulation"
                                   title="ບັນທຶກລາຄາ"
                                 >
                                   <Check className="w-3 h-3" />
@@ -677,7 +818,7 @@ export const PosSales: React.FC<PosSalesProps> = ({
                                 <button
                                   type="button"
                                   onClick={() => handleResetToStandardPrice(idx)}
-                                  className="p-1 rounded bg-slate-700 text-slate-300 cursor-pointer"
+                                  className="p-1 rounded bg-slate-700 text-slate-300 cursor-pointer touch-manipulation"
                                   title="ໃຊ້ລາຄາມາດຕະຖານ"
                                 >
                                   <X className="w-3 h-3" />
@@ -687,11 +828,14 @@ export const PosSales: React.FC<PosSalesProps> = ({
                               <button
                                 type="button"
                                 onClick={() => handleStartEditPrice(idx, unitPrice)}
-                                className="group/price flex items-center gap-1 text-[11px] font-mono text-amber-400 hover:text-amber-300 cursor-pointer bg-slate-900/60 px-2 py-0.5 rounded-lg border border-slate-700/80"
+                                className="group/price flex items-center gap-1 text-[11px] font-mono text-amber-400 hover:text-amber-300 cursor-pointer bg-slate-900/60 px-2 py-0.5 rounded-lg border border-slate-700/80 touch-manipulation"
                                 title="ກົດເພື່ອປ້ອນລາຄາເອງ"
                               >
                                 <span className="font-bold">
                                   {formatCurrency(unitPrice, settings.currencySymbol)}
+                                </span>
+                                <span className="text-[10px] text-slate-400 font-sans">
+                                  /{item.unitLabel || (item.selectedUnitType === 'pack' ? (item.product.packUnit || 'ແພັກ') : item.product.unit)}
                                 </span>
                                 {isCustomPrice ? (
                                   <span className="text-[9px] text-amber-300 bg-amber-950/80 px-1 rounded border border-amber-500/40 font-sans">
@@ -708,25 +852,32 @@ export const PosSales: React.FC<PosSalesProps> = ({
                         {/* Quantity modifier */}
                         <div className="flex items-center gap-1 bg-slate-900 rounded-xl p-1 border border-slate-700">
                           <button
+                            type="button"
                             onClick={() => updateQuantity(idx, item.quantity - 1)}
-                            className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-200 transition-colors cursor-pointer"
+                            className="min-h-[28px] min-w-[28px] rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-200 transition-colors cursor-pointer touch-manipulation"
                           >
-                            <Minus className="w-3 h-3" />
+                            <Minus className="w-3.5 h-3.5" />
                           </button>
-                          <span className="w-6 text-center text-xs font-bold font-mono text-white">
-                            {item.quantity}
-                          </span>
+                          <div className="px-1 text-center font-mono">
+                            <span className="text-xs font-bold text-white block">
+                              {item.quantity}
+                            </span>
+                            <span className="text-[9px] text-slate-400 block font-sans">
+                              {item.unitLabel || (item.selectedUnitType === 'pack' ? (item.product.packUnit || 'ແພັກ') : item.product.unit)}
+                            </span>
+                          </div>
                           <button
+                            type="button"
                             onClick={() => updateQuantity(idx, item.quantity + 1)}
-                            className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-200 transition-colors cursor-pointer"
+                            className="min-h-[28px] min-w-[28px] rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-200 transition-colors cursor-pointer touch-manipulation"
                           >
-                            <Plus className="w-3 h-3" />
+                            <Plus className="w-3.5 h-3.5" />
                           </button>
                         </div>
 
                         {/* Line Total */}
                         <div className="text-right min-w-[70px]">
-                          <span className="text-xs font-black text-slate-100 font-mono">
+                          <span className="text-xs font-black text-slate-100 font-mono block">
                             {formatCurrency(unitPrice * item.quantity, settings.currencySymbol)}
                           </span>
                         </div>
@@ -911,32 +1062,79 @@ export const PosSales: React.FC<PosSalesProps> = ({
               </div>
             )}
 
+            {/* Multi-unit Selection Switch inside Modal */}
+            {pendingProduct.hasMultiUnit && (
+              <div className="mb-4 p-1.5 bg-slate-950/80 rounded-2xl border border-slate-700/80 flex gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingUnitType('single');
+                    setPendingPrice(formatWithSeparators(pendingProduct.salePrice));
+                  }}
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer touch-manipulation ${
+                    pendingUnitType === 'single'
+                      ? 'bg-amber-500 text-slate-950 shadow-md font-black'
+                      : 'text-slate-300 hover:text-white bg-slate-800/60'
+                  }`}
+                >
+                  <span>🍾 ຂາຍແບບ {pendingProduct.unit}</span>
+                  <span className="font-mono text-[10px]">({formatCurrency(pendingProduct.salePrice, settings.currencySymbol)})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingUnitType('pack');
+                    const mult = pendingProduct.packMultiplier || 24;
+                    const packPrice =
+                      pendingProduct.packSalePrice && pendingProduct.packSalePrice > 0
+                        ? pendingProduct.packSalePrice
+                        : pendingProduct.salePrice * mult;
+                    setPendingPrice(formatWithSeparators(packPrice));
+                  }}
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer touch-manipulation ${
+                    pendingUnitType === 'pack'
+                      ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-md font-black'
+                      : 'text-slate-300 hover:text-white bg-slate-800/60'
+                  }`}
+                >
+                  <span>📦 ຂາຍແບບ {pendingProduct.packUnit || 'ແພັກ'} (x{pendingProduct.packMultiplier || 24})</span>
+                </button>
+              </div>
+            )}
+
             <div className="space-y-3.5 mb-5">
               <div>
-                <label className="block text-xs text-slate-400 mb-1.5 font-medium">
-                  ຈຳນວນທີ່ຕ້ອງການຂາຍ:
+                <label className="block text-xs text-slate-400 mb-1.5 font-medium flex items-center justify-between">
+                  <span>ຈຳນວນທີ່ຕ້ອງການຂາຍ:</span>
+                  <span className="text-emerald-400 font-mono text-[11px]">
+                    {pendingUnitType === 'pack'
+                      ? `ຫັກສະຕັອກ: ${pendingQty} × ${pendingProduct.packMultiplier || 24} = ${pendingQty * (pendingProduct.packMultiplier || 24)} ${pendingProduct.unit}`
+                      : `ຫັກສະຕັອກ: ${pendingQty} ${pendingProduct.unit}`}
+                  </span>
                 </label>
                 <div className="flex items-center gap-2 bg-slate-800 p-2 rounded-xl border border-slate-700">
                   <button
                     type="button"
                     onClick={() => setPendingQty(Math.max(1, pendingQty - 1))}
-                    className="w-8 h-8 rounded-lg bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-white cursor-pointer"
+                    className="min-h-[36px] min-w-[36px] rounded-lg bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-white cursor-pointer touch-manipulation"
                   >
                     <Minus className="w-4 h-4" />
                   </button>
                   <span className="flex-1 text-center font-mono font-bold text-sm text-white">
-                    {pendingQty} {pendingProduct.unit}
+                    {pendingQty} {pendingUnitType === 'pack' ? (pendingProduct.packUnit || 'ແພັກ') : pendingProduct.unit}
                   </span>
                   <button
                     type="button"
-                    onClick={() =>
-                      setPendingQty(
-                        pendingProduct.category === 'service'
-                          ? pendingQty + 1
-                          : Math.min(pendingProduct.stock, pendingQty + 1)
-                      )
-                    }
-                    className="w-8 h-8 rounded-lg bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-white cursor-pointer"
+                    onClick={() => {
+                      const mult = pendingUnitType === 'pack' ? (pendingProduct.packMultiplier || 24) : 1;
+                      const maxUnits = Math.floor(pendingProduct.stock / mult);
+                      if (pendingProduct.category !== 'service' && pendingQty >= maxUnits) {
+                        alert(`ສະຕັອກສິນຄ້າ "${pendingProduct.name}" ເຫຼືອພຽງ ${pendingProduct.stock} ${pendingProduct.unit} (ຂາຍໄດ້ສູງສຸດ ${maxUnits} ${pendingUnitType === 'pack' ? (pendingProduct.packUnit || 'ແພັກ') : pendingProduct.unit})`);
+                        return;
+                      }
+                      setPendingQty(pendingQty + 1);
+                    }}
+                    className="min-h-[36px] min-w-[36px] rounded-lg bg-slate-700 hover:bg-slate-600 flex items-center justify-center text-white cursor-pointer touch-manipulation"
                   >
                     <Plus className="w-4 h-4" />
                   </button>

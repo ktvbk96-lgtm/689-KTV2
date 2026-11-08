@@ -176,7 +176,23 @@ async function startServer() {
 
       let hasChanged = false;
 
-      // Always capture updated debts whenever present in payload
+      // 1. Always capture and persist products whenever present in payload (Real-time Stock Sync across all forms)
+      if (Array.isArray(data?.products)) {
+        if (JSON.stringify(store.products) !== JSON.stringify(data.products)) {
+          store.products = data.products;
+          hasChanged = true;
+        }
+      }
+
+      // 2. Always capture and persist rooms whenever present in payload (Real-time Room Status Sync)
+      if (Array.isArray(data?.rooms)) {
+        if (JSON.stringify(store.rooms) !== JSON.stringify(data.rooms)) {
+          store.rooms = data.rooms;
+          hasChanged = true;
+        }
+      }
+
+      // 3. Always capture updated debts whenever present in payload
       if (Array.isArray(data?.debts)) {
         if (JSON.stringify(store.debts) !== JSON.stringify(data.debts)) {
           store.debts = data.debts;
@@ -184,7 +200,7 @@ async function startServer() {
         }
       }
 
-      // Always capture updated bills whenever present in payload
+      // 4. Always capture updated bills whenever present in payload
       if (Array.isArray(data?.bills)) {
         if (JSON.stringify(store.bills) !== JSON.stringify(data.bills)) {
           store.bills = data.bills;
@@ -192,6 +208,7 @@ async function startServer() {
         }
       }
 
+      // Action-specific handlers
       if (action === 'saveRooms' && Array.isArray(data?.rooms)) {
         store.rooms = data.rooms;
         hasChanged = true;

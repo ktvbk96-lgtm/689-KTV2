@@ -318,6 +318,10 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
   const handleOpenRoomSubmit = () => {
     if (!openingRoom) return;
 
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+
     const staff = staffList.find((s) => s.id === openedByStaffId) || currentStaff;
     const pkg = packages.find((p) => p.id === selectedPackageId);
     let effectiveHours = pricingChoice === 'package' ? packageHours : bookedHours;
@@ -492,6 +496,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
       orderedAt: new Date().toISOString(),
       sellerId: seller?.id,
       sellerName: seller?.name,
+      isStockDeducted: false,
     };
 
     const updatedRoom: Room = {
@@ -534,6 +539,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
       orderedAt: new Date().toISOString(),
       sellerId: server?.id,
       sellerName: server?.name,
+      isStockDeducted: false,
     };
 
     const updatedRoom: Room = {
@@ -1703,14 +1709,14 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
               <button
                 type="button"
                 onClick={() => setOpeningRoom(null)}
-                className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+                className="flex-1 min-h-[44px] py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-[0.98] text-slate-300 text-xs sm:text-sm font-semibold cursor-pointer touch-manipulation flex items-center justify-center"
               >
                 ຍົກເລີກ
               </button>
               <button
                 type="button"
                 onClick={handleOpenRoomSubmit}
-                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/30 cursor-pointer"
+                className="flex-1 min-h-[44px] py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-[0.98] text-white text-xs sm:text-sm font-bold shadow-lg shadow-emerald-600/30 cursor-pointer touch-manipulation flex items-center justify-center"
               >
                 {isOpenRoomPaid
                   ? 'ຢືນຢັນເປີດຫ້ອງ (ຈ່າຍແລ້ວ • ຄິດໄລ່ແຕ່ເວລາ)'
