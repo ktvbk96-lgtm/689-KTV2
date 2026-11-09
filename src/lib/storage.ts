@@ -8,6 +8,7 @@ import {
   INITIAL_DEBTS,
   DEFAULT_GAS_WEBAPP_URL,
 } from './initialData';
+import { normalizeImageUrl } from './imageUtils';
 
 const STORAGE_KEYS = {
   PRODUCTS: '689ktv_products',
@@ -37,6 +38,12 @@ export const getStoredProducts = (): Product[] => {
       if (!newItem.imageUrl && init?.imageUrl) {
         newItem.imageUrl = init.imageUrl;
         itemChanged = true;
+      } else if (newItem.imageUrl) {
+        const normalized = normalizeImageUrl(newItem.imageUrl);
+        if (normalized !== newItem.imageUrl) {
+          newItem.imageUrl = normalized;
+          itemChanged = true;
+        }
       }
 
       if (newItem.hasMultiUnit === undefined && init?.hasMultiUnit) {
@@ -144,9 +151,9 @@ export const getStoredSettings = (): AppSettings => {
   }
   try {
     const parsed = JSON.parse(data);
-    // If gasWebAppUrl is empty or not set, auto-fill with the embedded DEFAULT_GAS_WEBAPP_URL
-    if (!parsed.gasWebAppUrl || parsed.gasWebAppUrl.trim() === '') {
-      parsed.gasWebAppUrl = DEFAULT_GAS_WEBAPP_URL;
+    // Filter out old dummy placeholder URL if previously saved
+    if (parsed.gasWebAppUrl && parsed.gasWebAppUrl.includes('AKfycbwP7K5U-POS-689KTV-WEBAPP')) {
+      parsed.gasWebAppUrl = '';
     }
     if (parsed.realtimeSyncEnabled === undefined) {
       parsed.realtimeSyncEnabled = true;

@@ -35,6 +35,7 @@ import {
   calculateAvailablePacksAndSingles,
   checkMultiUnitStockAvailability,
 } from '../lib/multiUnitInventory';
+import { normalizeImageUrl } from '../lib/imageUtils';
 
 interface PosSalesProps {
   products: Product[];
@@ -549,7 +550,7 @@ export const PosSales: React.FC<PosSalesProps> = ({
                     <div className="relative w-full h-24 mb-2.5 rounded-2xl overflow-hidden bg-slate-950 border border-slate-800/80 flex items-center justify-center">
                       {product.imageUrl ? (
                         <img
-                          src={product.imageUrl}
+                          src={normalizeImageUrl(product.imageUrl)}
                           alt={product.name}
                           className={`w-full h-full object-cover transition-transform duration-300 group-hover:scale-105 ${
                             isOutOfStock ? 'grayscale opacity-40' : ''

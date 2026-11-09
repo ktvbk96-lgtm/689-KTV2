@@ -21,12 +21,14 @@ import {
   PlusCircle,
   PackagePlus,
   Package,
+  RefreshCw,
 } from 'lucide-react';
 import { Product, ProductCategory, Role, AppSettings } from '../types';
 import { formatCurrency } from '../lib/storage';
 import { INITIAL_PRODUCTS } from '../lib/initialData';
 import { FormattedNumberInput } from './FormattedNumberInput';
 import { calculateAvailablePacksAndSingles } from '../lib/multiUnitInventory';
+import { normalizeImageUrl, uploadProductImage } from '../lib/imageUtils';
 
 interface InventoryManagementProps {
   products: Product[];
@@ -48,6 +50,7 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
   // Add / Edit Product Modal state
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [isAddingNew, setIsAddingNew] = useState<boolean>(false);
+  const [isUploadingImage, setIsUploadingImage] = useState<boolean>(false);
 
   // Dedicated Restock (ບວກສະຕັອກເພີ່ມ) State
   const [restockProduct, setRestockProduct] = useState<Product | null>(null);
@@ -157,8 +160,8 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
     setIsAddingNew(false);
   };
 
-  // Handle image file upload (converts to Base64)
-  const handleImageFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle image file upload (uploads to server & returns permanent absolute URL)
+  const handleImageFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -167,13 +170,19 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
       return;
     }
 
-    // Read and compress or store as base64
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const result = event.target?.result as string;
-      setFormData((prev) => ({ ...prev, imageUrl: result }));
-    };
-    reader.readAsDataURL(file);
+    setIsUploadingImage(true);
+    try {
+      const permanentUrl = await uploadProductImage(file, `prod_${Date.now()}_${file.name}`);
+      setFormData((prev) => ({ ...prev, imageUrl: permanentUrl }));
+    } catch (err: any) {
+      console.error('Image upload failed:', err);
+      alert('ອັບໂຫຼດຮູບພາບບໍ່ສຳເລັດ: ' + (err?.message || 'ເກີດຂໍ້ຜິດພາດ'));
+    } finally {
+      setIsUploadingImage(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
   };
 
   const handleSaveProduct = (e?: React.FormEvent) => {
@@ -193,6 +202,8 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
     }
 
     const finalUnit = (formData.unit || '').trim() || 'ອັນ';
+    // Ensure imageUrl is an absolute HTTPS/HTTP URL across all devices
+    const normalizedImg = normalizeImageUrl(formData.imageUrl?.trim()) || undefined;
 
     let updatedList: Product[];
     if (isAddingNew) {
@@ -206,7 +217,7 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
         minStockAlert: Number(formData.minStockAlert) || 5,
         unit: finalUnit,
         requireSeller: !!formData.requireSeller,
-        imageUrl: formData.imageUrl?.trim() || undefined,
+        imageUrl: normalizedImg,
         hasMultiUnit: !!formData.hasMultiUnit,
         packUnit: formData.hasMultiUnit ? (formData.packUnit?.trim() || 'ແພັກ') : undefined,
         packMultiplier: formData.hasMultiUnit ? (Number(formData.packMultiplier) || 24) : undefined,
@@ -231,7 +242,7 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
               minStockAlert: Number(formData.minStockAlert) || 5,
               unit: finalUnit,
               requireSeller: !!formData.requireSeller,
-              imageUrl: formData.imageUrl?.trim() || undefined,
+              imageUrl: normalizedImg,
               hasMultiUnit: !!formData.hasMultiUnit,
               packUnit: formData.hasMultiUnit ? (formData.packUnit?.trim() || 'ແພັກ') : undefined,
               packMultiplier: formData.hasMultiUnit ? (Number(formData.packMultiplier) || 24) : undefined,
@@ -511,7 +522,7 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
                         <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-800 border border-slate-700 mx-auto flex items-center justify-center shrink-0">
                           {prod.imageUrl ? (
                             <img
-                              src={prod.imageUrl}
+                              src={normalizeImageUrl(prod.imageUrl)}
                               alt={prod.name}
                               className="w-full h-full object-cover"
                               onError={(e) => {
@@ -720,9 +731,12 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
                   <div className="w-20 h-20 rounded-2xl bg-slate-900 border-2 border-dashed border-slate-700 overflow-hidden flex items-center justify-center shrink-0">
                     {formData.imageUrl ? (
                       <img
-                        src={formData.imageUrl}
+                        src={normalizeImageUrl(formData.imageUrl)}
                         alt="Preview"
                         className="w-full h-full object-cover"
+                        onError={(e) => {
+                          (e.target as any).style.display = 'none';
+                        }}
                       />
                     ) : (
                       <div className="text-center p-1 text-slate-500">
@@ -745,11 +759,21 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
                     <div className="flex gap-2">
                       <button
                         type="button"
+                        disabled={isUploadingImage}
                         onClick={() => fileInputRef.current?.click()}
-                        className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm"
+                        className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50"
                       >
-                        <Upload className="w-3.5 h-3.5" />
-                        <span>ອັບໂຫຼດຮູບຈາກເຄື່ອງ</span>
+                        {isUploadingImage ? (
+                          <>
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            <span>ກຳລັງອັບໂຫຼດ...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Upload className="w-3.5 h-3.5" />
+                            <span>ອັບໂຫຼດຮູບຈາກເຄື່ອງ</span>
+                          </>
+                        )}
                       </button>
 
                       {formData.imageUrl && (

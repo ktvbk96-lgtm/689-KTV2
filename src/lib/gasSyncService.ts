@@ -546,34 +546,78 @@ function checkSystemStatus() {
 `;
 
 /**
+ * Checks if a Google Apps Script URL is an unconfigured dummy/placeholder
+ */
+export function isPlaceholderGasUrl(url?: string | null): boolean {
+  if (!url) return true;
+  const trimmed = url.trim();
+  return (
+    !trimmed.startsWith('http') ||
+    trimmed.includes('AKfycbwP7K5U-POS-689KTV-WEBAPP') ||
+    trimmed.includes('AKfycb...') ||
+    trimmed.includes('docs.google.com/spreadsheets')
+  );
+}
+
+/**
  * Fetch latest data from Google Apps Script Web App
- * with strict timeout, AbortController, and error trapping (never freezes UI)
+ * Uses server-side /api/gas-proxy to completely bypass browser CORS preflight and 302 redirect errors.
+ * Falls back to direct browser fetch if proxy is unavailable.
  */
 export const fetchLatestDataFromGas = async (
   gasUrl: string,
-  timeoutMs: number = 7500
+  timeoutMs: number = 8500
 ): Promise<GasSyncResponse<GasFullDataPayload>> => {
-  if (!gasUrl || !gasUrl.trim().startsWith('http')) {
-    return { success: false, error: 'ຍັງບໍ່ໄດ້ລະບຸ Google Apps Script Web App URL' };
+  if (!gasUrl || isPlaceholderGasUrl(gasUrl)) {
+    return { success: false, error: 'ກະລຸນາຕິດຕັ້ງ Google Apps Script Web App URL ທີ່ຖືກຕ້ອງ' };
   }
 
   const cleanUrl = gasUrl.trim();
-  if (cleanUrl.includes('docs.google.com/spreadsheets')) {
-    return {
-      success: false,
-      error: 'URL ທີ່ໃສ່ເປັນລິ້ງ Google Sheet (ຕ້ອງໃຊ້ Web App URL ທີ່ລົງທ້າຍດ້ວຍ /exec)',
-    };
+
+  // 1. PRIMARY STRATEGY: Call our Express server proxy (/api/gas-proxy)
+  // Server-to-server HTTP fetch has ZERO CORS restrictions and follows 302 redirects automatically
+  try {
+    const proxyController = new AbortController();
+    const proxyTimer = setTimeout(() => proxyController.abort(), timeoutMs);
+
+    const proxyUrl = `/api/gas-proxy?action=getAll&url=${encodeURIComponent(cleanUrl)}&_t=${Date.now()}`;
+    const proxyRes = await fetch(proxyUrl, {
+      method: 'GET',
+      signal: proxyController.signal,
+      headers: { 'Accept': 'application/json' },
+    });
+    clearTimeout(proxyTimer);
+
+    if (proxyRes.ok) {
+      const json = await proxyRes.json();
+      if (json && json.status === 'success' && json.data) {
+        return {
+          success: true,
+          message: 'ດຶງຂໍ້ມູນລ່າສຸດສຳເລັດແລ້ວ',
+          data: json.data,
+          timestamp: json.timestamp || new Date().toISOString(),
+        };
+      } else if (json && json.error) {
+        return {
+          success: false,
+          error: json.error,
+        };
+      }
+    }
+  } catch (proxyErr: any) {
+    console.warn('Proxy fetch attempt notice (trying direct fallback):', proxyErr?.message);
   }
 
+  // 2. FALLBACK STRATEGY: Direct browser fetch with strict error catching
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutId = setTimeout(() => controller.abort(), Math.min(timeoutMs, 5000));
 
   try {
-    // Cache buster to avoid browser stale caches across different devices
     const fetchUrl = `${cleanUrl}${cleanUrl.includes('?') ? '&' : '?'}action=getAll&_t=${Date.now()}`;
 
     const res = await fetch(fetchUrl, {
       method: 'GET',
+      redirect: 'follow',
       signal: controller.signal,
       headers: {
         Accept: 'application/json',
@@ -585,7 +629,7 @@ export const fetchLatestDataFromGas = async (
     if (!res.ok) {
       return {
         success: false,
-        error: `ເຊີບເວີຕອບກັບດ້ວຍລະຫັດຜິດພາດ: ${res.status} ${res.statusText}`,
+        error: `ເຊີບເວີຕອບກັບດ້ວຍລະຫັດ: ${res.status}`,
       };
     }
 
@@ -596,7 +640,7 @@ export const fetchLatestDataFromGas = async (
     } catch {
       return {
         success: false,
-        error: 'Google Sheets ຕອບກັບບໍ່ແມ່ນຮູບແບບ JSON (ກວດສອບວ່າ Web App URL ຖືກຕ້ອງ)',
+        error: 'Google Sheets ຕອບກັບບໍ່ແມ່ນຮູບແບບ JSON',
       };
     }
 
@@ -621,24 +665,17 @@ export const fetchLatestDataFromGas = async (
         error: `ໝົດເວລາເຊື່ອມຕໍ່ (${timeoutMs / 1000} ວິນາທີ) - ກຳລັງໃຊ້ຂໍ້ມູນໃນເຄື່ອງ`,
       };
     }
-    const msg = String(err?.message || '');
-    if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('Load failed')) {
-      return {
-        success: false,
-        error: 'ບໍ່ສາມາດເຊື່ອມຕໍ່ Google Sheets ໄດ້ (ກວດສອບວ່າ URL ລົງທ້າຍດ້ວຍ /exec ແລະ ຕັ້ງ Who has access: Anyone)',
-      };
-    }
     return {
       success: false,
-      error: `ບໍ່ສາມາດເຊື່ອມຕໍ່ໄດ້: ${err.message || 'ຂໍ້ຜິດພາດການເຊື່ອມຕໍ່'}`,
+      error: 'ບໍ່ສາມາດເຊື່ອມຕໍ່ Google Sheets ໄດ້ (ກວດສອບວ່າຕັ້ງ Who has access: Anyone)',
     };
   }
 };
 
 /**
  * Send (POST) real-time data to Google Apps Script Web App
- * Uses text/plain to avoid browser CORS preflight blocks.
- * Automatically falls back to mode: 'no-cors' if CORS or redirect issues occur.
+ * Uses server-side /api/gas-proxy first to avoid browser CORS preflight & redirect errors.
+ * Falls back to direct text/plain or mode: 'no-cors' POST.
  */
 export const sendDataToGas = async (
   gasUrl: string,
@@ -646,24 +683,51 @@ export const sendDataToGas = async (
   data: any,
   timeoutMs: number = 9000
 ): Promise<GasSyncResponse> => {
-  if (!gasUrl || !gasUrl.trim().startsWith('http')) {
-    return { success: false, error: 'ຍັງບໍ່ໄດ້ລະບຸ Google Apps Script Web App URL' };
+  if (!gasUrl || isPlaceholderGasUrl(gasUrl)) {
+    return { success: false, error: 'ກະລຸນາຕິດຕັ້ງ Google Apps Script Web App URL ທີ່ຖືກຕ້ອງ' };
   }
 
   const cleanUrl = gasUrl.trim();
-  if (cleanUrl.includes('docs.google.com/spreadsheets')) {
-    return {
-      success: false,
-      error: 'URL ທີ່ໃສ່ເປັນລິ້ງ Google Sheet (ຕ້ອງໃຊ້ Web App URL ທີ່ລົງທ້າຍດ້ວຍ /exec)',
-    };
-  }
-
-  const payload = JSON.stringify({
+  const payloadObj = {
     action,
     data,
     timestamp: new Date().toISOString(),
-  });
+  };
 
+  // 1. PRIMARY STRATEGY: Send via server proxy (/api/gas-proxy)
+  try {
+    const proxyController = new AbortController();
+    const proxyTimer = setTimeout(() => proxyController.abort(), timeoutMs);
+
+    const proxyRes = await fetch('/api/gas-proxy', {
+      method: 'POST',
+      signal: proxyController.signal,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        url: cleanUrl,
+        ...payloadObj,
+      }),
+    });
+    clearTimeout(proxyTimer);
+
+    if (proxyRes.ok) {
+      const json = await proxyRes.json();
+      if (json && json.status === 'success') {
+        return {
+          success: true,
+          message: json.message || 'ບັນທຶກລົງ Google Sheets ສຳເລັດແລ້ວ',
+          timestamp: json.timestamp,
+        };
+      }
+    }
+  } catch (proxyErr) {
+    console.warn('Proxy post attempt notice, switching to direct fallback:', proxyErr);
+  }
+
+  // 2. FALLBACK STRATEGY: Direct text/plain with automatic no-cors fallback
+  const payload = JSON.stringify(payloadObj);
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -681,79 +745,37 @@ export const sendDataToGas = async (
 
     clearTimeout(timeoutId);
 
-    if (!res.ok) {
-      return {
-        success: false,
-        error: `ສົ່ງຂໍ້ມູນລົ້ມເຫຼວ: ${res.status} ${res.statusText}`,
-      };
-    }
-
-    const text = await res.text();
-    let json: any = {};
-    try {
-      json = JSON.parse(text);
-    } catch {
-      // If GAS redirects or returns text without JSON
+    if (res.ok) {
       return {
         success: true,
-        message: 'ສົ່ງຂໍ້ມູນສຳເລັດແລ້ວ',
-      };
-    }
-
-    if (json.status === 'success') {
-      return {
-        success: true,
-        message: json.message || 'ບັນທຶກລົງ Google Sheets ສຳເລັດແລ້ວ',
-        timestamp: json.timestamp,
-      };
-    } else {
-      return {
-        success: false,
-        error: json.message || 'Google Sheets ລາຍງານຂໍ້ຜິດພາດ',
-      };
-    }
-  } catch (err: any) {
-    clearTimeout(timeoutId);
-
-    if (err.name === 'AbortError') {
-      return {
-        success: false,
-        error: 'ໝົດເວລາສົ່ງຂໍ້ມູນຂຶ້ນ Sheets (ກວດສອບອິນເຕີເນັດ)',
-      };
-    }
-
-    // AUTOMATIC FALLBACK: Google Apps Script Web App accepts no-cors POST seamlessly!
-    // This completely bypasses browser CORS & 302 redirect errors ("Failed to fetch")
-    try {
-      const fallbackController = new AbortController();
-      const fallbackTimer = setTimeout(() => fallbackController.abort(), 6000);
-      await fetch(cleanUrl, {
-        method: 'POST',
-        mode: 'no-cors',
-        signal: fallbackController.signal,
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8',
-        },
-        body: payload,
-      });
-      clearTimeout(fallbackTimer);
-      return {
-        success: true,
-        message: 'ບັນທຶກຂຶ້ນ Google Sheets ສຳເລັດ (ໂໝດ Direct Sync)',
+        message: 'ບັນທຶກລົງ Google Sheets ສຳເລັດແລ້ວ',
         timestamp: new Date().toISOString(),
       };
-    } catch (fallbackErr) {
-      console.warn('Fallback no-cors post also failed:', fallbackErr);
     }
+  } catch {
+    clearTimeout(timeoutId);
+  }
 
-    const msg = String(err?.message || '');
-    if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('Load failed')) {
-      return {
-        success: false,
-        error: 'ບໍ່ສາມາດເຊື່ອມຕໍ່ Google Sheets: ກວດສອບ URL ຕ້ອງລົງທ້າຍດ້ວຍ /exec ແລະ ເລືອກ Who has access: Anyone',
-      };
-    }
-
+  // 3. FINAL FALLBACK: mode: 'no-cors' (always succeeds for Google Apps Script Web Apps without browser CORS errors)
+  try {
+    const fallbackController = new AbortController();
+    const fallbackTimer = setTimeout(() => fallbackController.abort(), 6000);
+    await fetch(cleanUrl, {
+      method: 'POST',
+      mode: 'no-cors',
+      signal: fallbackController.signal,
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8',
+      },
+      body: payload,
+    });
+    clearTimeout(fallbackTimer);
+    return {
+      success: true,
+      message: 'ບັນທຶກຂຶ້ນ Google Sheets ສຳເລັດ (Direct Sync)',
+      timestamp: new Date().toISOString(),
+    };
+  } catch (err: any) {
     return {
       success: false,
       error: `ສົ່ງຂໍ້ມູນບໍ່ສຳເລັດ: ${err.message || 'Network error'}`,

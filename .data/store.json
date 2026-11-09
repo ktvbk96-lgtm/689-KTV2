@@ -1,0 +1,1717 @@
+{
+  "version": 46,
+  "lastUpdated": "2026-11-08T12:35:11.670Z",
+  "products": [
+    {
+      "requireSeller": false,
+      "imageUrl": "https://images.unsplash.com/photo-1608270199042-7cfd3f4439fa?w=400&auto=format&fit=crop&q=80",
+      "hasMultiUnit": false,
+      "packsInStock": 0,
+      "unit": "ແພັກ",
+      "costPrice": 318000,
+      "name": "ເບຍແກັດ",
+      "minStockAlert": 6,
+      "id": "prod-1793971759969",
+      "looseBottles": 23,
+      "stock": 23,
+      "salePrice": 500000,
+      "category": "drink"
+    },
+    {
+      "imageUrl": "https://images.unsplash.com/photo-1551024709-8f23befc6f87?w=400&auto=format&fit=crop&q=80",
+      "salePrice": 20000,
+      "stock": 64,
+      "unit": "ແກ້ວ",
+      "costPrice": 15000,
+      "name": "ໂຊດາ",
+      "category": "drink",
+      "id": "prod-1793971553030",
+      "minStockAlert": 6,
+      "requireSeller": false
+    },
+    {
+      "name": "ເອັມ100",
+      "unit": "ແກ້ວ",
+      "imageUrl": "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=400&auto=format&fit=crop&q=80",
+      "stock": 70,
+      "salePrice": 20000,
+      "category": "beer",
+      "requireSeller": false,
+      "minStockAlert": 6,
+      "id": "prod-1793971496782",
+      "costPrice": 15000
+    },
+    {
+      "requireSeller": false,
+      "minStockAlert": 6,
+      "id": "prod-1793971459802",
+      "imageUrl": "https://images.unsplash.com/photo-1548839140-29a749e1bc4e?w=400&auto=format&fit=crop&q=80",
+      "stock": 64,
+      "salePrice": 20000,
+      "unit": "ຕຸກ",
+      "name": "ນ້ຳດືມ",
+      "category": "beer",
+      "costPrice": 15000
+    },
+    {
+      "stock": 300,
+      "category": "beer",
+      "costPrice": 15000,
+      "name": "ນ້ຳຫມາກພ້າວ",
+      "unit": "ແກ້ວ",
+      "requireSeller": false,
+      "imageUrl": "https://images.unsplash.com/photo-1525385133512-2f3bdd039054?w=400&auto=format&fit=crop&q=80",
+      "salePrice": 20000,
+      "id": "prod-1793971414294",
+      "minStockAlert": 6
+    },
+    {
+      "salePrice": 20000,
+      "imageUrl": "https://images.unsplash.com/photo-1576092768241-dec231879fc3?w=400&auto=format&fit=crop&q=80",
+      "costPrice": 15000,
+      "id": "prod-1793971341445",
+      "requireSeller": false,
+      "unit": "ແກ້ວ",
+      "stock": 300,
+      "category": "beer",
+      "name": "ໂອອີຊີ",
+      "minStockAlert": 6
+    },
+    {
+      "salePrice": 20000,
+      "costPrice": 13000,
+      "imageUrl": "https://images.unsplash.com/photo-1613478223719-2ab802602423?w=400&auto=format&fit=crop&q=80",
+      "minStockAlert": 6,
+      "requireSeller": false,
+      "name": "ນ້ຳສົ້ມ",
+      "unit": "ແກ້ວ",
+      "stock": 300,
+      "category": "drink",
+      "id": "prod-1793971306327"
+    },
+    {
+      "stock": 1000,
+      "name": "ຄໍເລດ",
+      "imageUrl": "https://images.unsplash.com/photo-1569529465841-dfecdab7503b?w=400&auto=format&fit=crop&q=80",
+      "unit": "ອັນ",
+      "salePrice": 10000,
+      "category": "beer",
+      "minStockAlert": 6,
+      "id": "prod-1793971250491",
+      "requireSeller": false,
+      "costPrice": 30000
+    },
+    {
+      "stock": 60,
+      "minStockAlert": 6,
+      "name": "ສະຕີງ",
+      "requireSeller": false,
+      "unit": "ປອງ",
+      "category": "drink",
+      "costPrice": 11041,
+      "salePrice": 20000,
+      "id": "prod-1793971116902",
+      "imageUrl": "https://images.unsplash.com/photo-1581009146145-b5ef050c2e1e?w=400&auto=format&fit=crop&q=80"
+    },
+    {
+      "id": "prod-1793971086149",
+      "category": "beer",
+      "unit": "ໍກັບ",
+      "name": "ຖົງຢາງ",
+      "requireSeller": false,
+      "salePrice": 20000,
+      "minStockAlert": 6,
+      "stock": 24,
+      "costPrice": 15000,
+      "imageUrl": "https://images.unsplash.com/photo-1589365278144-c9e705f843ba?w=400&auto=format&fit=crop&q=80"
+    },
+    {
+      "minStockAlert": 6,
+      "category": "beer",
+      "costPrice": 600000,
+      "requireSeller": true,
+      "salePrice": 0,
+      "id": "prod-1793970967306",
+      "imageUrl": "https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?w=400&auto=format&fit=crop&q=80",
+      "unit": "ຊ່ອງ",
+      "stock": 78,
+      "name": "ຈ"
+    },
+    {
+      "requireSeller": false,
+      "minStockAlert": 6,
+      "stock": 200,
+      "imageUrl": "https://images.unsplash.com/photo-1546173159-315724a31696?w=400&auto=format&fit=crop&q=80",
+      "id": "prod-1793969933734",
+      "unit": "ແກ້ວ",
+      "salePrice": 20000,
+      "name": "ນ້ຳໝາກຂາມ",
+      "costPrice": 15000,
+      "category": "drink"
+    },
+    {
+      "minStockAlert": 6,
+      "requireSeller": false,
+      "imageUrl": "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=400&auto=format&fit=crop&q=80",
+      "id": "prod-1793969855154",
+      "salePrice": 20000,
+      "costPrice": 15000,
+      "unit": "ປອງ",
+      "stock": 2000,
+      "category": "drink",
+      "name": "ເອັມຈ່ອຍ(Mjoy)"
+    },
+    {
+      "id": "prod-1793969811904",
+      "packUnit": "ແພັກ",
+      "packsInStock": 75,
+      "category": "beer",
+      "hasMultiUnit": true,
+      "costPrice": 13250,
+      "stock": 1806,
+      "minStockAlert": 6,
+      "packCostPrice": 318000,
+      "packSalePrice": 600000,
+      "imageUrl": "https://images.unsplash.com/photo-1535958636474-b021ee887b13?w=400&auto=format&fit=crop&q=80",
+      "unit": "ຂວດ",
+      "salePrice": 25000,
+      "requireSeller": false,
+      "name": "ເບຍປອງ 1",
+      "packMultiplier": 24,
+      "looseBottles": 6
+    },
+    {
+      "salePrice": 250000,
+      "costPrice": 13250,
+      "unit": "ປອງ",
+      "imageUrl": "https://images.unsplash.com/photo-1575037614876-c38a4d44f5b8?w=400&auto=format&fit=crop&q=80",
+      "name": "ເບຍປອງ 12 ",
+      "stock": 9998,
+      "id": "prod-1793969724161",
+      "requireSeller": false,
+      "category": "beer",
+      "minStockAlert": 6
+    }
+  ],
+  "rooms": [
+    {
+      "id": "room-689",
+      "name": "ຫ້ອງ VIP 689 (ຫ້ອງໃຫຍ່)",
+      "capacity": 15,
+      "status": "available",
+      "pricingType": "fixed_hourly",
+      "hourlyRate": 100000,
+      "orders": [],
+      "bookedHours": 0,
+      "updatedAt": "2026-11-08T11:48:46.399Z"
+    },
+    {
+      "id": "room-01",
+      "name": "ຫ້ອງ VIP 01",
+      "capacity": 10,
+      "status": "available",
+      "pricingType": "fixed_hourly",
+      "hourlyRate": 80000,
+      "orders": [],
+      "bookedHours": 0
+    },
+    {
+      "id": "room-02",
+      "name": "ຫ້ອງ VIP 02",
+      "capacity": 10,
+      "status": "available",
+      "pricingType": "fixed_hourly",
+      "hourlyRate": 80000,
+      "orders": [],
+      "bookedHours": 0
+    },
+    {
+      "id": "room-03",
+      "name": "ຫ້ອງທຳມະດາ 03",
+      "capacity": 6,
+      "status": "available",
+      "pricingType": "fixed_hourly",
+      "hourlyRate": 60000,
+      "orders": [],
+      "bookedHours": 0
+    },
+    {
+      "id": "room-04",
+      "name": "ຫ້ອງທຳມະດາ 04",
+      "capacity": 6,
+      "status": "available",
+      "pricingType": "fixed_hourly",
+      "hourlyRate": 60000,
+      "orders": [],
+      "bookedHours": 0
+    },
+    {
+      "id": "room-05",
+      "name": "ຫ້ອງ Mini 05",
+      "capacity": 4,
+      "status": "available",
+      "pricingType": "fixed_hourly",
+      "hourlyRate": 50000,
+      "orders": [],
+      "bookedHours": 0
+    }
+  ],
+  "packages": [
+    {
+      "id": "pkg-standard-2h",
+      "name": "ແພັກເກັດ 2 ຊົ່ວໂມງ (2 Hrs Combo)",
+      "durationMinutes": 120,
+      "price": 180000,
+      "description": "ຮ້ອງເພງ 2 ຊົ່ວໂມງ + ແຖມນ້ຳດື່ມ 2 ຕຸກ & ຖົ່ວດິນ 1 ຈານ",
+      "includesBeerCount": 0
+    },
+    {
+      "id": "pkg-party-3h",
+      "name": "ແພັກເກັດ 3 ຊົ່ວໂມງ (Party 3 Hrs)",
+      "durationMinutes": 180,
+      "price": 320000,
+      "description": "ຮ້ອງເພງ 3 ຊົ່ວໂມງ + ເບຍລາວ 3 ແກ້ວ + ປັອບຄອນ 1 ຈານ",
+      "includesBeerCount": 3
+    },
+    {
+      "id": "pkg-vip-allnight",
+      "name": "ແພັກເກັດ VIP All-Night (ທັງຄືນ)",
+      "durationMinutes": 360,
+      "price": 550000,
+      "description": "ຮ້ອງເພງແບບຈຸໃຈ 6 ຊົ່ວໂມງ + ເບຍລາວ 1 ລັງ (12 ແກ້ວ) + ອາຫານຫວ່າງ 2 ຊຸດ",
+      "includesBeerCount": 12
+    }
+  ],
+  "staff": [
+    {
+      "id": "staff-admin",
+      "name": "Admin (ເຈົ້າຂອງຮ້ານ)",
+      "role": "admin",
+      "phone": "020-5555-8888",
+      "active": true
+    },
+    {
+      "id": "staff-1",
+      "name": "ນ້ອຍ (Noy)",
+      "role": "staff",
+      "phone": "020-9912-3456",
+      "active": true
+    },
+    {
+      "id": "staff-2",
+      "name": "ຄຳ (Kham)",
+      "role": "staff",
+      "phone": "020-9876-5432",
+      "active": true
+    },
+    {
+      "id": "staff-3",
+      "name": "ຕຸກຕາ (Toukta)",
+      "role": "staff",
+      "phone": "020-7766-5544",
+      "active": true
+    },
+    {
+      "id": "staff-4",
+      "name": "ສອນ (Sone)",
+      "role": "staff",
+      "phone": "020-9123-4567",
+      "active": true
+    }
+  ],
+  "settings": {
+    "shopName": "689 KTV",
+    "shopBranch": "ສາຂາໃຫຍ່ (Main Branch)",
+    "shopAddress": "ຖະໜົນ ໄກສອນ ພົມວິຫານ, ນະຄອນຫຼວງວຽງຈັນ (Vientiane, Lao PDR)",
+    "shopPhone": "020-5555-6899 / 020-9988-7766",
+    "receiptHeader": "689 KTV - ຄາຣາໂອເກະ ຄຸນນະພາບສູງ",
+    "receiptFooter": "ຂໍຂອບໃຈລູກຄ້າທີ່ມາອຸດໜູນ ຍິນດີຕ້ອນຮັບສະເໝີ! (Thank You)",
+    "wifiPassword": "Password: 689ktvvip",
+    "adminPin": "8888",
+    "staffPin": "1234",
+    "currencySymbol": "₭",
+    "defaultHourlyRate": 80000,
+    "bluetoothPrinterName": "POS-58 Bluetooth Thermal Printer",
+    "autoSyncGoogleSheets": true,
+    "showPinHintsOnLogin": false,
+    "receiptLogoUrl": "",
+    "loginLogoUrl": "",
+    "appFontSize": "large",
+    "staffCanEditDebt": false,
+    "staffCanDeleteDebt": false,
+    "receiptFontSize": "large",
+    "receiptPaperWidth": "58mm",
+    "receiptBoldText": true,
+    "receiptHideTotalText": true,
+    "receiptCustomFontSize": 16,
+    "receiptFontFamily": "phetsarath",
+    "gasWebAppUrl": "https://script.google.com/macros/s/AKfycbwP7K5U-POS-689KTV-WEBAPP/exec",
+    "realtimeSyncEnabled": true
+  },
+  "debts": [
+    {
+      "payments": [],
+      "staffName": "ແຈັກ",
+      "dueDate": null,
+      "remainingAmount": 1200000,
+      "paidAmount": 0,
+      "status": "unpaid",
+      "billNumber": "689-DEBT-20261107-002",
+      "customerName": "ຍຍ",
+      "totalAmount": 1200000,
+      "note": null,
+      "id": "debt-1794041509659",
+      "customerPhone": null,
+      "createdAt": "2026-11-07T08:51:49.659Z",
+      "photoUrl": null,
+      "roomName": null
+    },
+    {
+      "payments": [],
+      "totalAmount": 1650000,
+      "status": "unpaid",
+      "id": "debt-1794041471935",
+      "paidAmount": 0,
+      "createdAt": "2026-11-07T08:51:11.935Z",
+      "customerName": "ດດ\\ດ",
+      "remainingAmount": 1650000,
+      "billNumber": "689-DEBT-20261107-001",
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)"
+    }
+  ],
+  "bills": [
+    {
+      "id": "bill-1794138526399",
+      "billNumber": "689-20261108-044",
+      "type": "ktv_room",
+      "roomId": "room-689",
+      "roomName": "ຫ້ອງ VIP 689 (ຫ້ອງໃຫຍ່)",
+      "bookedHours": 0,
+      "startTime": "2026-11-08T11:48:00.000Z",
+      "endTime": "2026-11-08T11:48:46.398Z",
+      "timeRangeFormatted": "18:48 - 18:48 (0 ຊມ 0 ນາທີ - ນັບຕາມຈິງ)",
+      "durationMinutes": 0,
+      "pricingType": "open_time",
+      "roomCharge": 50000,
+      "isRoomChargePaid": false,
+      "items": [],
+      "subtotal": 50000,
+      "discount": 0,
+      "tax": 0,
+      "total": 50000,
+      "payment": {
+        "method": "cash",
+        "cashReceived": 50000,
+        "change": 0
+      },
+      "staffName": "ນ້ອຍ (Noy)"
+    },
+    {
+      "endTime": "2026-11-08T11:43:12.762Z",
+      "roomCharge": 0,
+      "subtotal": 600000,
+      "id": "bill-1794138192764",
+      "billNumber": "689-20261108-042",
+      "discount": 0,
+      "payment": {
+        "method": "cash"
+      },
+      "syncedToSheets": true,
+      "items": [
+        {
+          "productId": "prod-1793969811904",
+          "selectedUnitType": "single",
+          "quantity": 24,
+          "multiplier": 1,
+          "total": 600000,
+          "costPrice": 13250,
+          "price": 25000,
+          "unit": "ຂວດ",
+          "productName": "ເບຍປອງ 1"
+        }
+      ],
+      "tax": 0,
+      "total": 600000,
+      "type": "pos_sale",
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)"
+    },
+    {
+      "subtotal": 600000,
+      "id": "bill-1794138192764",
+      "type": "pos_sale",
+      "roomCharge": 0,
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)",
+      "tax": 0,
+      "endTime": "2026-11-08T11:43:12.762Z",
+      "items": [
+        {
+          "unit": "ຂວດ",
+          "multiplier": 1,
+          "productName": "ເບຍປອງ 1",
+          "selectedUnitType": "single",
+          "costPrice": 13250,
+          "price": 25000,
+          "quantity": 24,
+          "productId": "prod-1793969811904",
+          "total": 600000
+        }
+      ],
+      "billNumber": "689-20261108-042",
+      "total": 600000,
+      "discount": 0,
+      "payment": {
+        "change": 0,
+        "method": "cash"
+      }
+    },
+    {
+      "roomName": "ຫ້ອງ VIP 689 (ຫ້ອງໃຫຍ່)",
+      "bookedHours": 0,
+      "discount": 0,
+      "syncedToSheets": true,
+      "payment": {
+        "method": "cash"
+      },
+      "id": "bill-1794134874175",
+      "pricingType": "open_time",
+      "billNumber": "689-20261108-040",
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)",
+      "endTime": "2026-11-08T10:47:54.175Z",
+      "isRoomChargePaid": false,
+      "roomId": "room-689",
+      "roomCharge": 50000,
+      "durationMinutes": 30,
+      "type": "ktv_room",
+      "timeRangeFormatted": "17:17 - 17:47 (0 ຊມ 30 ນາທີ - ນັບຕາມຈິງ)",
+      "tax": 0,
+      "startTime": "2026-11-08T10:17:00.000Z",
+      "items": [],
+      "total": 50000,
+      "subtotal": 50000
+    },
+    {
+      "items": [],
+      "roomCharge": 50000,
+      "discount": 0,
+      "total": 50000,
+      "roomName": "ຫ້ອງ VIP 689 (ຫ້ອງໃຫຍ່)",
+      "endTime": "2026-11-08T10:47:54.175Z",
+      "durationMinutes": 30,
+      "id": "bill-1794134874175",
+      "tax": 0,
+      "isRoomChargePaid": false,
+      "pricingType": "open_time",
+      "roomId": "room-689",
+      "payment": {
+        "cashReceived": 50000,
+        "change": 0,
+        "method": "cash"
+      },
+      "startTime": "2026-11-08T10:17:00.000Z",
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)",
+      "billNumber": "689-20261108-040",
+      "type": "ktv_room",
+      "timeRangeFormatted": "17:17 - 17:47 (0 ຊມ 30 ນາທີ - ນັບຕາມຈິງ)",
+      "subtotal": 50000,
+      "bookedHours": 0
+    },
+    {
+      "discount": 0,
+      "payment": {
+        "method": "cash"
+      },
+      "total": 600000,
+      "items": [
+        {
+          "costPrice": 13250,
+          "total": 600000,
+          "multiplier": 1,
+          "quantity": 24,
+          "selectedUnitType": "single",
+          "price": 25000,
+          "productId": "prod-1793969811904",
+          "productName": "ເບຍປອງ 1",
+          "unit": "ຂວດ"
+        }
+      ],
+      "billNumber": "689-20261108-038",
+      "type": "pos_sale",
+      "syncedToSheets": true,
+      "roomCharge": 0,
+      "endTime": "2026-11-08T08:43:17.928Z",
+      "tax": 0,
+      "id": "bill-1794127397980",
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)",
+      "subtotal": 600000
+    },
+    {
+      "id": "bill-1794127397980",
+      "payment": {
+        "method": "cash",
+        "change": 0
+      },
+      "total": 600000,
+      "tax": 0,
+      "items": [
+        {
+          "total": 600000,
+          "multiplier": 1,
+          "selectedUnitType": "single",
+          "costPrice": 13250,
+          "price": 25000,
+          "quantity": 24,
+          "productId": "prod-1793969811904",
+          "unit": "ຂວດ",
+          "productName": "ເບຍປອງ 1"
+        }
+      ],
+      "subtotal": 600000,
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)",
+      "billNumber": "689-20261108-038",
+      "endTime": "2026-11-08T08:43:17.928Z",
+      "discount": 0,
+      "type": "pos_sale",
+      "roomCharge": 0
+    },
+    {
+      "discount": 0,
+      "payment": {
+        "method": "cash"
+      },
+      "total": 600000,
+      "items": [
+        {
+          "selectedUnitType": "single",
+          "total": 600000,
+          "price": 25000,
+          "productId": "prod-1793969811904",
+          "multiplier": 1,
+          "productName": "ເບຍປອງ 1",
+          "unit": "ຂວດ",
+          "quantity": 24,
+          "costPrice": 13250
+        }
+      ],
+      "billNumber": "689-20261108-036",
+      "id": "bill-1794127345550",
+      "syncedToSheets": true,
+      "type": "pos_sale",
+      "roomCharge": 0,
+      "tax": 0,
+      "endTime": "2026-11-08T08:42:25.476Z",
+      "subtotal": 600000,
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)"
+    },
+    {
+      "endTime": "2026-11-08T08:42:25.476Z",
+      "billNumber": "689-20261108-036",
+      "type": "pos_sale",
+      "discount": 0,
+      "payment": {
+        "method": "cash",
+        "change": 0
+      },
+      "id": "bill-1794127345550",
+      "tax": 0,
+      "roomCharge": 0,
+      "subtotal": 600000,
+      "items": [
+        {
+          "unit": "ຂວດ",
+          "selectedUnitType": "single",
+          "price": 25000,
+          "productId": "prod-1793969811904",
+          "quantity": 24,
+          "productName": "ເບຍປອງ 1",
+          "total": 600000,
+          "costPrice": 13250,
+          "multiplier": 1
+        }
+      ],
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)",
+      "total": 600000
+    },
+    {
+      "billNumber": "689-20261108-034",
+      "subtotal": 600000,
+      "tax": 0,
+      "syncedToSheets": true,
+      "endTime": "2026-11-08T08:38:52.740Z",
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)",
+      "type": "pos_sale",
+      "id": "bill-1794127132823",
+      "roomCharge": 0,
+      "total": 600000,
+      "payment": {
+        "method": "cash"
+      },
+      "discount": 0,
+      "items": [
+        {
+          "unit": "ປອງ",
+          "productName": "ເບຍປອງ 1",
+          "selectedUnitType": "single",
+          "multiplier": 1,
+          "productId": "prod-1793969811904",
+          "price": 25000,
+          "quantity": 24,
+          "costPrice": 13250,
+          "total": 600000
+        }
+      ]
+    },
+    {
+      "type": "pos_sale",
+      "tax": 0,
+      "id": "bill-1794127132823",
+      "roomCharge": 0,
+      "total": 600000,
+      "discount": 0,
+      "items": [
+        {
+          "costPrice": 13250,
+          "total": 600000,
+          "price": 25000,
+          "productName": "ເບຍປອງ 1",
+          "unit": "ປອງ",
+          "selectedUnitType": "single",
+          "productId": "prod-1793969811904",
+          "multiplier": 1,
+          "quantity": 24
+        }
+      ],
+      "subtotal": 600000,
+      "endTime": "2026-11-08T08:38:52.740Z",
+      "billNumber": "689-20261108-034",
+      "payment": {
+        "method": "cash",
+        "change": 0
+      },
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)"
+    },
+    {
+      "type": "pos_sale",
+      "tax": 0,
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)",
+      "subtotal": 600000,
+      "payment": {
+        "method": "cash"
+      },
+      "billNumber": "689-20261108-032",
+      "syncedToSheets": true,
+      "id": "bill-1794127107285",
+      "roomCharge": 0,
+      "discount": 0,
+      "total": 600000,
+      "items": [
+        {
+          "multiplier": 1,
+          "costPrice": 13250,
+          "total": 600000,
+          "productName": "ເບຍປອງ 1",
+          "quantity": 24,
+          "price": 25000,
+          "productId": "prod-1793969811904",
+          "selectedUnitType": "single",
+          "unit": "ປອງ"
+        }
+      ],
+      "endTime": "2026-11-08T08:38:27.187Z"
+    },
+    {
+      "endTime": "2026-11-08T08:38:27.187Z",
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)",
+      "items": [
+        {
+          "quantity": 24,
+          "costPrice": 13250,
+          "selectedUnitType": "single",
+          "productName": "ເບຍປອງ 1",
+          "unit": "ປອງ",
+          "productId": "prod-1793969811904",
+          "price": 25000,
+          "multiplier": 1,
+          "total": 600000
+        }
+      ],
+      "payment": {
+        "method": "cash",
+        "change": 0
+      },
+      "type": "pos_sale",
+      "total": 600000,
+      "subtotal": 600000,
+      "billNumber": "689-20261108-032",
+      "discount": 0,
+      "tax": 0,
+      "id": "bill-1794127107285",
+      "roomCharge": 0
+    },
+    {
+      "endTime": "2026-11-08T08:11:19.640Z",
+      "staffName": "ແຈັກ",
+      "type": "pos_sale",
+      "roomCharge": 0,
+      "discount": 0,
+      "items": [
+        {
+          "total": 600000,
+          "costPrice": 318000,
+          "price": 600000,
+          "selectedUnitType": "pack",
+          "productId": "prod-1793969811904",
+          "multiplier": 24,
+          "unit": "ແພັກ",
+          "productName": "ເບຍປອງ 1 (ແພັກ x24)",
+          "quantity": 1
+        }
+      ],
+      "total": 600000,
+      "id": "bill-1794125479719",
+      "syncedToSheets": true,
+      "payment": {
+        "method": "cash"
+      },
+      "subtotal": 600000,
+      "tax": 0,
+      "billNumber": "689-20261108-030"
+    },
+    {
+      "items": [
+        {
+          "total": 600000,
+          "multiplier": 24,
+          "price": 600000,
+          "costPrice": 318000,
+          "quantity": 1,
+          "selectedUnitType": "pack",
+          "productName": "ເບຍປອງ 1 (ແພັກ x24)",
+          "productId": "prod-1793969811904",
+          "unit": "ແພັກ"
+        }
+      ],
+      "roomCharge": 0,
+      "total": 600000,
+      "subtotal": 600000,
+      "staffName": "ແຈັກ",
+      "id": "bill-1794125479719",
+      "billNumber": "689-20261108-030",
+      "discount": 0,
+      "endTime": "2026-11-08T08:11:19.640Z",
+      "payment": {
+        "change": 0,
+        "method": "cash"
+      },
+      "tax": 0,
+      "type": "pos_sale"
+    },
+    {
+      "type": "pos_sale",
+      "id": "bill-1794125456153",
+      "syncedToSheets": true,
+      "subtotal": 500000,
+      "payment": {
+        "method": "cash"
+      },
+      "roomCharge": 0,
+      "staffName": "ແຈັກ",
+      "tax": 0,
+      "discount": 0,
+      "billNumber": "689-20261108-028",
+      "endTime": "2026-11-08T08:10:56.088Z",
+      "total": 500000,
+      "items": [
+        {
+          "quantity": 1,
+          "productId": "prod-1793971759969",
+          "unit": "ປອງ",
+          "selectedUnitType": "single",
+          "costPrice": 318000,
+          "productName": "ເບຍແກັດ",
+          "price": 500000,
+          "multiplier": 1,
+          "total": 500000
+        }
+      ]
+    },
+    {
+      "discount": 0,
+      "payment": {
+        "change": 0,
+        "method": "cash"
+      },
+      "endTime": "2026-11-08T08:10:56.088Z",
+      "type": "pos_sale",
+      "billNumber": "689-20261108-028",
+      "subtotal": 500000,
+      "id": "bill-1794125456153",
+      "items": [
+        {
+          "productName": "ເບຍແກັດ",
+          "productId": "prod-1793971759969",
+          "selectedUnitType": "single",
+          "multiplier": 1,
+          "total": 500000,
+          "unit": "ປອງ",
+          "costPrice": 318000,
+          "quantity": 1,
+          "price": 500000
+        }
+      ],
+      "staffName": "ແຈັກ",
+      "total": 500000,
+      "tax": 0,
+      "roomCharge": 0
+    },
+    {
+      "roomCharge": 0,
+      "staffName": "ແຈັກ",
+      "endTime": "2026-11-08T08:08:14.326Z",
+      "subtotal": 550000,
+      "type": "pos_sale",
+      "tax": 0,
+      "id": "bill-1794125294409",
+      "syncedToSheets": true,
+      "discount": 0,
+      "items": [
+        {
+          "total": 500000,
+          "selectedUnitType": "single",
+          "costPrice": 13250,
+          "multiplier": 1,
+          "price": 250000,
+          "productId": "prod-1793969724161",
+          "unit": "ປອງ",
+          "quantity": 2,
+          "productName": "ເບຍປອງ 12 "
+        },
+        {
+          "quantity": 2,
+          "productId": "prod-1793969811904",
+          "unit": "ປອງ",
+          "selectedUnitType": "single",
+          "price": 25000,
+          "productName": "ເບຍປອງ 1",
+          "multiplier": 1,
+          "total": 50000,
+          "costPrice": 13250
+        }
+      ],
+      "billNumber": "689-20261108-026",
+      "total": 550000,
+      "payment": {
+        "method": "cash"
+      }
+    },
+    {
+      "endTime": "2026-11-08T08:08:14.326Z",
+      "staffName": "ແຈັກ",
+      "type": "pos_sale",
+      "items": [
+        {
+          "unit": "ປອງ",
+          "costPrice": 13250,
+          "price": 250000,
+          "multiplier": 1,
+          "quantity": 2,
+          "total": 500000,
+          "productId": "prod-1793969724161",
+          "selectedUnitType": "single",
+          "productName": "ເບຍປອງ 12 "
+        },
+        {
+          "productName": "ເບຍປອງ 1",
+          "selectedUnitType": "single",
+          "multiplier": 1,
+          "productId": "prod-1793969811904",
+          "quantity": 2,
+          "unit": "ປອງ",
+          "total": 50000,
+          "price": 25000,
+          "costPrice": 13250
+        }
+      ],
+      "billNumber": "689-20261108-026",
+      "id": "bill-1794125294409",
+      "payment": {
+        "method": "cash",
+        "change": 0
+      },
+      "discount": 0,
+      "total": 550000,
+      "subtotal": 550000,
+      "tax": 0,
+      "roomCharge": 0
+    },
+    {
+      "syncedToSheets": true,
+      "staffName": "ແຈັກ",
+      "items": [
+        {
+          "productName": "ນ້ຳດືມ",
+          "unit": "ຕຸກ",
+          "costPrice": 15000,
+          "price": 20000,
+          "sellerId": "staff-1",
+          "sellerName": "ແຈັກ",
+          "total": 20000,
+          "productId": "prod-1793971459802",
+          "quantity": 1
+        }
+      ],
+      "total": 270000,
+      "endTime": "2026-11-07T21:38:57.098Z",
+      "billNumber": "689-20261107-025",
+      "type": "ktv_room",
+      "discount": 0,
+      "roomName": "ຫ້ອງ V002",
+      "startTime": "2026-11-07T19:08:00.000Z",
+      "payment": {
+        "method": "cash"
+      },
+      "isRoomChargePaid": false,
+      "subtotal": 270000,
+      "pricingType": "open_time",
+      "timeRangeFormatted": "02:08 - 04:38 (2 ຊມ 30 ນາທີ - ນັບຕາມຈິງ)",
+      "roomId": "room-02",
+      "bookedHours": 0,
+      "durationMinutes": 150,
+      "id": "bill-1794087537098",
+      "tax": 0,
+      "roomCharge": 250000
+    },
+    {
+      "discount": 0,
+      "billNumber": "689-20261107-024",
+      "staffName": "ແຈັກ",
+      "syncedToSheets": true,
+      "type": "pos_sale",
+      "endTime": "2026-11-07T21:36:58.028Z",
+      "total": 300000,
+      "tax": 0,
+      "id": "bill-1794087418084",
+      "items": [
+        {
+          "unit": "ປອງ",
+          "price": 250000,
+          "productName": "ເບຍປອງ 12 ",
+          "total": 250000,
+          "quantity": 1,
+          "costPrice": 13250,
+          "productId": "prod-1793969724161"
+        },
+        {
+          "unit": "ປອງ",
+          "total": 50000,
+          "quantity": 2,
+          "costPrice": 13250,
+          "productId": "prod-1793969811904",
+          "productName": "ເບຍປອງ 1",
+          "price": 25000
+        }
+      ],
+      "payment": {
+        "method": "cash"
+      },
+      "subtotal": 300000,
+      "roomCharge": 0
+    },
+    {
+      "billNumber": "689-20261107-023",
+      "type": "pos_sale",
+      "subtotal": 40000,
+      "payment": {
+        "method": "cash"
+      },
+      "total": 40000,
+      "tax": 0,
+      "discount": 0,
+      "staffName": "ແຈັກ",
+      "items": [
+        {
+          "costPrice": 15000,
+          "productId": "prod-1793971553030",
+          "unit": "ແກ້ວ",
+          "quantity": 2,
+          "price": 20000,
+          "productName": "ໂຊດາ",
+          "total": 40000
+        }
+      ],
+      "endTime": "2026-11-07T21:25:03.228Z",
+      "roomCharge": 0,
+      "id": "bill-1794086703287",
+      "syncedToSheets": true
+    },
+    {
+      "id": "bill-1794083824212",
+      "subtotal": 20000,
+      "endTime": "2026-11-07T20:37:04.153Z",
+      "roomCharge": 0,
+      "tax": 0,
+      "items": [
+        {
+          "costPrice": 30000,
+          "productId": "prod-1793971250491",
+          "unit": "ອັນ",
+          "quantity": 2,
+          "price": 10000,
+          "productName": "ຄໍເລດ",
+          "total": 20000
+        }
+      ],
+      "total": 20000,
+      "billNumber": "689-20261107-022",
+      "type": "pos_sale",
+      "syncedToSheets": true,
+      "staffName": "ແຈັກ",
+      "payment": {
+        "method": "cash"
+      },
+      "discount": 0
+    },
+    {
+      "endTime": "2026-11-07T20:28:24.758Z",
+      "tax": 0,
+      "billNumber": "689-20261107-021",
+      "discount": 0,
+      "total": 20000,
+      "syncedToSheets": true,
+      "items": [
+        {
+          "quantity": 2,
+          "unit": "ອັນ",
+          "costPrice": 30000,
+          "productId": "prod-1793971250491",
+          "total": 20000,
+          "price": 10000,
+          "productName": "ຄໍເລດ"
+        }
+      ],
+      "type": "pos_sale",
+      "payment": {
+        "method": "cash"
+      },
+      "staffName": "ແຈັກ",
+      "subtotal": 20000,
+      "id": "bill-1794083304826",
+      "roomCharge": 0
+    },
+    {
+      "total": 40000,
+      "subtotal": 40000,
+      "items": [
+        {
+          "quantity": 2,
+          "productName": "ໂຊດາ",
+          "unit": "ແກ້ວ",
+          "price": 20000,
+          "costPrice": 15000,
+          "productId": "prod-1793971553030",
+          "total": 40000
+        }
+      ],
+      "roomCharge": 0,
+      "payment": {
+        "method": "cash"
+      },
+      "id": "bill-1794083027385",
+      "staffName": "ແຈັກ",
+      "tax": 0,
+      "type": "pos_sale",
+      "syncedToSheets": true,
+      "discount": 0,
+      "billNumber": "689-20261107-020",
+      "endTime": "2026-11-07T20:23:47.325Z"
+    },
+    {
+      "items": [
+        {
+          "unit": "ປອງ",
+          "quantity": 1,
+          "productId": "prod-1793971116902",
+          "sellerId": "staff-admin",
+          "sellerName": "Admin (ເຈົ້າຂອງຮ້ານ)",
+          "costPrice": 11041,
+          "price": 20000,
+          "productName": "ສະຕີງ",
+          "total": 20000
+        },
+        {
+          "costPrice": 318000,
+          "unit": "ປອງ",
+          "price": 500000,
+          "quantity": 2,
+          "productId": "prod-1793971759969",
+          "total": 1000000,
+          "productName": "ເບຍແກັດ",
+          "sellerName": "Admin (ເຈົ້າຂອງຮ້ານ)",
+          "sellerId": "staff-admin"
+        },
+        {
+          "sellerName": "ແຈັກ",
+          "quantity": 1,
+          "productId": "prod-1793971116902",
+          "sellerId": "staff-1",
+          "productName": "ສະຕີງ",
+          "total": 20000,
+          "unit": "ປອງ",
+          "costPrice": 11041,
+          "price": 20000
+        },
+        {
+          "productName": "ນ້ຳດືມ",
+          "unit": "ຕຸກ",
+          "productId": "prod-1793971459802",
+          "price": 20000,
+          "sellerId": "staff-1",
+          "quantity": 1,
+          "total": 20000,
+          "sellerName": "ແຈັກ",
+          "costPrice": 15000
+        }
+      ],
+      "subtotal": 1360000,
+      "staffName": "ແຈັກ",
+      "roomId": "room-02",
+      "total": 1360000,
+      "isRoomChargePaid": false,
+      "pricingType": "open_time",
+      "tax": 0,
+      "billNumber": "689-20261107-019",
+      "durationMinutes": 155,
+      "bookedHours": 0,
+      "payment": {
+        "method": "cash"
+      },
+      "type": "ktv_room",
+      "timeRangeFormatted": "23:25 - 02:00 (2 ຊມ 35 ນາທີ - ນັບຕາມຈິງ)",
+      "startTime": "2026-11-07T16:25:00.000Z",
+      "roomCharge": 300000,
+      "id": "bill-1794078033623",
+      "syncedToSheets": true,
+      "endTime": "2026-11-07T19:00:33.623Z",
+      "discount": 0,
+      "roomName": "ຫ້ອງ V002"
+    },
+    {
+      "staffName": "ແຈັກ",
+      "syncedToSheets": true,
+      "total": 40000,
+      "id": "bill-1794077338894",
+      "payment": {
+        "method": "cash"
+      },
+      "items": [
+        {
+          "price": 20000,
+          "total": 40000,
+          "costPrice": 15000,
+          "productId": "prod-1793971553030",
+          "unit": "ແກ້ວ",
+          "quantity": 2,
+          "productName": "ໂຊດາ"
+        }
+      ],
+      "discount": 0,
+      "billNumber": "689-20261107-018",
+      "subtotal": 40000,
+      "tax": 0,
+      "roomCharge": 0,
+      "type": "pos_sale",
+      "endTime": "2026-11-07T18:48:58.843Z"
+    },
+    {
+      "id": "bill-1794077293694",
+      "type": "pos_sale",
+      "tax": 0,
+      "total": 40000,
+      "items": [
+        {
+          "productName": "ໂອອີຊີ",
+          "total": 40000,
+          "price": 20000,
+          "unit": "ແກ້ວ",
+          "quantity": 2,
+          "costPrice": 15000,
+          "productId": "prod-1793971341445"
+        }
+      ],
+      "discount": 0,
+      "billNumber": "689-20261107-017",
+      "payment": {
+        "method": "cash"
+      },
+      "syncedToSheets": true,
+      "roomCharge": 0,
+      "subtotal": 40000,
+      "endTime": "2026-11-07T18:48:13.641Z",
+      "staffName": "ແຈັກ"
+    },
+    {
+      "timeRangeFormatted": "22:19 - 01:24 (ກຳນົດ: 22:19 - 02:19)",
+      "staffName": "ແຈັກ",
+      "roomId": "room-03",
+      "pricingType": "package",
+      "durationMinutes": 185,
+      "endTime": "2026-11-07T18:24:31.869Z",
+      "type": "ktv_room",
+      "tax": 0,
+      "subtotal": 0,
+      "billNumber": "689-20261107-016",
+      "startTime": "2026-11-07T15:19:00.000Z",
+      "bookedHours": 4,
+      "syncedToSheets": true,
+      "total": 0,
+      "packageName": "ແພັກເກັດ 4ຊົ່ວໂມງ (Party 4 Hrs)",
+      "payment": {
+        "method": "cash"
+      },
+      "targetEndTime": "2026-11-07T19:19:00.000Z",
+      "items": [],
+      "id": "bill-1794075871869",
+      "discount": 0,
+      "roomName": "ຫ້ອງ V003",
+      "isRoomChargePaid": true,
+      "roomCharge": 0
+    },
+    {
+      "syncedToSheets": true,
+      "roomName": "ຫ້ອງ V005 (ຫ້ອງໃຫຍ່)",
+      "staffName": "ແຈັກ",
+      "discount": 0,
+      "isRoomChargePaid": true,
+      "targetEndTime": "2026-11-07T18:40:00.000Z",
+      "payment": {
+        "method": "cash"
+      },
+      "bookedHours": 4,
+      "timeRangeFormatted": "21:40 - 01:24 (ກຳນົດ: 21:40 - 01:40)",
+      "roomCharge": 0,
+      "pricingType": "fixed_hourly",
+      "id": "bill-1794075865183",
+      "startTime": "2026-11-07T14:40:00.000Z",
+      "items": [],
+      "total": 0,
+      "endTime": "2026-11-07T18:24:25.183Z",
+      "type": "ktv_room",
+      "tax": 0,
+      "roomId": "room-689",
+      "subtotal": 0,
+      "billNumber": "689-20261107-015",
+      "durationMinutes": 224
+    },
+    {
+      "timeRangeFormatted": "22:48 - 00:29 (1 ຊມ 41 ນາທີ - ນັບຕາມຈິງ)",
+      "staffName": "ແຈັກ",
+      "type": "ktv_room",
+      "syncedToSheets": true,
+      "bookedHours": 0,
+      "pricingType": "open_time",
+      "roomCharge": 200000,
+      "roomName": "ຫ້ອງ V004",
+      "roomId": "room-04",
+      "endTime": "2026-11-07T17:29:39.850Z",
+      "discount": 0,
+      "startTime": "2026-11-07T15:48:00.000Z",
+      "billNumber": "689-20261107-014",
+      "subtotal": 720000,
+      "id": "bill-1794072579850",
+      "durationMinutes": 101,
+      "tax": 0,
+      "isRoomChargePaid": false,
+      "payment": {
+        "method": "cash"
+      },
+      "items": [
+        {
+          "unit": "ຕຸກ",
+          "productId": "prod-1793971459802",
+          "sellerName": "Admin (ເຈົ້າຂອງຮ້ານ)",
+          "price": 20000,
+          "costPrice": 15000,
+          "productName": "ນ້ຳດືມ",
+          "sellerId": "staff-admin",
+          "quantity": 1,
+          "total": 20000
+        },
+        {
+          "costPrice": 318000,
+          "productName": "ເບຍແກັດ",
+          "sellerName": "Admin (ເຈົ້າຂອງຮ້ານ)",
+          "total": 500000,
+          "quantity": 1,
+          "unit": "ປອງ",
+          "price": 500000,
+          "productId": "prod-1793971759969",
+          "sellerId": "staff-admin"
+        }
+      ],
+      "total": 720000
+    },
+    {
+      "packageName": null,
+      "roomCharge": 300000,
+      "id": "bill-1794067075491",
+      "durationMinutes": 157,
+      "roomId": "room-02",
+      "isRoomChargePaid": false,
+      "endTime": "2026-11-07T15:57:55.491Z",
+      "items": [],
+      "roomName": "ຫ້ອງ V002",
+      "total": 300000,
+      "discount": 0,
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)",
+      "syncedToSheets": true,
+      "subtotal": 300000,
+      "pricingType": "open_time",
+      "type": "ktv_room",
+      "targetEndTime": null,
+      "tax": 0,
+      "billNumber": "689-20261107-013",
+      "bookedHours": 0,
+      "timeRangeFormatted": "20:20 - 22:57 (2 ຊມ 37 ນາທີ - ນັບຕາມຈິງ)",
+      "startTime": "2026-11-07T13:20:00.000Z",
+      "payment": {
+        "method": "cash"
+      }
+    },
+    {
+      "discount": 0,
+      "items": [
+        {
+          "quantity": 10,
+          "unit": "ປອງ",
+          "costPrice": 13250,
+          "productId": "prod-1793969811904",
+          "price": 25000,
+          "productName": "ເບຍປອງ 1",
+          "total": 250000
+        }
+      ],
+      "total": 250000,
+      "billNumber": "689-20261107-012",
+      "payment": {
+        "method": "cash"
+      },
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)",
+      "roomCharge": 0,
+      "syncedToSheets": true,
+      "type": "pos_sale",
+      "subtotal": 250000,
+      "id": "bill-1794064840355",
+      "tax": 0,
+      "endTime": "2026-11-07T15:20:40.301Z"
+    },
+    {
+      "endTime": "2026-11-07T14:47:18.816Z",
+      "roomCharge": 0,
+      "syncedToSheets": true,
+      "items": [
+        {
+          "sellerName": "ແຈັກ",
+          "productId": "prod-1793970967306",
+          "sellerId": "staff-1",
+          "quantity": 1,
+          "total": 750,
+          "productName": "ຈ",
+          "costPrice": 600000,
+          "price": 750,
+          "unit": "ຊ່ອງ"
+        }
+      ],
+      "total": 750,
+      "subtotal": 750,
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)",
+      "id": "bill-1794062838877",
+      "type": "pos_sale",
+      "discount": 0,
+      "payment": {
+        "method": "cash"
+      },
+      "billNumber": "689-20261107-011",
+      "tax": 0
+    },
+    {
+      "total": 0,
+      "items": [],
+      "roomId": "room-689",
+      "endTime": "2026-11-07T14:45:12.645Z",
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)",
+      "durationMinutes": 245,
+      "roomCharge": 0,
+      "type": "ktv_room",
+      "startTime": "2026-11-07T10:40:00.000Z",
+      "isRoomChargePaid": true,
+      "timeRangeFormatted": "17:40 - 21:45 (ກຳນົດ: 17:40 - 21:40)",
+      "subtotal": 0,
+      "tax": 0,
+      "bookedHours": 4,
+      "id": "bill-1794062712645",
+      "discount": 0,
+      "roomName": "ຫ້ອງ V005 (ຫ້ອງໃຫຍ່)",
+      "payment": {
+        "method": "cash"
+      },
+      "syncedToSheets": true,
+      "targetEndTime": "2026-11-07T14:40:00.000Z",
+      "billNumber": "689-20261107-010",
+      "pricingType": "fixed_hourly"
+    },
+    {
+      "roomCharge": 0,
+      "syncedToSheets": true,
+      "total": 1400,
+      "items": [
+        {
+          "productName": "ຈ",
+          "costPrice": 600000,
+          "unit": "ຊ່ອງ",
+          "sellerId": "staff-1",
+          "total": 1400,
+          "quantity": 2,
+          "price": 700,
+          "sellerName": "ແຈັກ",
+          "productId": "prod-1793970967306"
+        }
+      ],
+      "discount": 0,
+      "payment": {
+        "method": "cash"
+      },
+      "type": "pos_sale",
+      "tax": 0,
+      "id": "bill-1794060625004",
+      "billNumber": "689-20261107-009",
+      "endTime": "2026-11-07T14:10:24.947Z",
+      "subtotal": 1400,
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)"
+    },
+    {
+      "payment": {
+        "method": "cash"
+      },
+      "tax": 0,
+      "id": "bill-1794059151437",
+      "discount": 0,
+      "roomCharge": 0,
+      "syncedToSheets": true,
+      "total": 100000,
+      "items": [
+        {
+          "costPrice": 13250,
+          "productId": "prod-1793969811904",
+          "total": 100000,
+          "quantity": 4,
+          "unit": "ປອງ",
+          "price": 25000,
+          "productName": "ເບຍປອງ 1"
+        }
+      ],
+      "billNumber": "689-20261107-008",
+      "subtotal": 100000,
+      "endTime": "2026-11-07T13:45:51.380Z",
+      "type": "pos_sale",
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)"
+    },
+    {
+      "tax": 0,
+      "roomCharge": 0,
+      "subtotal": 1400000,
+      "type": "pos_sale",
+      "endTime": "2026-11-07T13:04:57.047Z",
+      "syncedToSheets": true,
+      "total": 1400000,
+      "billNumber": "689-20261107-007",
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)",
+      "items": [
+        {
+          "sellerName": "ອາຄົມ",
+          "productName": "ຈ",
+          "sellerId": "staff-3",
+          "costPrice": 600000,
+          "quantity": 2,
+          "unit": "ຊ່ອງ",
+          "price": 700000,
+          "productId": "prod-1793970967306",
+          "total": 1400000
+        }
+      ],
+      "discount": 0,
+      "id": "bill-1794056697143",
+      "payment": {
+        "method": "cash"
+      }
+    },
+    {
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)",
+      "billNumber": "689-20261107-006",
+      "tax": 0,
+      "timeRangeFormatted": "14:48 - 19:49 (5 ຊມ 1 ນາທີ - ນັບຕາມຈິງ)",
+      "subtotal": 550000,
+      "payment": {
+        "method": "cash"
+      },
+      "syncedToSheets": true,
+      "startTime": "2026-11-07T07:48:00.000Z",
+      "pricingType": "open_time",
+      "roomId": "room-689",
+      "type": "ktv_room",
+      "total": 550000,
+      "discount": 0,
+      "items": [],
+      "roomName": "ຫ້ອງ V005 (ຫ້ອງໃຫຍ່)",
+      "endTime": "2026-11-07T12:49:44.150Z",
+      "roomCharge": 550000,
+      "id": "bill-1794055784151",
+      "durationMinutes": 301,
+      "bookedHours": 0
+    },
+    {
+      "endTime": "2026-11-07T12:21:49.698Z",
+      "roomCharge": 0,
+      "subtotal": 100000,
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)",
+      "tax": 0,
+      "id": "bill-1794054109762",
+      "type": "pos_sale",
+      "syncedToSheets": true,
+      "total": 100000,
+      "payment": {
+        "method": "cash"
+      },
+      "items": [
+        {
+          "quantity": 4,
+          "price": 25000,
+          "productName": "ເບຍປອງ 1",
+          "total": 100000,
+          "costPrice": 13250,
+          "productId": "prod-1793969811904",
+          "unit": "ປອງ"
+        }
+      ],
+      "billNumber": "689-20261107-005",
+      "discount": 0
+    },
+    {
+      "billNumber": "689-20261107-004",
+      "id": "bill-1794053763075",
+      "subtotal": 700000,
+      "syncedToSheets": true,
+      "payment": {
+        "method": "cash"
+      },
+      "staffName": "Admin (ເຈົ້າຂອງຮ້ານ)",
+      "tax": 0,
+      "roomCharge": 0,
+      "type": "pos_sale",
+      "total": 700000,
+      "items": [
+        {
+          "productId": "prod-1793970967306",
+          "productName": "ຈ",
+          "total": 700000,
+          "quantity": 1,
+          "costPrice": 600000,
+          "price": 700000,
+          "sellerName": "ມະນີວັນ",
+          "unit": "ຊ່ອງ",
+          "sellerId": "staff-2"
+        }
+      ],
+      "discount": 0,
+      "endTime": "2026-11-07T12:16:03.019Z"
+    },
+    {
+      "roomCharge": 0,
+      "syncedToSheets": true,
+      "subtotal": 60000,
+      "items": [
+        {
+          "total": 20000,
+          "unit": "ຕຸກ",
+          "costPrice": 15000,
+          "productId": "prod-1793971459802",
+          "price": 20000,
+          "quantity": 1,
+          "productName": "ນ້ຳດືມ"
+        },
+        {
+          "price": 20000,
+          "quantity": 2,
+          "costPrice": 15000,
+          "productId": "prod-1793971553030",
+          "unit": "ແກ້ວ",
+          "total": 40000,
+          "productName": "ໂຊດາ"
+        }
+      ],
+      "total": 60000,
+      "payment": {
+        "method": "cash"
+      },
+      "id": "bill-1793987565451",
+      "type": "pos_sale",
+      "discount": 0,
+      "billNumber": "689-20261106-003",
+      "tax": 0,
+      "endTime": "2026-11-06T17:52:45.404Z",
+      "staffName": "ແຈັກ"
+    },
+    {
+      "tax": 0,
+      "billNumber": "689-20261106-002",
+      "subtotal": 150000,
+      "staffName": "ແຈັກ",
+      "payment": {
+        "method": "cash"
+      },
+      "roomCharge": 0,
+      "type": "pos_sale",
+      "discount": 0,
+      "endTime": "2026-11-06T17:51:23.797Z",
+      "id": "bill-1793987483845",
+      "total": 150000,
+      "syncedToSheets": true,
+      "items": [
+        {
+          "price": 25000,
+          "quantity": 6,
+          "productName": "ເບຍປອງ 1",
+          "unit": "ປອງ",
+          "total": 150000,
+          "costPrice": 13250,
+          "productId": "prod-1793969811904"
+        }
+      ]
+    },
+    {
+      "subtotal": 20000,
+      "payment": {
+        "method": "cash"
+      },
+      "syncedToSheets": true,
+      "billNumber": "689-20261106-001",
+      "tax": 0,
+      "id": "bill-1793987370218",
+      "items": [
+        {
+          "total": 20000,
+          "costPrice": 30000,
+          "productId": "prod-1793971250491",
+          "productName": "ຄໍເລດ",
+          "price": 10000,
+          "unit": "ອັນ",
+          "quantity": 2
+        }
+      ],
+      "total": 20000,
+      "staffName": "ແຈັກ",
+      "roomCharge": 0,
+      "endTime": "2026-11-06T17:49:30.164Z",
+      "type": "pos_sale",
+      "discount": 0
+    }
+  ]
+}

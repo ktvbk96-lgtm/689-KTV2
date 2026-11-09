@@ -30,6 +30,7 @@ import {
 import { Room, RoomPackage, Product, StaffMember, AppSettings, CartItem, Role, RoomPricingType } from '../types';
 import { formatCurrency } from '../lib/storage';
 import { formatWithSeparators, parseCleanNumber, FormattedNumberInput } from './FormattedNumberInput';
+import { normalizeImageUrl } from '../lib/imageUtils';
 
 interface RoomManagementProps {
   rooms: Room[];
@@ -2161,7 +2162,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                           <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-900 shrink-0 border border-slate-700 flex items-center justify-center">
                             {prod.imageUrl ? (
                               <img
-                                src={prod.imageUrl}
+                                src={normalizeImageUrl(prod.imageUrl)}
                                 alt={prod.name}
                                 className={`w-full h-full object-cover ${isOutOfStock ? 'grayscale opacity-40' : ''}`}
                                 onError={(e) => {

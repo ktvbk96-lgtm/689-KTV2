@@ -41,9 +41,14 @@ import {
   Clock,
   CheckCircle2,
   ExternalLink,
+  Timer,
+  Radio,
+  PlayCircle,
+  Mic2,
 } from 'lucide-react';
-import { BillRecord, Product, AppSettings, ProductCategory, Role } from '../types';
+import { BillRecord, Product, AppSettings, ProductCategory, Role, Room, RoomPackage } from '../types';
 import { formatCurrency } from '../lib/storage';
+import { normalizeImageUrl } from '../lib/imageUtils';
 import {
   printReceiptAsImageViaBluetooth,
   getBluetoothStatus,
@@ -54,6 +59,8 @@ interface SalesSummaryProps {
   bills: BillRecord[];
   products: Product[];
   settings: AppSettings;
+  rooms?: Room[];
+  packages?: RoomPackage[];
   onSyncAllToSheets?: () => void;
   isSyncingSheets?: boolean;
   currentRole?: Role;
@@ -69,6 +76,8 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
   bills,
   products,
   settings,
+  rooms = [],
+  packages = [],
   onSyncAllToSheets,
   isSyncingSheets,
   currentRole,
@@ -79,8 +88,8 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
   bluetoothConnected,
   onOpenBluetoothSetup,
 }) => {
-  // Choice 1: Overall Summary vs Choice 2: Itemized & Profit Breakdown vs Choice 3: Bills & Delete
-  const [activeChoice, setActiveChoice] = useState<'overall' | 'itemized' | 'bills'>('itemized');
+  // Choice 1: Overall Summary vs Choice 2: Itemized & Profit Breakdown vs Choice 3: Bills & Delete vs Choice 4: KTV Rooms & Time
+  const [activeChoice, setActiveChoice] = useState<'overall' | 'itemized' | 'ktv_rooms' | 'bills'>('ktv_rooms');
 
   // Timeframe filter: daily, monthly, yearly, custom
   const [timeframe, setTimeframe] = useState<'daily' | 'monthly' | 'yearly' | 'custom'>('daily');
@@ -395,6 +404,290 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
       }))
       .sort((a, b) => b.grossProfit - a.grossProfit);
   }, [filteredBills, productLookup]);
+
+  // Real-time Room & Usage Time Analytics (Checked-out bills + Live active rooms)
+  const roomAnalytics = useMemo(() => {
+    const isToday =
+      timeframe === 'daily'
+        ? selectedDate === new Date().toISOString().split('T')[0]
+        : timeframe === 'monthly'
+        ? selectedMonth === new Date().toISOString().slice(0, 7)
+        : timeframe === 'yearly'
+        ? selectedYear === new Date().getFullYear().toString()
+        : timeframe === 'custom'
+        ? new Date().toISOString().split('T')[0] >= customStartDate &&
+          new Date().toISOString().split('T')[0] <= customEndDate
+        : true;
+
+    // 1. Process Completed KTV Bills in filtered timeframe
+    const completedRoomBills = filteredBills.filter(
+      (b) => b.type === 'ktv_room' || (b.roomName && b.roomName.trim().length > 0)
+    );
+
+    let checkedOutRoomRevenue = 0;
+    let checkedOutPrepaidRevenue = 0;
+    let checkedOutPostpaidRevenue = 0;
+    let checkedOutDurationMinutes = 0;
+    let checkedOutFoodDrinkTotal = 0;
+
+    // Map to aggregate stats by room name
+    const roomStatsMap = new Map<
+      string,
+      {
+        roomId?: string;
+        roomName: string;
+        sessionsCount: number;
+        totalMinutes: number;
+        roomRevenue: number;
+        prepaidRevenue: number;
+        postpaidRevenue: number;
+        foodDrinkRevenue: number;
+        grandTotalRevenue: number;
+        activeNow?: boolean;
+        activeRoomData?: any;
+      }
+    >();
+
+    // Helper to get or init room stats
+    const getOrInitRoomStats = (name: string, id?: string) => {
+      const trimmed = name.trim();
+      let stat = roomStatsMap.get(trimmed);
+      if (!stat) {
+        stat = {
+          roomId: id,
+          roomName: trimmed,
+          sessionsCount: 0,
+          totalMinutes: 0,
+          roomRevenue: 0,
+          prepaidRevenue: 0,
+          postpaidRevenue: 0,
+          foodDrinkRevenue: 0,
+          grandTotalRevenue: 0,
+        };
+        roomStatsMap.set(trimmed, stat);
+      }
+      return stat;
+    };
+
+    // Initialize all existing configured rooms so they all appear in the report
+    rooms.forEach((r) => {
+      getOrInitRoomStats(r.name, r.id);
+    });
+
+    completedRoomBills.forEach((b) => {
+      const roomName = b.roomName || 'ຫ້ອງ KTV';
+      const stat = getOrInitRoomStats(roomName, b.roomId);
+
+      // Duration in minutes
+      let durationMins = b.durationMinutes;
+      if (!durationMins || durationMins <= 0) {
+        if (b.startTime && b.endTime) {
+          const diffMs = Math.max(0, new Date(b.endTime).getTime() - new Date(b.startTime).getTime());
+          durationMins = Math.floor(diffMs / 60000);
+        } else if (b.bookedHours && b.bookedHours > 0) {
+          durationMins = Math.round(b.bookedHours * 60);
+        } else {
+          durationMins = 0;
+        }
+      }
+
+      // Room charge computation
+      let billRoomCharge = b.roomCharge || 0;
+      const isPrepaid = !!b.isRoomChargePaid;
+
+      // If customer paid upfront and bill.roomCharge was set to 0, resolve original upfront payment
+      if (billRoomCharge === 0 && isPrepaid) {
+        if (b.packageName) {
+          const matchedPkg = packages.find(
+            (p) => p.name === b.packageName || p.id === b.packageName
+          );
+          billRoomCharge = matchedPkg ? matchedPkg.price : (settings.defaultHourlyRate || 70000);
+        } else if (b.bookedHours && b.bookedHours > 0) {
+          billRoomCharge = b.bookedHours * (settings.defaultHourlyRate || 70000);
+        } else {
+          const hrs = Math.max(0.5, Math.ceil((durationMins || 60) / 30) * 0.5);
+          billRoomCharge = Math.round(hrs * (settings.defaultHourlyRate || 70000));
+        }
+      }
+
+      const foodDrink = b.items.reduce((s, it) => s + it.total, 0);
+
+      checkedOutRoomRevenue += billRoomCharge;
+      if (isPrepaid) {
+        checkedOutPrepaidRevenue += billRoomCharge;
+      } else {
+        checkedOutPostpaidRevenue += billRoomCharge;
+      }
+      checkedOutDurationMinutes += durationMins;
+      checkedOutFoodDrinkTotal += foodDrink;
+
+      stat.sessionsCount += 1;
+      stat.totalMinutes += durationMins;
+      stat.roomRevenue += billRoomCharge;
+      if (isPrepaid) {
+        stat.prepaidRevenue += billRoomCharge;
+      } else {
+        stat.postpaidRevenue += billRoomCharge;
+      }
+      stat.foodDrinkRevenue += foodDrink;
+      stat.grandTotalRevenue += billRoomCharge + foodDrink;
+    });
+
+    // 2. Process Currently Active / In-Use Rooms (if timeframe includes today)
+    const activeRoomsList: {
+      room: Room;
+      elapsedMinutes: number;
+      estimatedRoomFee: number;
+      isPrepaid: boolean;
+      ordersTotal: number;
+      grandTotal: number;
+      timerFormatted: string;
+    }[] = [];
+
+    let activeRoomsTotalFee = 0;
+    let activeRoomsPrepaidFee = 0;
+    let activeRoomsPostpaidFee = 0;
+    let activeRoomsTotalMinutes = 0;
+    let activeRoomsFoodDrinkTotal = 0;
+
+    const now = Date.now();
+
+    rooms.forEach((room) => {
+      if (room.status === 'in_use' && room.openedAt) {
+        const startMs = new Date(room.openedAt).getTime();
+        const elapsedMins = Math.max(0, Math.floor((now - startMs) / 60000));
+
+        // Determine fee based on upfront payment vs post-pay
+        let roomFee = 0;
+        const isPrepaid = !!room.isPaid;
+
+        if (room.pricingType === 'package') {
+          const pkg =
+            packages.find((p) => p.id === room.packageId) ||
+            packages.find((p) => p.name === room.packageName);
+          roomFee = pkg ? pkg.price : (room.hourlyRate || settings.defaultHourlyRate || 70000);
+        } else if (room.pricingType === 'open_time') {
+          const actualHours = Math.max(0.5, Math.ceil(elapsedMins / 30) * 0.5);
+          roomFee = Math.round(actualHours * (room.hourlyRate || settings.defaultHourlyRate || 70000));
+        } else {
+          // fixed_hourly
+          if (isPrepaid && room.bookedHours && room.bookedHours > 0) {
+            roomFee = Math.round(room.bookedHours * (room.hourlyRate || settings.defaultHourlyRate || 70000));
+          } else {
+            const actualHours = Math.max(0.5, Math.ceil(elapsedMins / 30) * 0.5);
+            const hoursToCharge = room.bookedHours ? Math.max(room.bookedHours, actualHours) : actualHours;
+            roomFee = Math.round(hoursToCharge * (room.hourlyRate || settings.defaultHourlyRate || 70000));
+          }
+        }
+
+        const ordersTotal = (room.orders || []).reduce((s, o) => s + o.price * o.quantity, 0);
+        const grandTotal = roomFee + ordersTotal;
+
+        const h = Math.floor(elapsedMins / 60);
+        const m = elapsedMins % 60;
+        const timerFormatted = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+
+        const activeItem = {
+          room,
+          elapsedMinutes: elapsedMins,
+          estimatedRoomFee: roomFee,
+          isPrepaid,
+          ordersTotal,
+          grandTotal,
+          timerFormatted,
+        };
+
+        activeRoomsList.push(activeItem);
+
+        activeRoomsTotalFee += roomFee;
+        if (isPrepaid) {
+          activeRoomsPrepaidFee += roomFee;
+        } else {
+          activeRoomsPostpaidFee += roomFee;
+        }
+        activeRoomsTotalMinutes += elapsedMins;
+        activeRoomsFoodDrinkTotal += ordersTotal;
+
+        // If current timeframe includes today, merge active room into roomStatsMap
+        if (isToday) {
+          const stat = getOrInitRoomStats(room.name, room.id);
+          stat.activeNow = true;
+          stat.activeRoomData = activeItem;
+          stat.sessionsCount += 1;
+          stat.totalMinutes += elapsedMins;
+          stat.roomRevenue += roomFee;
+          if (isPrepaid) {
+            stat.prepaidRevenue += roomFee;
+          } else {
+            stat.postpaidRevenue += roomFee;
+          }
+          stat.foodDrinkRevenue += ordersTotal;
+          stat.grandTotalRevenue += grandTotal;
+        }
+      }
+    });
+
+    // 3. Grand Totals (Checked-out + Active if today included)
+    const grandRoomRevenue = checkedOutRoomRevenue + (isToday ? activeRoomsTotalFee : 0);
+    const grandRoomPrepaidRevenue = checkedOutPrepaidRevenue + (isToday ? activeRoomsPrepaidFee : 0);
+    const grandRoomPostpaidRevenue = checkedOutPostpaidRevenue + (isToday ? activeRoomsPostpaidFee : 0);
+    const grandRoomTotalMinutes = checkedOutDurationMinutes + (isToday ? activeRoomsTotalMinutes : 0);
+    const grandTotalSessions = completedRoomBills.length + (isToday ? activeRoomsList.length : 0);
+    const grandFoodDrinkRevenue = checkedOutFoodDrinkTotal + (isToday ? activeRoomsFoodDrinkTotal : 0);
+    const grandOverallRevenue = grandRoomRevenue + grandFoodDrinkRevenue;
+
+    // Helper format minutes to "X ຊົ່ວໂມງ Y ນາທີ"
+    const formatHoursMinutes = (
+      totalMins: number
+    ): { text: string; hours: number; minutes: number } => {
+      const hours = Math.floor(totalMins / 60);
+      const minutes = totalMins % 60;
+      if (hours === 0 && minutes === 0) return { text: '00:00 (0 ນາທີ)', hours: 0, minutes: 0 };
+      if (hours === 0) return { text: `${minutes} ນາທີ`, hours: 0, minutes };
+      if (minutes === 0) return { text: `${hours} ຊົ່ວໂມງ`, hours, minutes: 0 };
+      return { text: `${hours} ຊົ່ວໂມງ ${minutes} ນາທີ`, hours, minutes };
+    };
+
+    const perRoomRanking = Array.from(roomStatsMap.values()).sort(
+      (a, b) => b.grandTotalRevenue - a.grandTotalRevenue
+    );
+
+    return {
+      isToday,
+      completedRoomBills,
+      checkedOutRoomRevenue,
+      checkedOutPrepaidRevenue,
+      checkedOutPostpaidRevenue,
+      checkedOutDurationMinutes,
+      checkedOutFoodDrinkTotal,
+      activeRoomsList,
+      activeRoomsTotalFee,
+      activeRoomsPrepaidFee,
+      activeRoomsPostpaidFee,
+      activeRoomsTotalMinutes,
+      activeRoomsFoodDrinkTotal,
+      grandRoomRevenue,
+      grandRoomPrepaidRevenue,
+      grandRoomPostpaidRevenue,
+      grandRoomTotalMinutes,
+      grandTotalSessions,
+      grandFoodDrinkRevenue,
+      grandOverallRevenue,
+      formatHoursMinutes,
+      perRoomRanking,
+    };
+  }, [
+    filteredBills,
+    rooms,
+    packages,
+    settings,
+    timeframe,
+    selectedDate,
+    selectedMonth,
+    selectedYear,
+    customStartDate,
+    customEndDate,
+  ]);
 
   // Calculate Overall Store Totals
   const totalRevenue = filteredBills.reduce((acc, b) => acc + b.total, 0);
@@ -778,18 +1071,21 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
           </div>
         </div>
 
-        {/* Choice 1, 2, 3 Tabs */}
+        {/* Choice 4 (KTV Rooms), Choice 1 (Overall), Choice 2 (Itemized), Choice 3 (Bills) Tabs */}
         <div className="flex flex-wrap items-center gap-1.5 bg-slate-800/90 p-1.5 rounded-2xl border border-slate-700/80 w-full sm:w-auto">
           <button
-            onClick={() => setActiveChoice('itemized')}
+            onClick={() => setActiveChoice('ktv_rooms')}
             className={`flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-              activeChoice === 'itemized'
-                ? 'bg-gradient-to-r from-amber-500 to-emerald-500 text-slate-950 shadow-md font-black'
-                : 'text-slate-400 hover:text-slate-200'
+              activeChoice === 'ktv_rooms'
+                ? 'bg-gradient-to-r from-purple-600 via-pink-600 to-rose-600 text-white shadow-md shadow-purple-500/30 font-black'
+                : 'text-purple-300 hover:text-white bg-purple-950/40 border border-purple-800/50'
             }`}
           >
-            <TrendingUp className="w-3.5 h-3.5" />
-            <span>Choice 2: ສິນຄ້າ & ກຳໄລ</span>
+            <Mic2 className="w-3.5 h-3.5 text-purple-300" />
+            <span>Choice 4: 🎤 ຫ້ອງ KTV & ເວລາ</span>
+            {roomAnalytics.activeRoomsList.length > 0 && (
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse ml-0.5" title="ມີຫ້ອງກຳລັງເປີດຢູ່ຕອນນີ້" />
+            )}
           </button>
           <button
             onClick={() => setActiveChoice('overall')}
@@ -803,6 +1099,17 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
             <span>Choice 1: ສະຫຼຸບລວມ & ຜູ້ຂາຍ</span>
           </button>
           <button
+            onClick={() => setActiveChoice('itemized')}
+            className={`flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+              activeChoice === 'itemized'
+                ? 'bg-gradient-to-r from-amber-500 to-emerald-500 text-slate-950 shadow-md font-black'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <TrendingUp className="w-3.5 h-3.5" />
+            <span>Choice 2: ສິນຄ້າ & ກຳໄລ</span>
+          </button>
+          <button
             onClick={() => setActiveChoice('bills')}
             className={`flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
               activeChoice === 'bills'
@@ -811,7 +1118,7 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
             }`}
           >
             <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-            <span>Choice 3: ປະຫວັດບິນ & ລຶບຂໍ້ມູນ ({bills.length})</span>
+            <span>Choice 3: ປະຫວັດບິນ & ລຶບ ({bills.length})</span>
           </button>
         </div>
       </div>
@@ -1357,9 +1664,12 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                             <div className="flex items-center gap-2.5">
                               {item.imageUrl ? (
                                 <img
-                                  src={item.imageUrl}
+                                  src={normalizeImageUrl(item.imageUrl)}
                                   alt={item.productName}
                                   className="w-8 h-8 rounded-lg object-cover border border-slate-700 shrink-0"
+                                  onError={(e) => {
+                                    (e.target as any).style.display = 'none';
+                                  }}
                                 />
                               ) : (
                                 <div className="w-8 h-8 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0 text-slate-400">
@@ -1492,6 +1802,36 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
       {/* CHOICE 1: OVERALL SUMMARY & STORE FINANCIAL SNAPSHOT + SELLER PERFORMANCE */}
       {activeChoice === 'overall' && (
         <div className="space-y-6">
+          {/* Active Rooms Real-time Alert Banner if any rooms in use */}
+          {roomAnalytics.activeRoomsList.length > 0 && (
+            <div className="bg-gradient-to-r from-purple-950/70 via-slate-900 to-rose-950/60 border border-purple-500/40 rounded-3xl p-4 shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300 shrink-0">
+                  <Mic2 className="w-5 h-5 animate-pulse text-purple-400" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                    <h4 className="font-bold text-sm text-white">
+                      ກຳລັງເປີດໃຊ້ງານຢູ່ຕອນນີ້ {roomAnalytics.activeRoomsList.length} ຫ້ອງ (Real-time Live)
+                    </h4>
+                  </div>
+                  <p className="text-xs text-purple-200/80">
+                    ຄ່າຫ້ອງສະສົມຕອນນີ້: {formatCurrency(roomAnalytics.activeRoomsTotalFee, settings.currencySymbol)} • ເວລາສະສົມ: {roomAnalytics.formatHoursMinutes(roomAnalytics.activeRoomsTotalMinutes).text}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveChoice('ktv_rooms')}
+                className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-md shadow-purple-600/30 flex items-center gap-1.5 cursor-pointer shrink-0"
+              >
+                <span>ເບິ່ງລາຍລະອຽດຫ້ອງ KTV</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           {/* 5 Cards Stat Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             {/* Card 1: Total Revenue */}
@@ -1510,20 +1850,39 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
               </p>
             </div>
 
-            {/* Card 2: Room Revenue */}
-            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-lg relative overflow-hidden">
+            {/* Card 2: Room Revenue & Total Hours (Enhanced Real-time) */}
+            <div
+              onClick={() => setActiveChoice('ktv_rooms')}
+              className="bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-purple-500/50 rounded-3xl p-5 shadow-lg relative overflow-hidden transition-all cursor-pointer group"
+              title="ກົດເພື່ອເບິ່ງລາຍລະອຽດຫ້ອງ KTV & ເວລາ"
+            >
               <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
-                <span>ຄ່າຫ້ອງຄາຣາໂອເກະ</span>
-                <span className="p-1.5 rounded-xl bg-purple-500/10 text-purple-400">
+                <span className="font-bold text-purple-300 flex items-center gap-1.5">
+                  <Mic2 className="w-3.5 h-3.5 text-purple-400" />
+                  <span>ຄ່າເປີດຫ້ອງ KTV & ເວລາ</span>
+                </span>
+                <span className="p-1.5 rounded-xl bg-purple-500/10 text-purple-400 group-hover:scale-110 transition-transform">
                   <DoorOpen className="w-4 h-4" />
                 </span>
               </div>
               <div className="text-2xl font-black font-mono text-purple-400">
-                {formatCurrency(totalRoomCharge, settings.currencySymbol)}
+                {formatCurrency(roomAnalytics.grandRoomRevenue, settings.currencySymbol)}
               </div>
-              <p className="text-[11px] text-slate-500 mt-1">
-                {((totalRoomCharge / (totalRevenue || 1)) * 100).toFixed(1)}% ຂອງຍອດຂາຍ
-              </p>
+              <div className="flex items-center gap-1.5 text-xs text-amber-300 font-bold mt-1">
+                <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span>ເວລາລວມ: {roomAnalytics.formatHoursMinutes(roomAnalytics.grandRoomTotalMinutes).text}</span>
+              </div>
+              <div className="text-[10px] text-slate-400 mt-1.5 flex flex-wrap gap-1">
+                <span className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-300">
+                  ເຊັກບິນ: {formatCurrency(roomAnalytics.checkedOutRoomRevenue, '')}
+                </span>
+                {roomAnalytics.activeRoomsList.length > 0 && (
+                  <span className="bg-emerald-950/80 border border-emerald-700/60 text-emerald-300 px-1.5 py-0.5 rounded flex items-center gap-1 font-bold">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    ເປີດຢູ່: {formatCurrency(roomAnalytics.activeRoomsTotalFee, '')} ({roomAnalytics.activeRoomsList.length} ຫ້ອງ)
+                  </span>
+                )}
+              </div>
             </div>
 
             {/* Card 3: Food & Drinks Revenue */}
@@ -1870,6 +2229,545 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                                 </button>
                               )}
                             </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CHOICE 4: KTV ROOMS & USAGE TIME REAL-TIME ANALYTICS (REQUESTED FEATURE) */}
+      {activeChoice === 'ktv_rooms' && (
+        <div className="space-y-6">
+          {/* Header & Quick Information */}
+          <div className="bg-gradient-to-r from-purple-950/80 via-slate-900 to-rose-950/70 border border-purple-500/40 rounded-3xl p-5 sm:p-6 shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-purple-500 to-rose-500 flex items-center justify-center text-white shadow-lg shadow-purple-500/30 shrink-0">
+                <Mic2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h2 className="text-lg font-black text-white flex items-center gap-2">
+                  <span>ສະຫຼຸບຍອດເປີດຫ້ອງ KTV & ເວລາ (Real-time Analytics)</span>
+                  {roomAnalytics.activeRoomsList.length > 0 && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      ເປີດຢູ່ {roomAnalytics.activeRoomsList.length} ຫ້ອງ
+                    </span>
+                  )}
+                </h2>
+                <p className="text-xs text-purple-200/80 mt-0.5">
+                  ຄຳນວນຍອດເງິນຄ່າເປີດຫ້ອງ ແລະ ເວລາທີ່ເປີດຫ້ອງທັງໝົດແບບ Real-time: ລວມທັງຫ້ອງທີ່ຈ່າຍກ່ອນ (Prepaid) ແລະ ຈ່າຍຕາມຫຼັງ (Post-paid) ທັງທີ່ເຊັກບິນແລ້ວ ແລະ ກຳລັງເປີດຢູ່
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 text-xs">
+              <span className="px-3 py-1.5 rounded-xl bg-slate-800/90 text-purple-300 border border-purple-800/40 font-mono font-bold">
+                {timeframe === 'daily'
+                  ? `ວັນທີ: ${selectedDate}`
+                  : timeframe === 'monthly'
+                  ? `ເດືອນ: ${selectedMonth}`
+                  : timeframe === 'yearly'
+                  ? `ປີ: ${selectedYear}`
+                  : `ຊ່ວງ: ${customStartDate} ຫາ ${customEndDate}`}
+              </span>
+            </div>
+          </div>
+
+          {/* 4 Main Metric KPI Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* KPI 1: Grand Room Revenue */}
+            <div className="bg-slate-900 border border-purple-500/30 rounded-3xl p-5 shadow-lg relative overflow-hidden">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
+                <span className="font-bold text-purple-300">ຍອດລວມຄ່າເປີດຫ້ອງທັງໝົດ</span>
+                <span className="p-1.5 rounded-xl bg-purple-500/10 text-purple-400">
+                  <Coins className="w-4 h-4" />
+                </span>
+              </div>
+              <div className="text-2xl sm:text-3xl font-black font-mono text-purple-400">
+                {formatCurrency(roomAnalytics.grandRoomRevenue, settings.currencySymbol)}
+              </div>
+              <div className="mt-2 pt-2 border-t border-slate-800 text-[11px] space-y-0.5">
+                <div className="flex justify-between text-slate-400">
+                  <span>• ເຊັກບິນແລ້ວ ({roomAnalytics.completedRoomBills.length} ບິນ):</span>
+                  <span className="font-mono text-slate-200 font-bold">
+                    {formatCurrency(roomAnalytics.checkedOutRoomRevenue, settings.currencySymbol)}
+                  </span>
+                </div>
+                <div className="flex justify-between text-emerald-400">
+                  <span>• ກຳລັງເປີດຢູ່ຕອນນີ້ ({roomAnalytics.activeRoomsList.length} ຫ້ອງ):</span>
+                  <span className="font-mono font-bold">
+                    +{formatCurrency(roomAnalytics.activeRoomsTotalFee, settings.currencySymbol)}
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-500 text-[10px] pt-1 border-t border-slate-800/60">
+                  <span>ຈ່າຍກ່ອນ: {formatCurrency(roomAnalytics.grandRoomPrepaidRevenue, '')}</span>
+                  <span>ຈ່າຍຕາມຫຼັງ: {formatCurrency(roomAnalytics.grandRoomPostpaidRevenue, '')}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* KPI 2: Grand Total Room Time */}
+            <div className="bg-slate-900 border border-amber-500/30 rounded-3xl p-5 shadow-lg relative overflow-hidden">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
+                <span className="font-bold text-amber-300">ຍອດເວລາເປີດຫ້ອງລວມທັງໝົດ</span>
+                <span className="p-1.5 rounded-xl bg-amber-500/10 text-amber-400">
+                  <Clock className="w-4 h-4" />
+                </span>
+              </div>
+              <div className="text-2xl sm:text-3xl font-black text-amber-400">
+                {roomAnalytics.formatHoursMinutes(roomAnalytics.grandRoomTotalMinutes).text}
+              </div>
+              <div className="mt-2 pt-2 border-t border-slate-800 text-[11px] space-y-0.5">
+                <div className="flex justify-between text-slate-400">
+                  <span>• ເວລາທີ່ເຊັກບິນແລ້ວ:</span>
+                  <span className="text-slate-200 font-bold">
+                    {roomAnalytics.formatHoursMinutes(roomAnalytics.checkedOutDurationMinutes).text}
+                  </span>
+                </div>
+                <div className="flex justify-between text-emerald-400">
+                  <span>• ເວລາຫ້ອງທີ່ກຳລັງເປີດຕອນນີ້:</span>
+                  <span className="font-bold">
+                    +{roomAnalytics.formatHoursMinutes(roomAnalytics.activeRoomsTotalMinutes).text}
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-500 text-[10px] pt-1 border-t border-slate-800/60">
+                  <span>ລວມນາທີທັງໝົດ:</span>
+                  <span className="font-mono">{roomAnalytics.grandRoomTotalMinutes.toLocaleString()} ນາທີ</span>
+                </div>
+              </div>
+            </div>
+
+            {/* KPI 3: Live Active Rooms */}
+            <div className="bg-slate-900 border border-emerald-500/30 rounded-3xl p-5 shadow-lg relative overflow-hidden">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
+                <span className="font-bold text-emerald-300">ຫ້ອງທີ່ກຳລັງເປີດຢູ່ຕອນນີ້</span>
+                <span className="p-1.5 rounded-xl bg-emerald-500/10 text-emerald-400">
+                  <DoorOpen className="w-4 h-4" />
+                </span>
+              </div>
+              <div className="text-2xl sm:text-3xl font-black font-mono text-emerald-400 flex items-center gap-2">
+                <span>{roomAnalytics.activeRoomsList.length}</span>
+                <span className="text-sm font-normal text-slate-400">ຫ້ອງ</span>
+              </div>
+              <div className="mt-2 pt-2 border-t border-slate-800 text-[11px] space-y-0.5">
+                <div className="flex justify-between text-slate-400">
+                  <span>• ຄ່າຫ້ອງສະສົມ:</span>
+                  <span className="font-mono text-purple-300 font-bold">
+                    {formatCurrency(roomAnalytics.activeRoomsTotalFee, settings.currencySymbol)}
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-400">
+                  <span>• ສິນຄ້າ/ອາຫານໃນຫ້ອງ:</span>
+                  <span className="font-mono text-amber-300 font-bold">
+                    {formatCurrency(roomAnalytics.activeRoomsFoodDrinkTotal, settings.currencySymbol)}
+                  </span>
+                </div>
+                <div className="flex justify-between text-emerald-300 text-[10px] pt-1 border-t border-slate-800/60 font-bold">
+                  <span>ຍອດລວມສະສົມຂະນະນີ້:</span>
+                  <span className="font-mono">
+                    {formatCurrency(
+                      roomAnalytics.activeRoomsTotalFee + roomAnalytics.activeRoomsFoodDrinkTotal,
+                      settings.currencySymbol
+                    )}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* KPI 4: Total Sessions & Overall Revenue */}
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-lg relative overflow-hidden">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
+                <span className="font-bold text-slate-300">ຮອບເປີດຫ້ອງ & ຍອດລວມທັງໝົດ</span>
+                <span className="p-1.5 rounded-xl bg-rose-500/10 text-rose-400">
+                  <Sparkles className="w-4 h-4" />
+                </span>
+              </div>
+              <div className="text-2xl sm:text-3xl font-black font-mono text-rose-400">
+                {roomAnalytics.grandTotalSessions}{' '}
+                <span className="text-sm font-normal text-slate-400">ຮອບ</span>
+              </div>
+              <div className="mt-2 pt-2 border-t border-slate-800 text-[11px] space-y-0.5">
+                <div className="flex justify-between text-slate-400">
+                  <span>• ຍອດສິນຄ້າໃນຫ້ອງ:</span>
+                  <span className="font-mono text-amber-300 font-bold">
+                    {formatCurrency(roomAnalytics.grandFoodDrinkRevenue, settings.currencySymbol)}
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-300 font-bold pt-1 border-t border-slate-800/60">
+                  <span>ຍອດລວມສິນຄ້າ+ຄ່າຫ້ອງ:</span>
+                  <span className="font-mono text-emerald-400 font-black">
+                    {formatCurrency(roomAnalytics.grandOverallRevenue, settings.currencySymbol)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ACTIVE ROOMS LIVE STATUS GRID */}
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xl space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full bg-emerald-500 animate-ping" />
+                <h3 className="font-black text-sm text-white flex items-center gap-2">
+                  <span>ຫ້ອງທີ່ກຳລັງເປີດໃຊ້ງານຕອນນີ້ (Live Active Rooms)</span>
+                  <span className="px-2 py-0.5 rounded-md text-[11px] bg-slate-800 text-purple-300 border border-purple-800/40">
+                    {roomAnalytics.activeRoomsList.length} ຫ້ອງ
+                  </span>
+                </h3>
+              </div>
+              <span className="text-xs text-slate-400">
+                ອັບເດດ Real-time ທຸກອຸປະກອນ
+              </span>
+            </div>
+
+            {roomAnalytics.activeRoomsList.length === 0 ? (
+              <div className="py-8 text-center bg-slate-950/60 rounded-2xl border border-slate-800/60">
+                <DoorOpen className="w-10 h-10 text-slate-600 mx-auto mb-2" />
+                <p className="text-slate-300 font-bold text-sm">
+                  ບໍ່ມີຫ້ອງທີ່ກຳລັງເປີດໃຊ້ງານໃນຂະນະນີ້
+                </p>
+                <p className="text-slate-500 text-xs mt-1">
+                  ທຸກຫ້ອງວ່າງ (00:00) ພ້ອມໃຫ້ບໍລິການ
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {roomAnalytics.activeRoomsList.map((item) => (
+                  <div
+                    key={item.room.id}
+                    className="bg-slate-950/90 border-2 border-purple-500/40 hover:border-purple-400 rounded-2xl p-4 shadow-lg space-y-3 transition-all"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <h4 className="font-black text-base text-white flex items-center gap-1.5">
+                          <span>{item.room.name}</span>
+                          <span className="text-[10px] text-slate-400 font-normal">
+                            ({item.room.capacity} ຄົນ)
+                          </span>
+                        </h4>
+                        <p className="text-[11px] text-purple-300/80">
+                          {item.room.pricingType === 'package'
+                            ? `ແພັກເກັດ: ${item.room.packageName || 'KTV'}`
+                            : item.room.pricingType === 'open_time'
+                            ? `ນັບຕາມເວລາຈິງ (${formatCurrency(item.room.hourlyRate, settings.currencySymbol)}/ຊມ)`
+                            : `ລາຍຊົ່ວໂມງ (${item.room.bookedHours || 1} ຊມ)`}
+                        </p>
+                      </div>
+
+                      <div className="text-right">
+                        {item.isPrepaid ? (
+                          <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-emerald-950 text-emerald-300 border border-emerald-700/70 inline-block">
+                            ✅ ຈ່າຍກ່ອນແລ້ວ
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-amber-950 text-amber-300 border border-amber-700/70 inline-block">
+                            ⏳ ຈ່າຍຕາມຫຼັງ
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-900/90 rounded-xl p-3 border border-slate-800 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-amber-400 shrink-0" />
+                        <div>
+                          <div className="text-[10px] text-slate-400">ເວລາຫຼິ້ນສະສົມ</div>
+                          <div className="font-mono text-base font-black text-amber-300">
+                            {item.timerFormatted}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="text-right">
+                        <div className="text-[10px] text-slate-400">ຄ່າຫ້ອງສະສົມ</div>
+                        <div className="font-mono text-base font-black text-purple-400">
+                          {formatCurrency(item.estimatedRoomFee, settings.currencySymbol)}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-900">
+                      <div className="text-slate-400 text-[11px]">
+                        ສິນຄ້າ: <span className="font-mono text-amber-300 font-bold">{formatCurrency(item.ordersTotal, settings.currencySymbol)}</span> ({item.room.orders?.length || 0} ລາຍການ)
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[10px] text-slate-500">ລວມຕອນນີ້: </span>
+                        <span className="font-mono font-black text-white text-xs">
+                          {formatCurrency(item.grandTotal, settings.currencySymbol)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {item.room.openedByStaffName && (
+                      <div className="text-[10px] text-slate-500 flex items-center gap-1">
+                        <User className="w-3 h-3 text-slate-400" />
+                        <span>ເປີດຫ້ອງໂດຍ: {item.room.openedByStaffName}</span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* PER-ROOM RANKING & STATS TABLE */}
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
+            <div className="p-4 sm:p-5 border-b border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="font-black text-sm text-slate-100 flex items-center gap-2">
+                  <Mic2 className="w-4 h-4 text-purple-400" />
+                  <span>ສະຖິຕິແຍກແຕ່ລະຫ້ອງ KTV (Room Performance & Ranking)</span>
+                </h3>
+                <p className="text-xs text-slate-400">
+                  ຈັດອັນດັບຫ້ອງ KTV ຕາມຍອດລວມ, ຈຳນວນຮອບ, ເວລາທີ່ໃຊ້ງານ ແລະ ຍອດຄ່າຫ້ອງ
+                </p>
+              </div>
+              <div className="text-xs text-purple-300 font-bold">
+                ທັງໝົດ {roomAnalytics.perRoomRanking.length} ຫ້ອງ
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-950/80 border-b border-slate-800 text-slate-400 uppercase text-[10px] font-black">
+                    <th className="py-3 px-3 text-center">ອັນດັບ</th>
+                    <th className="py-3 px-4">ຊື່ຫ້ອງ</th>
+                    <th className="py-3 px-3 text-center">ສະຖານະຕອນນີ້</th>
+                    <th className="py-3 px-3 text-center">ຮອບເປີດ</th>
+                    <th className="py-3 px-3 text-right">ເວລາເປີດລວມ</th>
+                    <th className="py-3 px-4 text-right">ຍອດຄ່າຫ້ອງ</th>
+                    <th className="py-3 px-4 text-right">ຍອດສິນຄ້າໃນຫ້ອງ</th>
+                    <th className="py-3 px-4 text-right">ຍອດລວມທັງໝົດ</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 font-sans">
+                  {roomAnalytics.perRoomRanking.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-8 text-center text-slate-500">
+                        ບໍ່ພົບຂໍ້ມູນການເປີດຫ້ອງໃນຊ່ວງເວລານີ້
+                      </td>
+                    </tr>
+                  ) : (
+                    roomAnalytics.perRoomRanking.map((rm, idx) => {
+                      const timeStr = roomAnalytics.formatHoursMinutes(rm.totalMinutes).text;
+                      return (
+                        <tr
+                          key={rm.roomName}
+                          className="hover:bg-slate-850/60 transition-colors"
+                        >
+                          <td className="py-3 px-3 text-center font-mono font-bold text-slate-400">
+                            #{idx + 1}
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="font-black text-sm text-white flex items-center gap-1.5">
+                              <DoorOpen className="w-3.5 h-3.5 text-purple-400" />
+                              <span>{rm.roomName}</span>
+                            </div>
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            {rm.activeNow ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 inline-flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                ກຳລັງເປີດຢູ່
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-800 text-slate-400">
+                                ວ່າງ
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3 px-3 text-center font-mono font-bold text-slate-200">
+                            {rm.sessionsCount} ຮອບ
+                          </td>
+                          <td className="py-3 px-3 text-right font-mono font-bold text-amber-300">
+                            {timeStr}
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <div className="font-mono font-black text-purple-300 text-sm">
+                              {formatCurrency(rm.roomRevenue, settings.currencySymbol)}
+                            </div>
+                            {(rm.prepaidRevenue > 0 || rm.postpaidRevenue > 0) && (
+                              <div className="text-[10px] text-slate-400 flex justify-end gap-1.5 mt-0.5">
+                                {rm.prepaidRevenue > 0 && (
+                                  <span className="text-emerald-400">
+                                    ຈ່າຍກ່ອນ: {formatCurrency(rm.prepaidRevenue, '')}
+                                  </span>
+                                )}
+                                {rm.postpaidRevenue > 0 && (
+                                  <span className="text-amber-400">
+                                    ຈ່າຍຕາມຫຼັງ: {formatCurrency(rm.postpaidRevenue, '')}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-bold text-amber-400">
+                            {formatCurrency(rm.foodDrinkRevenue, settings.currencySymbol)}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-black text-emerald-400 text-sm">
+                            {formatCurrency(rm.grandTotalRevenue, settings.currencySymbol)}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+                {roomAnalytics.perRoomRanking.length > 0 && (
+                  <tfoot>
+                    <tr className="bg-slate-950 border-t-2 border-slate-700 font-bold text-xs">
+                      <td colSpan={3} className="py-3.5 px-4 text-slate-300">
+                        ລວມຍອດທຸກຫ້ອງ ({roomAnalytics.perRoomRanking.length} ຫ້ອງ):
+                      </td>
+                      <td className="py-3.5 px-3 text-center font-mono font-black text-slate-200">
+                        {roomAnalytics.grandTotalSessions} ຮອບ
+                      </td>
+                      <td className="py-3.5 px-3 text-right font-mono font-black text-amber-300">
+                        {roomAnalytics.formatHoursMinutes(roomAnalytics.grandRoomTotalMinutes).text}
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-mono font-black text-purple-400 text-sm">
+                        {formatCurrency(roomAnalytics.grandRoomRevenue, settings.currencySymbol)}
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-mono font-black text-amber-400 text-sm">
+                        {formatCurrency(roomAnalytics.grandFoodDrinkRevenue, settings.currencySymbol)}
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-mono font-black text-emerald-400 text-base">
+                        {formatCurrency(roomAnalytics.grandOverallRevenue, settings.currencySymbol)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+          </div>
+
+          {/* DETAILED ROOM BILLS HISTORY LOG */}
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
+            <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between">
+              <div>
+                <h3 className="font-black text-sm text-slate-100 flex items-center gap-2">
+                  <Receipt className="w-4 h-4 text-rose-500" />
+                  <span>ປະຫວັດໃບບິນຫ້ອງ KTV ທີ່ເຊັກບິນແລ້ວ ({roomAnalytics.completedRoomBills.length} ບິນ)</span>
+                </h3>
+                <p className="text-xs text-slate-400">
+                  ລາຍລະອຽດເວລາເຂົ້າ-ອອກ, ແພັກເກັດ/ອັດຕາຄ່າຫ້ອງ ແລະ ສະຖານະການຊຳລະ
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-950/80 border-b border-slate-800 text-slate-400 uppercase text-[10px] font-black">
+                    <th className="py-3 px-3">ເລກບິນ</th>
+                    <th className="py-3 px-3">ຫ້ອງ</th>
+                    <th className="py-3 px-3">ຊ່ວງເວລາ (Start - End)</th>
+                    <th className="py-3 px-3 text-center">ໄລຍະເວລາ</th>
+                    <th className="py-3 px-3 text-center">ຮູບແບບ / ແພັກເກັດ</th>
+                    <th className="py-3 px-3 text-center">ສະຖານະຄ່າຫ້ອງ</th>
+                    <th className="py-3 px-3 text-right">ຄ່າຫ້ອງ</th>
+                    <th className="py-3 px-3 text-right">ສິນຄ້າໃນຫ້ອງ</th>
+                    <th className="py-3 px-4 text-right">ຍອດລວມບິນ</th>
+                    <th className="py-3 px-3 text-center">ຜູ້ດຳເນີນການ</th>
+                    <th className="py-3 px-3 text-center">ໃບເສັດ</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 font-sans">
+                  {roomAnalytics.completedRoomBills.length === 0 ? (
+                    <tr>
+                      <td colSpan={11} className="py-8 text-center text-slate-500">
+                        ບໍ່ພົບປະຫວັດບິນຫ້ອງ KTV ໃນຊ່ວງເວລານີ້
+                      </td>
+                    </tr>
+                  ) : (
+                    roomAnalytics.completedRoomBills.map((b) => {
+                      const durMins =
+                        b.durationMinutes ||
+                        (b.startTime && b.endTime
+                          ? Math.max(0, Math.floor((new Date(b.endTime).getTime() - new Date(b.startTime).getTime()) / 60000))
+                          : (b.bookedHours ? b.bookedHours * 60 : 0));
+                      const durFormatted = roomAnalytics.formatHoursMinutes(durMins).text;
+
+                      const startFormatted = b.startTime
+                        ? new Date(b.startTime).toLocaleTimeString('lo-LA', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            hour12: false,
+                          })
+                        : '-';
+                      const endFormatted = b.endTime
+                        ? new Date(b.endTime).toLocaleTimeString('lo-LA', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            hour12: false,
+                          })
+                        : '-';
+
+                      const itemsSum = b.items.reduce((s, it) => s + it.total, 0);
+
+                      return (
+                        <tr key={b.id} className="hover:bg-slate-850/60 transition-colors">
+                          <td className="py-3 px-3 font-mono font-bold text-slate-200">
+                            {b.billNumber}
+                          </td>
+                          <td className="py-3 px-3 font-black text-white">
+                            {b.roomName || 'ຫ້ອງ KTV'}
+                          </td>
+                          <td className="py-3 px-3 font-mono text-slate-300">
+                            {b.timeRangeFormatted || `${startFormatted} - ${endFormatted}`}
+                          </td>
+                          <td className="py-3 px-3 text-center font-mono font-bold text-amber-300">
+                            {durFormatted}
+                          </td>
+                          <td className="py-3 px-3 text-center text-slate-300">
+                            {b.packageName
+                              ? b.packageName
+                              : b.pricingType === 'open_time'
+                              ? 'ຕາມເວລາຈິງ'
+                              : `${b.bookedHours || 1} ຊມ`}
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            {b.isRoomChargePaid ? (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">
+                                ✅ ຈ່າຍກ່ອນແລ້ວ
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-700/60">
+                                ⏳ ຈ່າຍຕອນເຊັກບິນ
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3 px-3 text-right font-mono font-bold text-purple-400">
+                            {formatCurrency(b.roomCharge, settings.currencySymbol)}
+                          </td>
+                          <td className="py-3 px-3 text-right font-mono font-bold text-amber-400">
+                            {formatCurrency(itemsSum, settings.currencySymbol)}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-black text-emerald-400 text-sm">
+                            {formatCurrency(b.total, settings.currencySymbol)}
+                          </td>
+                          <td className="py-3 px-3 text-center text-slate-400 text-[11px]">
+                            {b.staffName || '-'}
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setInspectedBill(b);
+                                setInspectedBillMode('receipt');
+                              }}
+                              className="p-1.5 rounded-lg bg-sky-950/70 hover:bg-sky-900 border border-sky-700/80 text-sky-300 hover:text-white cursor-pointer touch-manipulation flex items-center gap-1 text-[11px] font-bold mx-auto"
+                              title="ກວດສອບໃບເສັດ"
+                            >
+                              <Receipt className="w-3.5 h-3.5 text-sky-400" />
+                              <span>ໃບເສັດ</span>
+                            </button>
                           </td>
                         </tr>
                       );

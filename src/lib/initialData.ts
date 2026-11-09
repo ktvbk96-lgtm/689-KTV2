@@ -334,11 +334,11 @@ export const INITIAL_SETTINGS: AppSettings = {
   receiptHideTotalText: true, // เอาข้อความที่มีอยู่ในบรรทัดยอดสุทธิออก ไม่ต้องใส่
   receiptCustomFontSize: 16, // Default custom font size
   receiptFontFamily: 'phetsarath', // ฟอนต์เพชรรัตน์ (Phetsarath OT)
-  gasWebAppUrl: 'https://script.google.com/macros/s/AKfycbwP7K5U-POS-689KTV-WEBAPP/exec',
+  gasWebAppUrl: '',
   realtimeSyncEnabled: true,
 };
 
-export const DEFAULT_GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbwP7K5U-POS-689KTV-WEBAPP/exec';
+export const DEFAULT_GAS_WEBAPP_URL = '';
 
 
 export const INITIAL_DEBTS: DebtRecord[] = [

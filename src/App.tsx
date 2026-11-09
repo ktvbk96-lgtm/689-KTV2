@@ -42,7 +42,7 @@ import {
 import { getBluetoothStatus, tryAutoReconnectBluetooth } from './lib/bluetoothPrinter';
 import { getAccessToken, initAuth } from './lib/firebase';
 import { appendBillToSheet, syncInventoryToSheet } from './lib/googleSheets';
-import { fetchLatestDataFromGas, sendDataToGas, GasFullDataPayload } from './lib/gasSyncService';
+import { fetchLatestDataFromGas, sendDataToGas, GasFullDataPayload, isPlaceholderGasUrl } from './lib/gasSyncService';
 import { initMultiDeviceSync, pushMultiDeviceUpdate, SyncAction, getDeviceId } from './lib/realtimeSync';
 import { listenToFirebaseStore, pushToFirebaseStore } from './lib/firebaseSync';
 import { deductMultiUnitStockFromCatalog } from './lib/multiUnitInventory';
@@ -536,7 +536,7 @@ export default function App() {
     }
 
     // 3. Also forward to Google Sheets Web App if configured
-    if (!settings.gasWebAppUrl || settings.realtimeSyncEnabled === false) return true;
+    if (!settings.gasWebAppUrl || isPlaceholderGasUrl(settings.gasWebAppUrl) || settings.realtimeSyncEnabled === false) return true;
 
     // Pause polling temporarily during local push (7s lock to allow Sheets write)
     isPushingRef.current = true;
@@ -575,7 +575,7 @@ export default function App() {
 
   // Function to fetch latest data from Google Sheets (Multi-device auto loading with timeout & diffing)
   const fetchFromGas = async (isManual = false, isSilent = false) => {
-    if (!settings.gasWebAppUrl) return;
+    if (!settings.gasWebAppUrl || isPlaceholderGasUrl(settings.gasWebAppUrl)) return;
 
     if (!isSilent) {
       setSyncStatus('loading');
@@ -691,7 +691,7 @@ export default function App() {
   // Continuous background real-time sync polling loop (every 5 seconds)
   // Ensures tablet, mobile phone, and PC all stay strictly in sync without page refresh
   useEffect(() => {
-    if (settings.gasWebAppUrl) {
+    if (settings.gasWebAppUrl && !isPlaceholderGasUrl(settings.gasWebAppUrl)) {
       fetchFromGas(false, false);
     }
 
@@ -699,6 +699,7 @@ export default function App() {
       if (
         document.visibilityState === 'visible' &&
         settings.gasWebAppUrl &&
+        !isPlaceholderGasUrl(settings.gasWebAppUrl) &&
         settings.realtimeSyncEnabled !== false &&
         !isPushingRef.current
       ) {
@@ -710,11 +711,12 @@ export default function App() {
     document.addEventListener('visibilitychange', handleFocusOrVisible);
     window.addEventListener('online', handleFocusOrVisible);
 
-    // Run active background polling every 5 seconds
+    // Run active background polling every 5 seconds (only when real URL is configured)
     const intervalId = setInterval(() => {
       if (
         document.visibilityState === 'visible' &&
         settings.gasWebAppUrl &&
+        !isPlaceholderGasUrl(settings.gasWebAppUrl) &&
         settings.realtimeSyncEnabled !== false &&
         !isPushingRef.current &&
         navigator.onLine !== false
@@ -1369,6 +1371,8 @@ export default function App() {
             bills={bills}
             products={products}
             settings={settings}
+            rooms={rooms}
+            packages={packages}
             currentRole={currentRole}
             onSyncAllToSheets={handleBulkSyncAllToSheets}
             isSyncingSheets={isSyncingAllSheets}

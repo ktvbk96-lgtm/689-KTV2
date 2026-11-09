@@ -26,6 +26,11 @@ if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
+const UPLOADS_DIR = path.resolve(DATA_DIR, 'uploads');
+if (!fs.existsSync(UPLOADS_DIR)) {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+
 interface AppStore {
   version: number;
   lastUpdated: string;
@@ -138,6 +143,125 @@ async function startServer() {
       return;
     }
     next();
+  });
+
+  // Serve static uploaded product images
+  app.use('/uploads', express.static(UPLOADS_DIR));
+
+  // Image Upload endpoint - saves image to server and returns permanent absolute URL for PC/Mobile
+  app.post('/api/upload-image', (req, res) => {
+    try {
+      const { image, filename } = req.body || {};
+      if (!image || typeof image !== 'string' || !image.startsWith('data:image/')) {
+        return res.status(400).json({ success: false, error: 'Invalid image data' });
+      }
+
+      // Extract image extension from data URI e.g. data:image/png;base64,...
+      const match = image.match(/^data:image\/([a-zA-Z0-9+]+);base64,/);
+      const ext = match ? (match[1] === 'jpeg' ? 'jpg' : match[1]) : 'jpg';
+      const base64Data = image.replace(/^data:image\/[a-zA-Z0-9+]+;base64,/, '');
+      const buffer = Buffer.from(base64Data, 'base64');
+
+      const safeFilename = `img_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${ext}`;
+      const filePath = path.resolve(UPLOADS_DIR, safeFilename);
+
+      fs.writeFileSync(filePath, buffer);
+
+      // Construct absolute URL (using Host header)
+      const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+      const host = req.get('host');
+      const absoluteUrl = `${protocol}://${host}/uploads/${safeFilename}`;
+      const relativeUrl = `/uploads/${safeFilename}`;
+
+      res.json({
+        success: true,
+        filename: safeFilename,
+        url: relativeUrl,
+        absoluteUrl,
+      });
+    } catch (err: any) {
+      console.error('Image upload error:', err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Google Apps Script CORS Bypass Proxy
+  // Server-side fetch eliminates all browser CORS and 302 redirect issues
+  app.all('/api/gas-proxy', async (req, res) => {
+    try {
+      const targetUrl = (req.query.url as string) || (req.body && req.body.url);
+      if (!targetUrl || typeof targetUrl !== 'string' || !targetUrl.startsWith('http')) {
+        return res.status(400).json({ success: false, error: 'Missing or invalid target Google Apps Script URL' });
+      }
+
+      // Filter out dummy/placeholder URLs
+      if (targetUrl.includes('AKfycbwP7K5U-POS-689KTV-WEBAPP') || targetUrl.includes('AKfycb...')) {
+        return res.json({
+          success: false,
+          error: 'Google Apps Script URL is placeholder (not deployed yet)',
+          isPlaceholder: true,
+        });
+      }
+
+      const method = req.method === 'POST' ? 'POST' : 'GET';
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 14000);
+
+      let fetchUrl = targetUrl;
+      let fetchOptions: RequestInit = {
+        method,
+        signal: controller.signal,
+        redirect: 'follow', // Automatically follows Google 302 redirects
+      };
+
+      if (method === 'GET') {
+        const queryParams = new URLSearchParams();
+        for (const [k, v] of Object.entries(req.query)) {
+          if (k !== 'url') queryParams.append(k, String(v));
+        }
+        if (queryParams.toString()) {
+          fetchUrl += (fetchUrl.includes('?') ? '&' : '?') + queryParams.toString();
+        }
+        fetchOptions.headers = {
+          'Accept': 'application/json, text/plain, */*',
+        };
+      } else {
+        // POST request - send as text/plain so GAS receives it cleanly
+        const postData = req.body?.data !== undefined ? req.body : req.body;
+        fetchOptions.headers = {
+          'Content-Type': 'text/plain;charset=utf-8',
+        };
+        fetchOptions.body = typeof postData === 'string' ? postData : JSON.stringify(postData);
+      }
+
+      const gasResponse = await fetch(fetchUrl, fetchOptions);
+      clearTimeout(timeoutId);
+
+      const responseText = await gasResponse.text();
+      let responseJson: any = null;
+      try {
+        responseJson = JSON.parse(responseText);
+      } catch {
+        // Returned HTML (e.g., Google login page or error)
+        if (responseText.includes('accounts.google.com') || responseText.includes('Service Login')) {
+          return res.json({
+            success: false,
+            error: 'Google Apps Script requires authorization. Please set "Who has access" to "Anyone" when deploying.',
+          });
+        }
+        return res.json({
+          success: gasResponse.ok,
+          message: responseText.slice(0, 500),
+        });
+      }
+
+      res.json(responseJson);
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        return res.json({ success: false, error: 'Google Apps Script request timed out (14s)' });
+      }
+      res.json({ success: false, error: err.message || 'Error connecting to Google Apps Script' });
+    }
   });
 
   // Health check endpoint
