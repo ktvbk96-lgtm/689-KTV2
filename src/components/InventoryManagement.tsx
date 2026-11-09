@@ -29,6 +29,7 @@ import { INITIAL_PRODUCTS } from '../lib/initialData';
 import { FormattedNumberInput } from './FormattedNumberInput';
 import { calculateAvailablePacksAndSingles } from '../lib/multiUnitInventory';
 import { normalizeImageUrl, uploadProductImage } from '../lib/imageUtils';
+import { uploadToVercelBlob } from '../lib/vercelBlob';
 
 interface InventoryManagementProps {
   products: Product[];
@@ -160,23 +161,31 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
     setIsAddingNew(false);
   };
 
-  // Handle image file upload (uploads to server & returns permanent absolute URL)
+  // Handle image file upload (uploads directly to Vercel Blob Storage CDN & returns public URL)
   const handleImageFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      alert('ກະລຸນາເລືອກໄຟລ໌ຮູບພາບເທົ່ານັ້ນ (JPG, PNG, WEBP...)');
+      alert('⚠️ ກະລຸນາເລືອກໄຟລ໌ຮູບພາບເທົ່ານັ້ນ (JPG, PNG, WEBP...)');
       return;
     }
 
     setIsUploadingImage(true);
     try {
-      const permanentUrl = await uploadProductImage(file, `prod_${Date.now()}_${file.name}`);
-      setFormData((prev) => ({ ...prev, imageUrl: permanentUrl }));
+      // Direct HTTP PUT upload to Vercel Blob: https://blob.vercel-storage.com/${Date.now()}-${file.name}
+      const vercelBlobUrl = await uploadToVercelBlob(file);
+      // Immediately set the URL to update image preview and replace any Base64
+      setFormData((prev) => ({ ...prev, imageUrl: vercelBlobUrl }));
     } catch (err: any) {
-      console.error('Image upload failed:', err);
-      alert('ອັບໂຫຼດຮູບພາບບໍ່ສຳເລັດ: ' + (err?.message || 'ເກີດຂໍ້ຜິດພາດ'));
+      console.error('Vercel Blob upload failed:', err);
+      // Fallback through uploadProductImage
+      try {
+        const fallbackUrl = await uploadProductImage(file, `prod_${Date.now()}_${file.name}`);
+        setFormData((prev) => ({ ...prev, imageUrl: fallbackUrl }));
+      } catch (fallbackErr: any) {
+        alert('ອັບໂຫຼດຮູບພາບໄປຍັງ Vercel Blob ບໍ່ສຳເລັດ: ' + (err?.message || fallbackErr?.message || 'ເກີດຂໍ້ຜິດພາດ'));
+      }
     } finally {
       setIsUploadingImage(false);
       if (fileInputRef.current) {
@@ -720,15 +729,22 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
             </div>
 
             <form onSubmit={handleSaveProduct} noValidate className="space-y-4">
-              {/* Product Photo Upload Section */}
+              {/* Product Photo Upload Section (Vercel Blob Storage Integration) */}
               <div className="p-3.5 rounded-2xl bg-slate-800/60 border border-slate-700 space-y-2.5">
-                <label className="block text-xs font-bold text-amber-300">
-                  📸 ຮູບພາບສິນຄ້າ (Product Image):
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-amber-300">
+                    📸 ຮູບພາບສິນຄ້າ (Vercel Blob Storage):
+                  </label>
+                  {formData.imageUrl && formData.imageUrl.includes('blob.vercel-storage.com') && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-950 text-cyan-300 border border-cyan-700/60 flex items-center gap-1">
+                      ☁️ Vercel Blob CDN
+                    </span>
+                  )}
+                </div>
 
                 <div className="flex items-center gap-4">
                   {/* Image Preview Box */}
-                  <div className="w-20 h-20 rounded-2xl bg-slate-900 border-2 border-dashed border-slate-700 overflow-hidden flex items-center justify-center shrink-0">
+                  <div className="w-20 h-20 rounded-2xl bg-slate-900 border-2 border-dashed border-slate-700 overflow-hidden flex items-center justify-center shrink-0 relative">
                     {formData.imageUrl ? (
                       <img
                         src={normalizeImageUrl(formData.imageUrl)}
@@ -756,22 +772,22 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
                       className="hidden"
                     />
 
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
                         disabled={isUploadingImage}
                         onClick={() => fileInputRef.current?.click()}
-                        className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50"
+                        className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-md shadow-cyan-600/20 disabled:opacity-50"
                       >
                         {isUploadingImage ? (
                           <>
                             <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                            <span>ກຳລັງອັບໂຫຼດ...</span>
+                            <span>ກຳລັງອັບໂຫຼດໄປ Vercel Blob...</span>
                           </>
                         ) : (
                           <>
                             <Upload className="w-3.5 h-3.5" />
-                            <span>ອັບໂຫຼດຮູບຈາກເຄື່ອງ</span>
+                            <span>ເລືອກຮູບອັບໂຫຼດ (Vercel Blob)</span>
                           </>
                         )}
                       </button>
@@ -792,8 +808,8 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
                       type="text"
                       value={formData.imageUrl || ''}
                       onChange={(e) => setFormData({ ...formData, imageUrl: e.target.value })}
-                      placeholder="ຫຼື ວາງລິ້ງ URL ຮູບພາບ (https://...)"
-                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1 text-[11px] text-white focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      placeholder="URL ຮູບພາບ (https://...blob.vercel-storage.com/...)"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1 text-[11px] text-white focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono"
                     />
                   </div>
                 </div>

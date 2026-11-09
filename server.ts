@@ -148,8 +148,66 @@ async function startServer() {
   // Serve static uploaded product images
   app.use('/uploads', express.static(UPLOADS_DIR));
 
-  // Image Upload endpoint - saves image to server and returns permanent absolute URL for PC/Mobile
-  app.post('/api/upload-image', (req, res) => {
+  // Vercel Blob Token check endpoint
+  app.get('/api/vercel-blob/token', (req, res) => {
+    res.json({
+      configured: !!process.env.BLOB_READ_WRITE_TOKEN,
+      token: process.env.BLOB_READ_WRITE_TOKEN || '',
+    });
+  });
+
+  // Vercel Blob Server Upload Proxy endpoint
+  app.post('/api/vercel-blob/upload', async (req, res) => {
+    try {
+      const { fileBase64, filename, mimeType } = req.body || {};
+      const token = process.env.BLOB_READ_WRITE_TOKEN;
+
+      if (!token) {
+        return res.status(500).json({
+          success: false,
+          error: 'BLOB_READ_WRITE_TOKEN is not configured in server environment variables.',
+        });
+      }
+
+      if (!fileBase64 || typeof fileBase64 !== 'string') {
+        return res.status(400).json({ success: false, error: 'Missing file data' });
+      }
+
+      const cleanData = fileBase64.replace(/^data:[a-zA-Z0-9/+-]+;base64,/, '');
+      const buffer = Buffer.from(cleanData, 'base64');
+      const safeFilename = (filename || `prod_${Date.now()}.jpg`).replace(/[^a-zA-Z0-9._-]/g, '_');
+      const uploadPath = `${Date.now()}-${safeFilename}`;
+      const uploadUrl = `https://blob.vercel-storage.com/${uploadPath}`;
+
+      const vercelRes = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'x-api-version': '7',
+          'Content-Type': mimeType || 'image/jpeg',
+        },
+        body: buffer,
+      });
+
+      if (!vercelRes.ok) {
+        const errorText = await vercelRes.text();
+        return res.status(vercelRes.status).json({ success: false, error: errorText });
+      }
+
+      const data = await vercelRes.json();
+      res.json({
+        success: true,
+        url: data.url,
+        pathname: data.pathname,
+      });
+    } catch (err: any) {
+      console.error('Vercel Blob server proxy error:', err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Image Upload endpoint - saves image to Vercel Blob (or local storage fallback) and returns permanent URL
+  app.post('/api/upload-image', async (req, res) => {
     try {
       const { image, filename } = req.body || {};
       if (!image || typeof image !== 'string' || !image.startsWith('data:image/')) {
@@ -162,9 +220,43 @@ async function startServer() {
       const base64Data = image.replace(/^data:image\/[a-zA-Z0-9+]+;base64,/, '');
       const buffer = Buffer.from(base64Data, 'base64');
 
-      const safeFilename = `img_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${ext}`;
-      const filePath = path.resolve(UPLOADS_DIR, safeFilename);
+      const safeFilename = (filename || `img_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${ext}`).replace(/[^a-zA-Z0-9._-]/g, '_');
 
+      // 1. If Vercel Blob token is configured, upload directly to Vercel Blob!
+      const token = process.env.BLOB_READ_WRITE_TOKEN;
+      if (token) {
+        try {
+          const uploadPath = `${Date.now()}-${safeFilename}`;
+          const uploadUrl = `https://blob.vercel-storage.com/${uploadPath}`;
+          const vercelRes = await fetch(uploadUrl, {
+            method: 'PUT',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'x-api-version': '7',
+              'Content-Type': `image/${ext === 'jpg' ? 'jpeg' : ext}`,
+            },
+            body: buffer,
+          });
+
+          if (vercelRes.ok) {
+            const blobData = await vercelRes.json();
+            if (blobData && blobData.url) {
+              return res.json({
+                success: true,
+                filename: safeFilename,
+                url: blobData.url,
+                absoluteUrl: blobData.url,
+                storage: 'vercel_blob',
+              });
+            }
+          }
+        } catch (vercelErr) {
+          console.warn('Vercel Blob upload in /api/upload-image failed, falling back to local file:', vercelErr);
+        }
+      }
+
+      // 2. Fallback to local server disk storage
+      const filePath = path.resolve(UPLOADS_DIR, safeFilename);
       fs.writeFileSync(filePath, buffer);
 
       // Construct absolute URL (using Host header)
@@ -178,6 +270,7 @@ async function startServer() {
         filename: safeFilename,
         url: relativeUrl,
         absoluteUrl,
+        storage: 'local',
       });
     } catch (err: any) {
       console.error('Image upload error:', err);

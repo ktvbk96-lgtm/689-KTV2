@@ -89,18 +89,62 @@ export async function compressImage(file: File, maxDim = 400, quality = 0.8): Pr
   });
 }
 
+import { uploadToVercelBlob } from './vercelBlob';
+export { uploadToVercelBlob };
+
 /**
- * Upload an image to the backend server's /api/upload-image endpoint.
- * Returns the full permanent absolute HTTPS URL so all devices (PC, tablets) see the image.
- * Falls back to compressed base64 if offline.
+ * Upload an image directly to Vercel Blob Storage CDN.
+ * Returns the permanent HTTPS URL (e.g. https://...public.blob.vercel-storage.com/...)
+ * so all devices (PC, tablet, mobile) can view the image with zero 404 or path issues.
  */
 export async function uploadProductImage(fileOrBase64: File | string, filenameHint?: string): Promise<string> {
-  let base64Data: string;
+  // If already an absolute HTTPS URL (e.g. Vercel Blob or CDN), return directly
+  if (typeof fileOrBase64 === 'string') {
+    const trimmed = fileOrBase64.trim();
+    if (trimmed.startsWith('https://') || trimmed.startsWith('http://')) {
+      return trimmed;
+    }
+  }
 
+  // 1. If File object, upload directly to Vercel Blob
+  if (fileOrBase64 instanceof File) {
+    try {
+      const vercelBlobUrl = await uploadToVercelBlob(fileOrBase64);
+      if (vercelBlobUrl) return vercelBlobUrl;
+    } catch (err) {
+      console.warn('Vercel Blob direct upload failed, attempting fallback:', err);
+    }
+  }
+
+  // 2. If Base64 string, convert to File and upload to Vercel Blob
+  if (typeof fileOrBase64 === 'string' && fileOrBase64.startsWith('data:image/')) {
+    try {
+      const match = fileOrBase64.match(/^data:(image\/[a-zA-Z0-9+]+);base64,(.+)$/);
+      if (match) {
+        const mimeType = match[1];
+        const byteCharacters = atob(match[2]);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const ext = mimeType.split('/')[1] === 'jpeg' ? 'jpg' : mimeType.split('/')[1] || 'jpg';
+        const filename = filenameHint || `prod_${Date.now()}.${ext}`;
+        const file = new File([byteArray], filename, { type: mimeType });
+
+        const vercelBlobUrl = await uploadToVercelBlob(file);
+        if (vercelBlobUrl) return vercelBlobUrl;
+      }
+    } catch (err) {
+      console.warn('Converting Base64 to Vercel Blob failed:', err);
+    }
+  }
+
+  // 3. Fallback to /api/upload-image backend proxy
+  let base64Data: string;
   if (typeof fileOrBase64 === 'string') {
     base64Data = fileOrBase64;
   } else {
-    // Compress first to keep network payload light
     try {
       base64Data = await compressImage(fileOrBase64, 480, 0.82);
     } catch {
@@ -130,17 +174,13 @@ export async function uploadProductImage(fileOrBase64: File | string, filenameHi
 
     if (response.ok) {
       const data = await response.json();
-      if (data.success && data.absoluteUrl) {
-        return data.absoluteUrl;
-      }
       if (data.success && data.url) {
         return normalizeImageUrl(data.url);
       }
     }
   } catch (err) {
-    console.warn('Direct upload to /api/upload-image failed, using compressed base64 fallback:', err);
+    console.warn('Backend image upload fallback failed:', err);
   }
 
-  // Fallback to compressed base64 data URI
   return base64Data;
 }
