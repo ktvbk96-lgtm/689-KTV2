@@ -345,66 +345,6 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
     return Array.from(sellersSet).sort();
   }, [filteredBills]);
 
-  // Comprehensive Seller Performance Map (Sales, Cost, Gross Profit per seller)
-  const sellerPerformanceList = useMemo(() => {
-    const sellerMap = new Map<
-      string,
-      {
-        sellerName: string;
-        totalUnits: number;
-        totalRevenue: number;
-        totalCost: number;
-        grossProfit: number;
-        profitMargin: number;
-        billsHandled: number;
-        topItems: Map<string, number>;
-      }
-    >();
-
-    filteredBills.forEach((b) => {
-      // Attribute items to item.sellerName, fallback to b.staffName
-      b.items.forEach((item) => {
-        const seller = (item.sellerName && item.sellerName.trim()) || (b.staffName && b.staffName.trim()) || 'ບໍ່ລະບຸຜູ້ຂາຍ';
-        const matchedProduct =
-          productLookup.get(item.productId) ||
-          productLookup.get(item.productName.trim().toLowerCase());
-        const costPerUnit =
-          item.costPrice !== undefined
-            ? item.costPrice
-            : matchedProduct?.costPrice ?? 0;
-        const itemCost = item.quantity * costPerUnit;
-
-        const current = sellerMap.get(seller) || {
-          sellerName: seller,
-          totalUnits: 0,
-          totalRevenue: 0,
-          totalCost: 0,
-          grossProfit: 0,
-          profitMargin: 0,
-          billsHandled: 0,
-          topItems: new Map<string, number>(),
-        };
-
-        current.totalUnits += item.quantity;
-        current.totalRevenue += item.total;
-        current.totalCost += itemCost;
-        current.grossProfit += item.total - itemCost;
-
-        const curItemQty = current.topItems.get(item.productName) || 0;
-        current.topItems.set(item.productName, curItemQty + item.quantity);
-
-        sellerMap.set(seller, current);
-      });
-    });
-
-    return Array.from(sellerMap.values())
-      .map((s) => ({
-        ...s,
-        profitMargin: s.totalRevenue > 0 ? (s.grossProfit / s.totalRevenue) * 100 : 0,
-      }))
-      .sort((a, b) => b.grossProfit - a.grossProfit);
-  }, [filteredBills, productLookup]);
-
   // Real-time Room & Usage Time Analytics (Checked-out bills + Live active rooms)
   const roomAnalytics = useMemo(() => {
     const isToday =
@@ -688,6 +628,134 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
     customStartDate,
     customEndDate,
   ]);
+
+  // Comprehensive Seller Performance Map (Sales, Cost, Gross Profit per seller + Room Time Fees Added!)
+  const sellerPerformanceList = useMemo(() => {
+    const sellerMap = new Map<
+      string,
+      {
+        sellerName: string;
+        totalUnits: number;
+        itemsRevenue: number;
+        roomRevenue: number;
+        totalRevenue: number;
+        totalCost: number;
+        itemsProfit: number;
+        grossProfit: number; // ກຳໄລທັງໝົດ = ກຳໄລສິນຄ້າ + ຄ່າເວລາເປີດຫ້ອງ
+        profitMargin: number;
+        billsHandled: number;
+        roomSessions: number;
+        topItems: Map<string, number>;
+      }
+    >();
+
+    const getOrInitSeller = (name: string) => {
+      const trimmed = (name && name.trim()) || 'ບໍ່ລະບຸຜູ້ຂາຍ';
+      let entry = sellerMap.get(trimmed);
+      if (!entry) {
+        entry = {
+          sellerName: trimmed,
+          totalUnits: 0,
+          itemsRevenue: 0,
+          roomRevenue: 0,
+          totalRevenue: 0,
+          totalCost: 0,
+          itemsProfit: 0,
+          grossProfit: 0,
+          profitMargin: 0,
+          billsHandled: 0,
+          roomSessions: 0,
+          topItems: new Map<string, number>(),
+        };
+        sellerMap.set(trimmed, entry);
+      }
+      return entry;
+    };
+
+    // 1. Process Completed Bills
+    filteredBills.forEach((b) => {
+      const billStaffName = (b.staffName && b.staffName.trim()) || 'ບໍ່ລະບຸຜູ້ຂາຍ';
+      const billStaff = getOrInitSeller(billStaffName);
+      billStaff.billsHandled += 1;
+
+      // Attribute Room Time Fee to the staff handling this bill
+      if (b.type === 'ktv_room' || b.roomName || (b.roomCharge && b.roomCharge > 0) || b.isRoomChargePaid) {
+        let billRoomCharge = b.roomCharge || 0;
+        if (billRoomCharge === 0 && b.isRoomChargePaid) {
+          if (b.packageName) {
+            const matchedPkg = packages.find(
+              (p) => p.name === b.packageName || p.id === b.packageName
+            );
+            billRoomCharge = matchedPkg ? matchedPkg.price : (settings.defaultHourlyRate || 70000);
+          } else if (b.bookedHours && b.bookedHours > 0) {
+            billRoomCharge = b.bookedHours * (settings.defaultHourlyRate || 70000);
+          } else {
+            const durMins = b.durationMinutes || 60;
+            const hrs = Math.max(0.5, Math.ceil(durMins / 30) * 0.5);
+            billRoomCharge = Math.round(hrs * (settings.defaultHourlyRate || 70000));
+          }
+        }
+
+        if (billRoomCharge > 0) {
+          billStaff.roomRevenue += billRoomCharge;
+          billStaff.roomSessions += 1;
+          billStaff.totalRevenue += billRoomCharge;
+          // ADD ROOM TIME FEE DIRECTLY TO PROFIT!
+          billStaff.grossProfit += billRoomCharge;
+        }
+      }
+
+      // Attribute each item to item.sellerName, fallback to billStaffName
+      b.items.forEach((item) => {
+        const itemSellerName = (item.sellerName && item.sellerName.trim()) || billStaffName;
+        const current = getOrInitSeller(itemSellerName);
+
+        const matchedProduct =
+          productLookup.get(item.productId) ||
+          productLookup.get(item.productName.trim().toLowerCase());
+        const costPerUnit =
+          item.costPrice !== undefined
+            ? item.costPrice
+            : matchedProduct?.costPrice ?? 0;
+        const itemCost = item.quantity * costPerUnit;
+        const itemProfit = item.total - itemCost;
+
+        current.totalUnits += item.quantity;
+        current.itemsRevenue += item.total;
+        current.totalRevenue += item.total;
+        current.totalCost += itemCost;
+        current.itemsProfit += itemProfit;
+        // Add item profit to gross profit
+        current.grossProfit += itemProfit;
+
+        const curItemQty = current.topItems.get(item.productName) || 0;
+        current.topItems.set(item.productName, curItemQty + item.quantity);
+      });
+    });
+
+    // 2. Attribute Active Open Rooms if viewing today
+    if (roomAnalytics.isToday && roomAnalytics.activeRoomsList.length > 0) {
+      roomAnalytics.activeRoomsList.forEach((activeItem) => {
+        const staffName =
+          (activeItem.room.openedByStaffName && activeItem.room.openedByStaffName.trim()) ||
+          'ບໍ່ລະບຸຜູ້ຂາຍ';
+        const staff = getOrInitSeller(staffName);
+        if (activeItem.estimatedRoomFee > 0) {
+          staff.roomRevenue += activeItem.estimatedRoomFee;
+          staff.roomSessions += 1;
+          staff.totalRevenue += activeItem.estimatedRoomFee;
+          staff.grossProfit += activeItem.estimatedRoomFee;
+        }
+      });
+    }
+
+    return Array.from(sellerMap.values())
+      .map((s) => ({
+        ...s,
+        profitMargin: s.totalRevenue > 0 ? (s.grossProfit / s.totalRevenue) * 100 : 0,
+      }))
+      .sort((a, b) => b.grossProfit - a.grossProfit);
+  }, [filteredBills, productLookup, packages, settings, roomAnalytics]);
 
   // Calculate Overall Store Totals
   const totalRevenue = filteredBills.reduce((acc, b) => acc + b.total, 0);
@@ -1917,33 +1985,36 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
               </p>
             </div>
 
-            {/* Card 5: Store Gross Profit */}
+            {/* Card 5: Store Gross Profit (Enhanced with Room Time Fee) */}
             <div className="bg-gradient-to-br from-emerald-950/60 to-slate-900 border-2 border-emerald-500/40 rounded-3xl p-5 shadow-xl relative overflow-hidden">
               <div className="flex items-center justify-between text-xs text-emerald-400 mb-2">
-                <span className="font-bold">ກຳໄລລວມທັງໝົດ</span>
+                <span className="font-bold">ກຳໄລລວມທັງໝົດ (+ຄ່າເວລາເປີດຫ້ອງ)</span>
                 <span className="p-1.5 rounded-xl bg-emerald-500/20 text-emerald-300">
                   <TrendingUp className="w-4 h-4" />
                 </span>
               </div>
               <div className="text-2xl font-black font-mono text-emerald-400">
-                {formatCurrency(summaryStats.allStoreGrossProfit, settings.currencySymbol)}
+                {formatCurrency(
+                  summaryStats.allItemsProfit + roomAnalytics.grandRoomRevenue,
+                  settings.currencySymbol
+                )}
               </div>
               <p className="text-[11px] text-emerald-300/80 mt-1">
-                ຍອດຂາຍລວມ - ຕົ້ນທຶນສິນຄ້າ
+                ກຳໄລສິນຄ້າ ({formatCurrency(summaryStats.allItemsProfit, '')}) + ຄ່າເວລາເປີດຫ້ອງ ({formatCurrency(roomAnalytics.grandRoomRevenue, '')})
               </p>
             </div>
           </div>
 
-          {/* DEDICATED SELLER PERFORMANCE & PROFIT TABLE (REQUESTED FEATURE) */}
+          {/* DEDICATED SELLER PERFORMANCE & PROFIT TABLE (WITH ROOM TIME FEES ADDED TO PROFIT) */}
           <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
             <div className="p-4 sm:p-5 border-b border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
               <div>
                 <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
                   <Users className="w-4 h-4 text-purple-400" />
-                  <span>ສະຫຼຸບລາຍລະອຽດຜູ້ຂາຍ / ພະນັກງານ (Seller Sales, Cost & Profit)</span>
+                  <span>ສະຫຼຸບລາຍລະອຽດຜູ້ຂາຍ / ພະນັກງານ (ລວມຄ່າເວລາເປີດຫ້ອງເຂົ້າໃນກຳໄລ)</span>
                 </h3>
                 <p className="text-xs text-slate-400">
-                  ສະແດງຍອດຂາຍ, ຕົ້ນທຶນ ແລະ ກຳໄລທີ່ພະນັກງານແຕ່ລະຄົນສ້າງໄດ້ (ຍອດຂາຍ - ຕົ້ນທຶນ = ກຳໄລ)
+                  ສະແດງຍອດຂາຍສິນຄ້າ, ຄ່າເວລາເປີດຫ້ອງ, ຕົ້ນທຶນ ແລະ <strong className="text-emerald-300">ກຳໄລລວມທັງໝົດ (ກຳໄລສິນຄ້າ + ຄ່າເວລາເປີດຫ້ອງ)</strong>
                 </p>
               </div>
               <div className="text-xs text-slate-400">
@@ -1954,20 +2025,22 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
-                  <tr className="bg-slate-950/80 border-b border-slate-800 text-[11px] text-slate-400 uppercase">
+                  <tr className="bg-slate-950/80 border-b border-slate-800 text-[11px] text-slate-400 uppercase font-black">
                     <th className="py-3 px-3 text-center w-12">ອັນດັບ</th>
-                    <th className="py-3 px-4">ຊື່ຜູ້ຂາຍ / ພະນັກງານ (Seller Name)</th>
-                    <th className="py-3 px-3 text-center">ຈຳນວນສິນຄ້າທີ່ຂາຍ</th>
-                    <th className="py-3 px-4 text-right">ຍອດຂາຍທີ່ສ້າງໄດ້</th>
+                    <th className="py-3 px-4">ຊື່ຜູ້ຂາຍ / ພະນັກງານ</th>
+                    <th className="py-3 px-3 text-center">ຈຳນວນສິນຄ້າ</th>
+                    <th className="py-3 px-4 text-right">ຍອດຂາຍສິນຄ້າ</th>
+                    <th className="py-3 px-4 text-right text-purple-300">ຄ່າເວລາເປີດຫ້ອງ</th>
+                    <th className="py-3 px-4 text-right">ຍອດຂາຍລວມ</th>
                     <th className="py-3 px-4 text-right">ຕົ້ນທຶນສິນຄ້າ</th>
-                    <th className="py-3 px-4 text-right">ຍອດກຳໄລທີ່ສ້າງໄດ້ (Profit)</th>
+                    <th className="py-3 px-4 text-right text-emerald-400">ກຳໄລລວມ (+ຄ່າຫ້ອງ)</th>
                     <th className="py-3 px-4 text-center">ການດຳເນີນການ</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
                   {sellerPerformanceList.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="py-10 text-center text-slate-500">
+                      <td colSpan={9} className="py-10 text-center text-slate-500">
                         ຍັງບໍ່ມີຂໍ້ມູນການຂາຍຂອງພະນັກງານໃນຊ່ວງເວລານີ້
                       </td>
                     </tr>
@@ -1993,14 +2066,27 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                         </td>
                         <td className="py-3 px-4">
                           <div className="font-bold text-slate-100 flex items-center gap-2">
-                            <div className="w-7 h-7 rounded-lg bg-purple-950/80 border border-purple-800 flex items-center justify-center text-purple-300 text-xs font-bold">
+                            <div className="w-7 h-7 rounded-lg bg-purple-950/80 border border-purple-800 flex items-center justify-center text-purple-300 text-xs font-bold shrink-0">
                               {seller.sellerName.slice(0, 1)}
                             </div>
-                            <span>{seller.sellerName}</span>
+                            <div>
+                              <span>{seller.sellerName}</span>
+                              {seller.roomSessions > 0 && (
+                                <div className="text-[10px] text-purple-400/80 font-normal">
+                                  ດູແລ {seller.roomSessions} ຮອບຫ້ອງ
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </td>
                         <td className="py-3 px-3 text-center font-mono font-bold text-amber-400">
                           {seller.totalUnits.toLocaleString()} ໜ່ວຍ
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono font-semibold text-slate-300">
+                          {formatCurrency(seller.itemsRevenue, settings.currencySymbol)}
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono font-bold text-purple-300">
+                          {formatCurrency(seller.roomRevenue, settings.currencySymbol)}
                         </td>
                         <td className="py-3 px-4 text-right font-mono font-bold text-amber-300">
                           {formatCurrency(seller.totalRevenue, settings.currencySymbol)}
@@ -2008,10 +2094,18 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                         <td className="py-3 px-4 text-right font-mono text-rose-400">
                           {formatCurrency(seller.totalCost, settings.currencySymbol)}
                         </td>
-                        <td className="py-3 px-4 text-right font-mono font-black text-emerald-400">
-                          <span className="bg-emerald-950/70 border border-emerald-800/60 px-2 py-0.5 rounded-lg">
-                            +{formatCurrency(seller.grossProfit, settings.currencySymbol)}
-                          </span>
+                        <td className="py-3 px-4 text-right">
+                          <div className="font-mono font-black text-emerald-400 text-sm">
+                            <span className="bg-emerald-950/70 border border-emerald-800/60 px-2 py-0.5 rounded-lg inline-block">
+                              +{formatCurrency(seller.grossProfit, settings.currencySymbol)}
+                            </span>
+                          </div>
+                          {(seller.roomRevenue > 0 || seller.itemsProfit > 0) && (
+                            <div className="text-[10px] text-slate-400 mt-0.5">
+                              ສິນຄ້າ: +{formatCurrency(seller.itemsProfit, '')}
+                              {seller.roomRevenue > 0 && ` • ຫ້ອງ: +${formatCurrency(seller.roomRevenue, '')}`}
+                            </div>
+                          )}
                         </td>
                         <td className="py-3 px-4 text-center">
                           <button
@@ -2029,6 +2123,49 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                     ))
                   )}
                 </tbody>
+                {sellerPerformanceList.length > 0 && (
+                  <tfoot>
+                    <tr className="bg-slate-950 border-t-2 border-slate-700 font-bold text-xs">
+                      <td colSpan={2} className="py-3.5 px-4 text-slate-300">
+                        ລວມຜູ້ຂາຍທັງໝົດ ({sellerPerformanceList.length} ຄົນ):
+                      </td>
+                      <td className="py-3.5 px-3 text-center font-mono font-black text-amber-400">
+                        {sellerPerformanceList.reduce((sum, s) => sum + s.totalUnits, 0).toLocaleString()} ໜ່ວຍ
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-mono font-black text-slate-300">
+                        {formatCurrency(
+                          sellerPerformanceList.reduce((sum, s) => sum + s.itemsRevenue, 0),
+                          settings.currencySymbol
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-mono font-black text-purple-300">
+                        {formatCurrency(
+                          sellerPerformanceList.reduce((sum, s) => sum + s.roomRevenue, 0),
+                          settings.currencySymbol
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-mono font-black text-amber-300">
+                        {formatCurrency(
+                          sellerPerformanceList.reduce((sum, s) => sum + s.totalRevenue, 0),
+                          settings.currencySymbol
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-mono font-black text-rose-400">
+                        {formatCurrency(
+                          sellerPerformanceList.reduce((sum, s) => sum + s.totalCost, 0),
+                          settings.currencySymbol
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-mono font-black text-emerald-400 text-base">
+                        +{formatCurrency(
+                          sellerPerformanceList.reduce((sum, s) => sum + s.grossProfit, 0),
+                          settings.currencySymbol
+                        )}
+                      </td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           </div>
