@@ -571,6 +571,14 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
   const handleUpdateOrderItem = (orderId: string, delta: number) => {
     if (!selectedRoomForDetails) return;
 
+    if (delta < 0 && currentRole !== 'admin') {
+      const targetOrder = selectedRoomForDetails.orders.find((ord) => ord.id === orderId);
+      if (targetOrder && targetOrder.quantity <= 1) {
+        alert('ຂໍອະໄພ! ພະນັກງານບໍ່ມີສິດລຶບລາຍການສິນຄ້າອອກຈາກຫ້ອງ! ສະເພາະ Admin ເທົ່ານັ້ນ.');
+        return;
+      }
+    }
+
     const updatedOrders = selectedRoomForDetails.orders
       .map((ord) => {
         if (ord.id === orderId) {
@@ -636,8 +644,12 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
     onCheckoutRoom(room, roomFee, duration, startStr, endStr, timeRangeStr);
   };
 
-  // Force Clear Room back to available (ເຄຼຍຫ້ອງວ່າງ & ລ້າງຂໍ້ມູນທຸກຢ່າງ)
+  // Force Clear Room back to available (ເຄຼຍຫ້ອງວ່າງ & ລ້າງຂໍ້ມູນທຸກຢ່າງ - ສະເພາະ Admin ເທົ່ານັ້ນ)
   const handleForceClearRoom = async (room: Room) => {
+    if (currentRole !== 'admin') {
+      alert('ຂໍອະໄພ! ພະນັກງານບໍ່ມີສິດເຄຼຍ ຫຼື ລຶບຂໍ້ມູນຫ້ອງ! ສະເພາະ Admin ເທົ່ານັ້ນ.');
+      return;
+    }
     const confirmed = window.confirm(
       `ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການເຄຼຍ "${room.name}" ໃຫ້ເປັນຫ້ອງວ່າງຄືເກົ່າ? \n\n* ລາຍການສັ່ງ ແລະ ເວລາທັງໝົດຈະຖືກລ້າງອອກ!`
     );
@@ -1242,7 +1254,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className={currentRole === 'admin' ? "grid grid-cols-2 gap-2" : "grid grid-cols-1 gap-2"}>
                       <button
                         type="button"
                         onClick={() => handleStartTransferRoom(room)}
@@ -1253,25 +1265,27 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                         <span>ຍ້າຍຫ້ອງ (Transfer)</span>
                       </button>
 
-                      <button
-                        type="button"
-                        disabled={clearingRoomId === room.id}
-                        onClick={() => handleForceClearRoom(room)}
-                        className="py-2 px-2 rounded-xl bg-slate-900/80 hover:bg-rose-950/70 border border-slate-800 hover:border-rose-800 text-slate-400 hover:text-rose-300 text-[11px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                        title="ເຄຼຍຫ້ອງໃຫ້ເປັນຫ້ອງວ່າງ (ລ້າງເວລາເປັນ 00:00 & ລ້າງລາຍການ)"
-                      >
-                        {clearingRoomId === room.id ? (
-                          <>
-                            <RefreshCw className="w-3 h-3 text-rose-400 animate-spin shrink-0" />
-                            <span>ເຄຼຍ...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Trash2 className="w-3 h-3 text-rose-400 shrink-0" />
-                            <span>ເຄຼຍຫ້ອງ (00:00)</span>
-                          </>
-                        )}
-                      </button>
+                      {currentRole === 'admin' && (
+                        <button
+                          type="button"
+                          disabled={clearingRoomId === room.id}
+                          onClick={() => handleForceClearRoom(room)}
+                          className="py-2 px-2 rounded-xl bg-slate-900/80 hover:bg-rose-950/70 border border-slate-800 hover:border-rose-800 text-slate-400 hover:text-rose-300 text-[11px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Admin ເຄຼຍຫ້ອງໃຫ້ເປັນຫ້ອງວ່າງ (ລ້າງເວລາເປັນ 00:00 & ລ້າງລາຍການ)"
+                        >
+                          {clearingRoomId === room.id ? (
+                            <>
+                              <RefreshCw className="w-3 h-3 text-rose-400 animate-spin shrink-0" />
+                              <span>ເຄຼຍ...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Trash2 className="w-3 h-3 text-rose-400 shrink-0" />
+                              <span>ເຄຼຍຫ້ອງ (00:00)</span>
+                            </>
+                          )}
+                        </button>
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -2046,7 +2060,13 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                         <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-700">
                           <button
                             onClick={() => handleUpdateOrderItem(ord.id, -1)}
-                            className="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 text-xs flex items-center justify-center cursor-pointer"
+                            disabled={ord.quantity <= 1 && currentRole !== 'admin'}
+                            className={`w-5 h-5 rounded text-xs flex items-center justify-center transition-all ${
+                              ord.quantity <= 1 && currentRole !== 'admin'
+                                ? 'bg-slate-800/40 text-slate-600 cursor-not-allowed'
+                                : 'bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer'
+                            }`}
+                            title={ord.quantity <= 1 && currentRole !== 'admin' ? 'ພະນັກງານບໍ່ມີສິດລຶບລາຍການສິນຄ້າ (ສະເພາະ Admin)' : 'ຫຼຸດຈຳນວນ'}
                           >
                             -
                           </button>
@@ -2251,25 +2271,27 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                 >
                   ປິດໜ້າຕ່າງ
                 </button>
-                <button
-                  type="button"
-                  disabled={clearingRoomId === selectedRoomForDetails.id}
-                  onClick={() => handleForceClearRoom(selectedRoomForDetails)}
-                  className="py-2.5 px-3 rounded-xl bg-slate-800/80 hover:bg-rose-950 border border-slate-700 hover:border-rose-700 text-slate-400 hover:text-rose-300 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="ເຄຼຍຫ້ອງໃຫ້ເປັນຫ້ອງວ່າງຄືເກົ່າ (ລ້າງລາຍການທັງໝົດ)"
-                >
-                  {clearingRoomId === selectedRoomForDetails.id ? (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5 text-rose-400 animate-spin" />
-                      <span className="hidden sm:inline">ກຳລັງເຄຼຍ...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                      <span className="hidden sm:inline">ເຄຼຍຫ້ອງວ່າງ</span>
-                    </>
-                  )}
-                </button>
+                {currentRole === 'admin' && (
+                  <button
+                    type="button"
+                    disabled={clearingRoomId === selectedRoomForDetails.id}
+                    onClick={() => handleForceClearRoom(selectedRoomForDetails)}
+                    className="py-2.5 px-3 rounded-xl bg-slate-800/80 hover:bg-rose-950 border border-slate-700 hover:border-rose-700 text-slate-400 hover:text-rose-300 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Admin ເຄຼຍຫ້ອງໃຫ້ເປັນຫ້ອງວ່າງຄືເກົ່າ (ລ້າງລາຍການທັງໝົດ)"
+                  >
+                    {clearingRoomId === selectedRoomForDetails.id ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 text-rose-400 animate-spin" />
+                        <span className="hidden sm:inline">ກຳລັງເຄຼຍ...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                        <span className="hidden sm:inline">ເຄຼຍຫ້ອງວ່າງ</span>
+                      </>
+                    )}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => handleStartTransferRoom(selectedRoomForDetails)}

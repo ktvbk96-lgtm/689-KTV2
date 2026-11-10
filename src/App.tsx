@@ -1377,6 +1377,10 @@ export default function App() {
             onSyncAllToSheets={handleBulkSyncAllToSheets}
             isSyncingSheets={isSyncingAllSheets}
             onDeleteBill={async (billId) => {
+              if (currentRole !== 'admin') {
+                showToast('⚠️ ພະນັກງານບໍ່ມີສິດລຶບຂໍ້ມູນ! ສະເພາະ Admin ເທົ່ານັ້ນ');
+                return;
+              }
               const updated = billsRef.current.filter((b) => b.id !== billId);
               setBills(updated);
               billsRef.current = updated;
@@ -1386,6 +1390,10 @@ export default function App() {
               showToast('ລຶບໃບບິນສຳເລັດແລ້ວ!');
             }}
             onDeleteBills={async (billIds) => {
+              if (currentRole !== 'admin') {
+                showToast('⚠️ ພະນັກງານບໍ່ມີສິດລຶບຂໍ້ມູນ! ສະເພາະ Admin ເທົ່ານັ້ນ');
+                return;
+              }
               const idSet = new Set(billIds);
               const updated = billsRef.current.filter((b) => !idSet.has(b.id));
               setBills(updated);
@@ -1396,6 +1404,10 @@ export default function App() {
               showToast(`ລຶບຂໍ້ມູນ ${billIds.length} ໃບບິນສຳເລັດແລ້ວ!`);
             }}
             onClearAllBills={async () => {
+              if (currentRole !== 'admin') {
+                showToast('⚠️ ພະນັກງານບໍ່ມີສິດລຶບຂໍ້ມູນ! ສະເພາະ Admin ເທົ່ານັ້ນ');
+                return;
+              }
               setBills([]);
               billsRef.current = [];
               updateStoredBills([]);
@@ -1413,6 +1425,7 @@ export default function App() {
           <SettingsModal
             settings={settings}
             staffList={staffList}
+            currentRole={currentRole}
             packages={packages}
             rooms={rooms}
             products={products}

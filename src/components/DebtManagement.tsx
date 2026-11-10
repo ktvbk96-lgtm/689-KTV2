@@ -63,9 +63,9 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
   onSaveDebts,
   onOpenBluetoothModal,
 }) => {
-  // Permission checks determined by Admin
+  // Permission checks: Staff can never delete data across any function; only Admin
   const canEdit = currentRole === 'admin' || !!settings.staffCanEditDebt;
-  const canDelete = currentRole === 'admin' || !!settings.staffCanDeleteDebt;
+  const canDelete = currentRole === 'admin';
 
   // Search & Filter States
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -452,10 +452,10 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
     setEditingDebt(null);
   };
 
-  // Delete Debt Record
+  // Delete Debt Record (Admin only)
   const handleDeleteDebt = (debt: DebtRecord) => {
-    if (!canDelete) {
-      alert('ຂໍອະໄພ! ສິດທິໃນການລຶບລາຍການຕິດໜີ້ຖືກກຳນົດໃຫ້ສະເພາະ Admin ເທົ່ານັ້ນ.\n(Admin ສາມາດເປີດສິດທິນີ້ໃຫ້ພະນັກງານໄດ້ໃນເມນູຕັ້ງຄ່າ)');
+    if (!canDelete || currentRole !== 'admin') {
+      alert('ຂໍອະໄພ! ພະນັກງານບໍ່ມີສິດລຶບຂໍ້ມູນ! ສະເພາະ Admin ເທົ່ານັ້ນ.');
       return;
     }
     if (confirm(`ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການລຶບລາຍການຕິດໜີ້ຂອງ "${debt.customerName}"?`)) {
@@ -465,8 +465,8 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
   };
 
   const handleClearSettledDebts = () => {
-    if (!canDelete) {
-      alert('ສະເພາະ Admin ເທົ່ານັ້ນທີ່ສາມາດລຶບລາຍການໄດ້!');
+    if (!canDelete || currentRole !== 'admin') {
+      alert('ຂໍອະໄພ! ພະນັກງານບໍ່ມີສິດລຶບຂໍ້ມູນ! ສະເພາະ Admin ເທົ່ານັ້ນ.');
       return;
     }
     const settledCount = debts.filter((d) => d.status === 'paid' || d.remainingAmount <= 0).length;
@@ -481,8 +481,8 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
   };
 
   const handleClearAllDebts = () => {
-    if (!canDelete) {
-      alert('ສະເພາະ Admin ເທົ່ານັ້ນທີ່ສາມາດລຶບລາຍການຕິດໜີ້ທັງໝົດໄດ້!');
+    if (!canDelete || currentRole !== 'admin') {
+      alert('ຂໍອະໄພ! ພະນັກງານບໍ່ມີສິດລຶບຂໍ້ມູນ! ສະເພາະ Admin ເທົ່ານັ້ນ.');
       return;
     }
     const pin = window.prompt(`⚠️ ຢືນຢັນລຶບລາຍການຕິດໜີ້ທັງໝົດ (${debts.length} ລາຍການ)\nກະລຸນາປ້ອນລະຫັດ Admin PIN:`);
@@ -1080,19 +1080,17 @@ export const DebtManagement: React.FC<DebtManagementProps> = ({
                     <Printer className="w-4 h-4" />
                   </button>
 
-                  {/* Delete Button (Admin or authorized staff) */}
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteDebt(debt)}
-                    className={`min-h-[40px] min-w-[40px] p-2 rounded-xl transition-all cursor-pointer touch-manipulation flex items-center justify-center ${
-                      canDelete
-                        ? 'bg-slate-800 hover:bg-rose-950 active:scale-95 text-slate-400 hover:text-rose-400'
-                        : 'bg-slate-800/40 text-slate-600 hover:text-slate-500 cursor-not-allowed'
-                    }`}
-                    title={canDelete ? 'ລຶບລາຍການຕິດໜີ້' : 'ສິດລຶບສະເພາະ Admin (ຕັ້ງຄ່າໄດ້ໃນເມນູຕັ້ງຄ່າ)'}
-                  >
-                    {canDelete ? <Trash2 className="w-4 h-4" /> : <Lock className="w-3.5 h-3.5" />}
-                  </button>
+                  {/* Delete Button (Strictly Admin only) */}
+                  {canDelete && (
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteDebt(debt)}
+                      className="min-h-[40px] min-w-[40px] p-2 rounded-xl bg-slate-800 hover:bg-rose-950 active:scale-95 text-slate-400 hover:text-rose-400 transition-all cursor-pointer touch-manipulation flex items-center justify-center"
+                      title="ລຶບລາຍການຕິດໜີ້ (ສະເພາະ Admin)"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
               </div>
             );

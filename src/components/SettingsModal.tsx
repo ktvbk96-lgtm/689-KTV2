@@ -38,7 +38,7 @@ import {
   HandCoins,
   Sparkles,
 } from 'lucide-react';
-import { AppSettings, StaffMember, RoomPackage, Room, Product, AppThemeId, ReceiptFontSize, ReceiptPaperWidth, BillRecord, DebtRecord } from '../types';
+import { AppSettings, StaffMember, RoomPackage, Room, Product, AppThemeId, ReceiptFontSize, ReceiptPaperWidth, BillRecord, DebtRecord, Role } from '../types';
 
 import {
   connectBluetoothPrinter,
@@ -65,6 +65,7 @@ interface SettingsModalProps {
   staffList: StaffMember[];
   packages: RoomPackage[];
   rooms: Room[];
+  currentRole?: Role;
   products?: Product[];
   bills?: BillRecord[];
   debts?: DebtRecord[];
@@ -85,6 +86,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   staffList,
   packages,
   rooms,
+  currentRole = 'admin',
   products = [],
   bills = [],
   debts = [],
@@ -229,6 +231,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const handleRemoveStaff = (id: string, name: string) => {
+    if (currentRole !== 'admin') {
+      alert('ຂໍອະໄພ! ພະນັກງານບໍ່ມີສິດລຶບຂໍ້ມູນ! ສະເພາະ Admin ເທົ່ານັ້ນ.');
+      return;
+    }
     if (confirm(`ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການລຶບພະນັກງານ "${name}" ອອກຈາກລະບົບ?`)) {
       const updated = localStaff.filter((s) => s.id !== id);
       setLocalStaff(updated);
@@ -305,6 +311,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const handleDeleteRoom = (roomId: string, roomName: string) => {
+    if (currentRole !== 'admin') {
+      alert('ຂໍອະໄພ! ພະນັກງານບໍ່ມີສິດລຶບຂໍ້ມູນ! ສະເພາະ Admin ເທົ່ານັ້ນ.');
+      return;
+    }
     const target = localRooms.find((r) => r.id === roomId);
     if (target && target.status === 'in_use') {
       alert(`ຫ້ອງ "${roomName}" ກຳລັງມີລູກຄ້າໃຊ້ງານຢູ່! ບໍ່ສາມາດລຶບໄດ້`);
@@ -2323,41 +2333,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </div>
 
-              {/* Toggle 2: Allow Staff to Delete Debts */}
+              {/* Toggle 2: Allow Staff to Delete Debts (Permanently Locked to Admin Only) */}
               <div className="flex items-center justify-between p-3 rounded-xl bg-slate-900/60 border border-slate-800">
                 <div className="space-y-0.5">
                   <span className="text-xs font-bold text-slate-200 block">
-                    2. ອະນຸຍາດໃຫ້ພະນັກງານ &quot;ລຶບ&quot; ລາຍການຕິດໜີ້ໄດ້
+                    2. ສິດທິໃນການ &quot;ລຶບ&quot; ລາຍການຕິດໜີ້
                   </span>
                   <p className="text-[11px] text-slate-400">
-                    {formData.staffCanDeleteDebt
-                      ? '⚠️ ພະນັກງານສາມາດລຶບລາຍການຕິດໜີ້ອອກຈາກລະບົບໄດ້'
-                      : '🔒 ສະເພາະ Admin ເທົ່ານັ້ນທີ່ສາມາດລຶບລາຍການຕິດໜີ້ໄດ້ (ແນະນຳ)'}
+                    🔒 ລັອກຖາວອນ: ພະນັກງານບໍ່ມີສິດລຶບຂໍ້ມູນຕິດໜີ້ ຫຼື ໃບບິນໃດໆທັງໝົດ (ສະເພາະ Admin ເທົ່ານັ້ນ)
                   </p>
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setFormData({
-                        ...formData,
-                        staffCanDeleteDebt: !formData.staffCanDeleteDebt,
-                      })
-                    }
-                    className={`relative inline-flex h-6 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                      formData.staffCanDeleteDebt ? 'bg-rose-500' : 'bg-slate-700'
-                    }`}
-                  >
-                    <span
-                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
-                        formData.staffCanDeleteDebt ? 'translate-x-6' : 'translate-x-0'
-                      }`}
-                    />
-                  </button>
-                  <span className="text-xs font-bold text-slate-300 min-w-[50px]">
-                    {formData.staffCanDeleteDebt ? 'ອະນຸຍາດ' : 'ປິດ'}
-                  </span>
+                  <div className="px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700 text-[11px] font-bold text-amber-300 flex items-center gap-1">
+                    <Lock className="w-3 h-3 text-amber-400" />
+                    <span>ສະເພາະ Admin</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2459,16 +2450,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           </div>
                         </div>
 
-                        {localPackages.length > 1 && (
+                        {localPackages.length > 1 && currentRole === 'admin' && (
                           <button
                             type="button"
                             onClick={() => {
+                              if (currentRole !== 'admin') {
+                                alert('ສະເພາະ Admin ເທົ່ານັ້ນທີ່ສາມາດລຶບແພັກເກັດໄດ້!');
+                                return;
+                              }
                               if (confirm(`ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການລຶບແພັກເກັດ "${pkg.name}"?`)) {
                                 setLocalPackages(localPackages.filter((p) => p.id !== pkg.id));
                               }
                             }}
                             className="p-2 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/40 text-rose-400 cursor-pointer mt-3 sm:mt-4"
-                            title="ລຶບແພັກເກັດ"
+                            title="ລຶບແພັກເກັດ (Admin)"
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
