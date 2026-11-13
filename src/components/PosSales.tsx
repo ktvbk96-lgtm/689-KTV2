@@ -47,7 +47,8 @@ interface PosSalesProps {
     items: CartItem[],
     discount: number,
     paymentMethod: 'cash' | 'transfer',
-    cashReceived?: number
+    cashReceived?: number,
+    onConfirmedCallback?: () => void
   ) => void | Promise<any>;
   onTransferToRoom: (roomId: string, items: CartItem[]) => void | Promise<any>;
 }
@@ -403,9 +404,10 @@ export const PosSales: React.FC<PosSalesProps> = ({
     await onCheckoutPosSale(
       cart,
       discountAmount,
-      'cash'
+      'cash',
+      undefined,
+      clearCart
     );
-    clearCart();
   };
 
   const handleTransferConfirm = async (roomId: string) => {

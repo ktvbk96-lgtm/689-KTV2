@@ -1,7 +1,7 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * 
+ *
  * 689 KTV - Vercel Blob Storage Integration
  * Direct HTTP PUT upload to Vercel Blob Storage CDN
  * https://blob.vercel-storage.com/${Date.now()}-${file.name}
@@ -10,14 +10,6 @@
 // 1. Token from environment variable as specified by user
 const BLOB_READ_WRITE_TOKEN = process.env.BLOB_READ_WRITE_TOKEN;
 
-/**
- * Uploads a file directly to Vercel Blob Storage.
- * - HTTP PUT request to: https://blob.vercel-storage.com/${Date.now()}-${file.name}
- * - Headers:
- *     'Authorization': `Bearer ${BLOB_READ_WRITE_TOKEN}`
- *     'x-api-version': '7'
- * - Returns the resulting CDN URL from response JSON `data.url`
- */
 export async function uploadToVercelBlob(file: File): Promise<string> {
   // 1. Resolve token: use process.env.BLOB_READ_WRITE_TOKEN or fetch from server endpoint if client bundle lacks it
   let token = BLOB_READ_WRITE_TOKEN;
@@ -82,9 +74,6 @@ export async function uploadToVercelBlob(file: File): Promise<string> {
   }
 }
 
-/**
- * Fallback server-side proxy in case client directly calling Vercel Blob meets CORS or missing bundle token
- */
 async function uploadViaServerProxy(file: File, filename: string): Promise<string | null> {
   try {
     const reader = new FileReader();

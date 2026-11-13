@@ -6,6 +6,7 @@ export interface StaffMember {
   role: Role;
   phone?: string;
   active: boolean;
+  updatedAt?: string;
 }
 
 export type ProductCategory = 'drink' | 'beer' | 'food' | 'snack' | 'service' | 'other';
@@ -29,6 +30,7 @@ export interface Product {
   packCostPrice?: number; // ຕົ້ນທຶນແບບແພັກ
   packsInStock?: number; // ຈຳນວນແພັກຄົງເຫຼືອໃນສະຕັອກ (Packs in stock)
   looseBottles?: number; // ຈຳນວນເສດຂວດ/ແກ້ວທີ່ເຫຼືອ (0-23)
+  updatedAt?: string;
 }
 
 export interface CartItem {
@@ -52,6 +54,7 @@ export interface RoomPackage {
   price: number;
   description: string;
   includesBeerCount?: number;
+  updatedAt?: string;
 }
 
 export type RoomStatus = 'available' | 'in_use' | 'billing';
@@ -79,6 +82,7 @@ export interface Room {
   pricingType: RoomPricingType;
   packageId?: string;
   packageName?: string;
+  packagePrice?: number;
   hourlyRate: number; // For fixed hourly price (e.g. 70,000 ₭/hr)
   openedAt?: string; // ISO string
   targetEndTime?: string; // ISO string (e.g. 08:00 + 4 hours -> 12:00)
@@ -118,6 +122,7 @@ export interface DebtRecord {
   note?: string;
   staffName: string;
   payments: DebtPaymentEntry[];
+  updatedAt?: string;
 }
 
 export interface BillPayment {
@@ -149,6 +154,7 @@ export interface BillRecord {
   pricingType?: RoomPricingType;
   roomCharge: number;
   isRoomChargePaid?: boolean; // ຈ່າຍຄ່າຫ້ອງແລ້ວບໍ່ຕ້ອງຄິດໄລ່ເງິນ ຄິດໄລ່ແຕ່ເວລາ
+  isSplitItemBill?: boolean; // ບິນແຍກຈ່າຍສະເພາະສິນຄ້າໃນຫ້ອງ (ຫ້ອງຍັງເປີດຢູ່)
   items: {
     productId: string;
     productName: string;
@@ -169,6 +175,7 @@ export interface BillRecord {
   payment: BillPayment;
   staffName: string;
   syncedToSheets?: boolean;
+  updatedAt?: string;
 }
 
 export type AppThemeId =

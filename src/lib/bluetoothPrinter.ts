@@ -469,7 +469,8 @@ export const renderReceiptToCanvas = (
     }
 
     if (bill.roomCharge > 0) {
-      drawRow('ຄ່າຫ້ອງ:', `${bill.roomCharge.toLocaleString()} ${settings.currencySymbol}`, true);
+      const feeLabel = bill.isRoomChargePaid ? 'ຄ່າຫ້ອງ (ຈ່າຍແລ້ວ):' : 'ຄ່າຫ້ອງ:';
+      drawRow(feeLabel, `${bill.roomCharge.toLocaleString()} ${settings.currencySymbol}`, true);
     }
   }
 

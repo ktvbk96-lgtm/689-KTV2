@@ -1,4 +1,4 @@
-import { Product, Room, RoomPackage, StaffMember, AppSettings, DebtRecord } from '../types';
+import { Product, Room, RoomPackage, StaffMember, AppSettings, DebtRecord, BillRecord } from '../types';
 
 export const INITIAL_STAFF: StaffMember[] = [
   { id: 'staff-admin', name: 'Admin (ເຈົ້າຂອງຮ້ານ)', role: 'admin', phone: '020-5555-8888', active: true },
@@ -10,28 +10,44 @@ export const INITIAL_STAFF: StaffMember[] = [
 
 export const INITIAL_PACKAGES: RoomPackage[] = [
   {
-    id: 'pkg-standard-2h',
-    name: 'ແພັກເກັດ 2 ຊົ່ວໂມງ (2 Hrs Combo)',
-    durationMinutes: 120,
-    price: 180000,
-    description: 'ຮ້ອງເພງ 2 ຊົ່ວໂມງ + ແຖມນ້ຳດື່ມ 2 ຕຸກ & ຖົ່ວດິນ 1 ຈານ',
+    id: 'pkg-1h',
+    name: 'ແພັກເກັດ 1 ຊົ່ວໂມງ (1 Hr)',
+    durationMinutes: 60,
+    price: 100000,
+    description: 'ຮ້ອງເພງ 1 ຊົ່ວໂມງ ຄ່າຫ້ອງ 100,000 ກີບ',
     includesBeerCount: 0,
   },
   {
-    id: 'pkg-party-3h',
-    name: 'ແພັກເກັດ 3 ຊົ່ວໂມງ (Party 3 Hrs)',
+    id: 'pkg-3h',
+    name: 'ແພັກເກັດ 3 ຊົ່ວໂມງ (3 Hrs)',
     durationMinutes: 180,
-    price: 320000,
-    description: 'ຮ້ອງເພງ 3 ຊົ່ວໂມງ + ເບຍລາວ 3 ແກ້ວ + ປັອບຄອນ 1 ຈານ',
-    includesBeerCount: 3,
+    price: 200000,
+    description: 'ຮ້ອງເພງ 3 ຊົ່ວໂມງ ຄ່າຫ້ອງ 200,000 ກີບ',
+    includesBeerCount: 0,
   },
   {
-    id: 'pkg-vip-allnight',
-    name: 'ແພັກເກັດ VIP All-Night (ທັງຄືນ)',
-    durationMinutes: 360,
-    price: 550000,
-    description: 'ຮ້ອງເພງແບບຈຸໃຈ 6 ຊົ່ວໂມງ + ເບຍລາວ 1 ລັງ (12 ແກ້ວ) + ອາຫານຫວ່າງ 2 ຊຸດ',
-    includesBeerCount: 12,
+    id: 'pkg-4h',
+    name: 'ແພັກເກັດ 4 ຊົ່ວໂມງ (4 Hrs)',
+    durationMinutes: 240,
+    price: 300000,
+    description: 'ຮ້ອງເພງ 4 ຊົ່ວໂມງ ຄ່າຫ້ອງ 300,000 ກີບ',
+    includesBeerCount: 0,
+  },
+  {
+    id: 'pkg-5h',
+    name: 'ແພັກເກັດ 5 ຊົ່ວໂມງ (5 Hrs)',
+    durationMinutes: 300,
+    price: 400000,
+    description: 'ຮ້ອງເພງ 5 ຊົ່ວໂມງ ຄ່າຫ້ອງ 400,000 ກີບ',
+    includesBeerCount: 0,
+  },
+  {
+    id: 'pkg-7h',
+    name: 'ແພັກເກັດ 7 ຊົ່ວໂມງ (7 Hrs)',
+    durationMinutes: 420,
+    price: 500000,
+    description: 'ຮ້ອງເພງ 7 ຊົ່ວໂມງ ຄ່າຫ້ອງ 500,000 ກີບ',
+    includesBeerCount: 0,
   },
 ];
 
@@ -341,48 +357,7 @@ export const INITIAL_SETTINGS: AppSettings = {
 export const DEFAULT_GAS_WEBAPP_URL = '';
 
 
-export const INITIAL_DEBTS: DebtRecord[] = [
-  {
-    id: 'debt-sample-1',
-    customerName: 'ທ່ານ ສົມພອນ (Somphone VIP)',
-    customerPhone: '020-5599-8822',
-    billNumber: '689-20261031-002',
-    roomName: 'ຫ້ອງ VIP 689 (ຫ້ອງໃຫຍ່)',
-    totalAmount: 480000,
-    paidAmount: 200000,
-    remainingAmount: 280000,
-    status: 'partially_paid',
-    createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-    dueDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    photoUrl: 'https://images.unsplash.com/photo-1554415707-9e4466b405c0?w=600&auto=format&fit=crop&q=80',
-    note: 'ລູກຄ້າປະຈຳ ຕິດຄ່າຫ້ອງ ແລະ ເບຍ 3 ແກ້ວ ໂອນມາແລ້ວ 200,000 ກີບ',
-    staffName: 'ນ້ອຍ (Noy)',
-    payments: [
-      {
-        id: 'pay-1',
-        amount: 200000,
-        paidAt: new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString(),
-        paymentMethod: 'transfer',
-        note: 'ໂອນຜ່ານ BCEL One',
-        staffName: 'Admin (ເຈົ້າຂອງຮ້ານ)',
-      },
-    ],
-  },
-  {
-    id: 'debt-sample-2',
-    customerName: 'ນາງ ດາວັນ ແກ້ວມະນີ',
-    customerPhone: '020-9944-3311',
-    billNumber: '689-20261030-008',
-    roomName: 'ຫ້ອງ VIP 01',
-    totalAmount: 350000,
-    paidAmount: 0,
-    remainingAmount: 350000,
-    status: 'unpaid',
-    createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-    dueDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    photoUrl: 'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=600&auto=format&fit=crop&q=80',
-    note: 'ສັ່ງເບຍລາວ 1 ລັງ + ອາຫານຫວ່າງ ສັນຍາຈະມາເຄຼຍວັນສຸກ',
-    staffName: 'ຄຳ (Kham)',
-    payments: [],
-  },
-];
+export const INITIAL_DEBTS: DebtRecord[] = [];
+
+export const INITIAL_BILLS: BillRecord[] = [];
+

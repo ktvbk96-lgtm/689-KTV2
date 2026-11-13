@@ -1,22 +1,42 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * 
+ *
  * 689 KTV - Real-Time Multi-Device Sync Engine
  * Supports seamless, instant synchronization across iOS, Android, and Windows PC.
- * Combines Server-Sent Events (SSE), Local BroadcastChannel, and Smart Polling Fallback.
+ * Implements:
+ * 1. Fetch First on Load (Server is Single Source of Truth)
+ * 2. Granular Delta + Timestamp-Guarded Updates (No full state overwrite)
+ * 3. Server-Sent Events (SSE) + 3.5s Version Polling + Tab Focus/Wakeup + Local BroadcastChannel
  */
 
 import { Product, Room, RoomPackage, StaffMember, AppSettings, DebtRecord, BillRecord } from '../types';
 
+export interface StockDeductionItem {
+  productId: string;
+  deductQty: number;
+}
+
 export interface SyncPayload {
   products?: Product[];
+  changedProducts?: Product[];
+  deletedProductIds?: string[];
+  clearProducts?: boolean;
+  stockDeductions?: StockDeductionItem[];
   rooms?: Room[];
+  changedRooms?: Room[];
+  deletedRoomIds?: string[];
   packages?: RoomPackage[];
   staff?: StaffMember[];
   settings?: Partial<AppSettings>;
   debts?: DebtRecord[];
+  changedDebts?: DebtRecord[];
+  deletedDebtIds?: string[];
+  clearAllDebts?: boolean;
   bills?: BillRecord[];
+  changedBills?: BillRecord[];
+  deletedBillIds?: string[];
+  clearAllBills?: boolean;
   bill?: BillRecord;
   lastUpdated?: string;
   lastSenderId?: string;
@@ -31,12 +51,29 @@ export type SyncAction =
   | 'saveSettings'
   | 'saveBill'
   | 'saveBills'
+  | 'deleteBill'
+  | 'deleteBills'
+  | 'clearAllBills'
   | 'clearAll'
   | 'resetAll'
   | 'syncAll';
 
+export interface SyncReceiveMeta {
+  isInitialSync?: boolean;
+  isFullSnapshot?: boolean;
+  version?: number;
+}
+
+export interface SyncPushResult {
+  success: boolean;
+  version?: number;
+  lastUpdated?: string;
+  rejectedStale?: boolean;
+  data?: SyncPayload;
+}
+
 export interface SyncCallbacks {
-  onDataReceived: (payload: SyncPayload, action?: SyncAction) => void;
+  onDataReceived: (payload: SyncPayload, action?: SyncAction, meta?: SyncReceiveMeta) => void;
   onStatusChange?: (status: 'connected' | 'syncing' | 'offline' | 'error', message?: string) => void;
 }
 
@@ -76,17 +113,26 @@ try {
 
 let currentServerVersion = 0;
 let eventSource: EventSource | null = null;
-let pollTimer: any = null;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
 let isBroadcasting = false;
+let isFetchingState = false;
+let activeCallbacks: SyncCallbacks | null = null;
+
+export function getCurrentServerVersion(): number {
+  return currentServerVersion;
+}
 
 /**
- * Push an update to all other devices (iOS, Android, Windows)
+ * Push a granular delta update to the Server and notify all other devices (iOS, Android, Windows)
  */
-export async function pushMultiDeviceUpdate(action: SyncAction, data: SyncPayload) {
+export async function pushMultiDeviceUpdate(
+  action: SyncAction,
+  data: SyncPayload
+): Promise<SyncPushResult> {
   isBroadcasting = true;
   const deviceId = getDeviceId();
 
-  // 1. Send via local BroadcastChannel for zero-latency multi-tab updates
+  // 1. Send via local BroadcastChannel for zero-latency multi-tab updates in same browser
   if (broadcastChannel) {
     try {
       broadcastChannel.postMessage({
@@ -100,7 +146,7 @@ export async function pushMultiDeviceUpdate(action: SyncAction, data: SyncPayloa
     }
   }
 
-  // 2. Send to Backend Server
+  // 2. Send granular delta + baseVersion to Backend Server (/api/sync)
   try {
     const res = await fetch('/api/sync', {
       method: 'POST',
@@ -111,6 +157,7 @@ export async function pushMultiDeviceUpdate(action: SyncAction, data: SyncPayloa
         action,
         data,
         senderDeviceId: deviceId,
+        baseVersion: currentServerVersion,
       }),
     });
 
@@ -118,51 +165,120 @@ export async function pushMultiDeviceUpdate(action: SyncAction, data: SyncPayloa
       const contentType = res.headers.get('content-type') || '';
       if (contentType.includes('application/json')) {
         const json = await res.json();
-        if (json?.version) {
+        if (typeof json?.version === 'number') {
           currentServerVersion = json.version;
         }
+        return {
+          success: !!json?.success,
+          version: json?.version,
+          lastUpdated: json?.lastUpdated,
+          rejectedStale: !!json?.rejectedStale,
+          data: json?.data,
+        };
       }
     }
+    return { success: false };
   } catch (err) {
-    console.warn('Backend sync note (offline or static mode):', err);
+    console.warn('Backend sync note (offline or unreachable):', err);
+    return { success: false };
   } finally {
     setTimeout(() => {
       isBroadcasting = false;
-    }, 1000);
+    }, 600);
   }
 }
 
 /**
- * Initialize Multi-Device Real-Time Listener
+ * Fetch latest authoritative snapshot from Server (never pushes local data to server)
+ */
+export async function fetchLatestServerSnapshot(isManual = false): Promise<boolean> {
+  if (!activeCallbacks) return false;
+  if (isFetchingState) return false;
+  isFetchingState = true;
+
+  try {
+    if (isManual) {
+      activeCallbacks.onStatusChange?.('syncing', 'ກຳລັງດຶງຂໍ້ມູນລ່າສຸດຈາກ Server...');
+    }
+    const res = await fetch(`/api/sync?_t=${Date.now()}`, { cache: 'no-store' });
+    if (res.ok) {
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const json = await res.json();
+        if (json?.data) {
+          if (typeof json.version === 'number') {
+            currentServerVersion = json.version;
+          }
+          activeCallbacks.onDataReceived(json.data, 'syncAll', {
+            isInitialSync: isManual,
+            isFullSnapshot: true,
+            version: json.version,
+          });
+          activeCallbacks.onStatusChange?.(
+            'connected',
+            'ຊິ້ງຫຼາຍເຄື່ອງ Real-time (SSE + 3.5s) ເຊື່ອມຕໍ່ແລ້ວ'
+          );
+          return true;
+        }
+      }
+    }
+    return false;
+  } catch (err) {
+    console.warn('Manual /api/sync fetch note:', err);
+    activeCallbacks.onStatusChange?.('offline', 'ໂໝດອອບລາຍ (ບໍ່ສາມາດເຊື່ອມຕໍ່ Server ຊົ່ວຄາວ)');
+    return false;
+  } finally {
+    isFetchingState = false;
+  }
+}
+
+/**
+ * Initialize Multi-Device Real-Time Listener (Fetch-First + SSE + 3.5s Polling + Tab Wakeup)
  */
 export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
   const deviceId = getDeviceId();
+  activeCallbacks = callbacks;
 
-  // 1. Initial State Fetch from Server
-  const fetchFullState = async () => {
+  // 1. Fetch First on Load (Server is the Single Source of Truth)
+  const fetchFullState = async (isInitialSync: boolean) => {
+    if (isFetchingState) return;
+    isFetchingState = true;
     try {
-      callbacks.onStatusChange?.('syncing', 'ກຳລັງກວດສອບສະຖານະ Real-time...');
-      const res = await fetch(`/api/sync?_t=${Date.now()}`);
+      if (isInitialSync) {
+        callbacks.onStatusChange?.('syncing', 'ກຳລັງດຶງຂໍ້ມູນລ່າສຸດຈາກ Server...');
+      }
+      const res = await fetch(`/api/sync?_t=${Date.now()}`, { cache: 'no-store' });
       if (res.ok) {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           const json = await res.json();
           if (json?.data) {
-            currentServerVersion = json.version || 1;
-            callbacks.onDataReceived(json.data, 'syncAll');
-            callbacks.onStatusChange?.('connected', 'ເຊື່ອມຕໍ່ Real-time ສຳເລັດແລ້ວ');
+            if (typeof json.version === 'number') {
+              currentServerVersion = json.version;
+            }
+            callbacks.onDataReceived(json.data, 'syncAll', {
+              isInitialSync,
+              isFullSnapshot: true,
+              version: json.version,
+            });
+            callbacks.onStatusChange?.(
+              'connected',
+              'ຊິ້ງຫຼາຍເຄື່ອງ Real-time (SSE + 3.5s) ເຊື່ອມຕໍ່ແລ້ວ'
+            );
             return;
           }
         }
       }
-      callbacks.onStatusChange?.('connected', 'Real-time: ພ້ອມຊິ້ງຫຼາຍເຄື່ອງ (iOS, Android, Windows)');
+      callbacks.onStatusChange?.('connected', 'Real-time: ພ້ອມຊິ້ງຫຼາຍເຄື່ອງ (PC & ມືຖື)');
     } catch (err) {
       console.warn('Initial /api/sync note:', err);
-      callbacks.onStatusChange?.('offline', 'ໂໝດອອບລາຍ (ລະບົບກຳລັງໃຊ້ຂໍ້ມູນໃນເຄື່ອງ)');
+      callbacks.onStatusChange?.('offline', 'ໂໝດອອບລາຍ (ກຳລັງໃຊ້ຂໍ້ມູນໃນເຄື່ອງຊົ່ວຄາວ)');
+    } finally {
+      isFetchingState = false;
     }
   };
 
-  fetchFullState();
+  fetchFullState(true);
 
   // 2. Setup Server-Sent Events (SSE) for Real-Time Instant Push
   let consecutiveSseErrors = 0;
@@ -178,22 +294,31 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
 
       eventSource.onopen = () => {
         consecutiveSseErrors = 0;
-        callbacks.onStatusChange?.('connected', 'Real-time ອອນໄລນ໌ພ້ອມໃຊ້ງານ');
+        callbacks.onStatusChange?.('connected', 'ຊິ້ງຫຼາຍເຄື່ອງ Real-time (SSE + 3.5s) ອອນໄລນ໌');
       };
 
       eventSource.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
+          if (payload.type === 'handshake') {
+            if (typeof payload.version === 'number' && payload.version > currentServerVersion) {
+              fetchFullState(false);
+            }
+            return;
+          }
           if (payload.type === 'update') {
-            // Update version
-            if (payload.version) {
+            if (typeof payload.version === 'number') {
               currentServerVersion = payload.version;
             }
 
-            // Only apply if message was NOT sent by this exact device
+            // Apply updates pushed by other devices immediately
             if (payload.senderDeviceId !== deviceId && payload.data) {
-              callbacks.onDataReceived(payload.data, payload.action);
-              callbacks.onStatusChange?.('connected', 'ອັບເດດຂໍ້ມູນຈາກເຄື່ອງອື່ນແລ້ວ');
+              callbacks.onDataReceived(payload.data, payload.action, {
+                isInitialSync: false,
+                isFullSnapshot: true,
+                version: payload.version,
+              });
+              callbacks.onStatusChange?.('connected', '⚡ ອັບເດດຂໍ້ມູນຈາກເຄື່ອງອື່ນແລ້ວ');
             }
           }
         } catch (e) {
@@ -203,11 +328,10 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
 
       eventSource.onerror = () => {
         consecutiveSseErrors++;
-        // If SSE temporarily drops, notify gently without persistent red error
         if (consecutiveSseErrors <= 2) {
           callbacks.onStatusChange?.('syncing', 'ກຳລັງເຊື່ອມຕໍ່ Real-time ໃໝ່...');
         } else {
-          callbacks.onStatusChange?.('offline', 'Real-time: ໂໝດປົກກະຕິ (Local Sync Active)');
+          callbacks.onStatusChange?.('connected', 'Real-time Polling 3.5s ກຳລັງທຳງານ');
         }
       };
     } catch (err) {
@@ -217,11 +341,14 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
 
   setupSse();
 
-  // 3. Listen on local BroadcastChannel
+  // 3. Listen on local BroadcastChannel (Same-browser multi-tab instant updates)
   const handleBroadcastMessage = (event: MessageEvent) => {
     const { action, data, senderDeviceId } = event.data || {};
     if (senderDeviceId !== deviceId && data) {
-      callbacks.onDataReceived(data, action);
+      callbacks.onDataReceived(data, action, {
+        isInitialSync: false,
+        isFullSnapshot: false,
+      });
     }
   };
 
@@ -229,23 +356,22 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
     broadcastChannel.addEventListener('message', handleBroadcastMessage);
   }
 
-  // 4. Lightweight Version Polling Fallback (every 2.5s)
-  // Ensures mobile devices (iOS Safari & Android) update even when waking from lock screen
+  // 4. Smart Version Polling every 3.5s (Reliable cross-device fallback for Mobile/PC)
   const checkVersion = async () => {
-    if (isBroadcasting) return;
+    if (isBroadcasting || isFetchingState) return;
     try {
-      const res = await fetch(`/api/sync/version?_t=${Date.now()}`);
+      const res = await fetch(`/api/sync/version?_t=${Date.now()}`, { cache: 'no-store' });
       if (res.ok) {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           const json = await res.json();
-          if (json?.version && json.version > currentServerVersion) {
-            await fetchFullState();
+          if (typeof json?.version === 'number' && json.version !== currentServerVersion) {
+            await fetchFullState(false);
           }
         }
       }
     } catch {
-      // Ignore network errors in background version check
+      // Ignore transient network errors during background version poll
     }
   };
 
@@ -253,9 +379,9 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
     if (document.visibilityState === 'visible' && navigator.onLine !== false) {
       checkVersion();
     }
-  }, 2500);
+  }, 3500);
 
-  // Re-check version immediately on window focus, device unlock, or network reconnect
+  // 5. Immediate sync check when switching tabs, unlocking mobile phone, or reconnecting network
   const handleWakeUp = () => {
     if (document.visibilityState === 'visible' && navigator.onLine !== false) {
       checkVersion();
@@ -279,5 +405,6 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
     window.removeEventListener('focus', handleWakeUp);
     document.removeEventListener('visibilitychange', handleWakeUp);
     window.removeEventListener('online', handleWakeUp);
+    activeCallbacks = null;
   };
 }

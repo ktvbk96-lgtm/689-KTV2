@@ -386,77 +386,25 @@ async function startServer() {
     });
   });
 
-  // Real-time update mutation endpoint
+  // Helper to safely parse ISO timestamps for conflict resolution
+  const parseTs = (val?: string): number => {
+    if (!val) return 0;
+    const ms = Date.parse(val);
+    return Number.isFinite(ms) ? ms : 0;
+  };
+
+  // Real-time update mutation endpoint (Granular Merge + Timestamp Guard — Prevents Full State Overwrite)
   app.post('/api/sync', (req, res) => {
     try {
-      const { action, data, senderDeviceId } = req.body || {};
+      const { action, data, senderDeviceId, baseVersion } = req.body || {};
+      const nowIso = new Date().toISOString();
+      const clientBaseVersion = typeof baseVersion === 'number' ? baseVersion : 0;
 
       let hasChanged = false;
+      let rejectedStale = false;
 
-      // 1. Always capture and persist products whenever present in payload (Real-time Stock Sync across all forms)
-      if (Array.isArray(data?.products)) {
-        if (JSON.stringify(store.products) !== JSON.stringify(data.products)) {
-          store.products = data.products;
-          hasChanged = true;
-        }
-      }
-
-      // 2. Always capture and persist rooms whenever present in payload (Real-time Room Status Sync)
-      if (Array.isArray(data?.rooms)) {
-        if (JSON.stringify(store.rooms) !== JSON.stringify(data.rooms)) {
-          store.rooms = data.rooms;
-          hasChanged = true;
-        }
-      }
-
-      // 3. Always capture updated debts whenever present in payload
-      if (Array.isArray(data?.debts)) {
-        if (JSON.stringify(store.debts) !== JSON.stringify(data.debts)) {
-          store.debts = data.debts;
-          hasChanged = true;
-        }
-      }
-
-      // 4. Always capture updated bills whenever present in payload
-      if (Array.isArray(data?.bills)) {
-        if (JSON.stringify(store.bills) !== JSON.stringify(data.bills)) {
-          store.bills = data.bills;
-          hasChanged = true;
-        }
-      }
-
-      // Action-specific handlers
-      if (action === 'saveRooms' && Array.isArray(data?.rooms)) {
-        store.rooms = data.rooms;
-        hasChanged = true;
-      } else if (action === 'saveProducts' && Array.isArray(data?.products)) {
-        store.products = data.products;
-        hasChanged = true;
-      } else if (action === 'savePackages' && Array.isArray(data?.packages)) {
-        store.packages = data.packages;
-        hasChanged = true;
-      } else if (action === 'saveStaff' && Array.isArray(data?.staff)) {
-        store.staff = data.staff;
-        hasChanged = true;
-      } else if (action === 'saveDebts' && Array.isArray(data?.debts)) {
-        store.debts = data.debts;
-        hasChanged = true;
-      } else if (action === 'saveSettings' && data?.settings) {
-        store.settings = { ...store.settings, ...data.settings };
-        hasChanged = true;
-      } else if (action === 'saveBill') {
-        if (Array.isArray(data?.bills)) {
-          store.bills = data.bills;
-        } else if (data?.bill) {
-          const existing = store.bills || [];
-          const filtered = existing.filter((b: any) => b.id !== data.bill.id);
-          store.bills = [data.bill, ...filtered];
-        }
-        hasChanged = true;
-      } else if (action === 'saveBills' && Array.isArray(data?.bills)) {
-        store.bills = data.bills;
-        hasChanged = true;
-      } else if ((action === 'syncAll' || action === 'clearAll' || action === 'resetAll') && data) {
+      // Full Admin Reset / Master Restore (ONLY allowed via explicit resetAll / clearAll)
+      if ((action === 'resetAll' || action === 'clearAll') && data) {
         if (Array.isArray(data.rooms)) store.rooms = data.rooms;
         if (Array.isArray(data.products)) store.products = data.products;
         if (Array.isArray(data.packages)) store.packages = data.packages;
@@ -465,30 +413,269 @@ async function startServer() {
         if (data.settings) store.settings = { ...store.settings, ...data.settings };
         if (Array.isArray(data.bills)) store.bills = data.bills;
         hasChanged = true;
+      } else {
+        // 1. Atomic Stock Deductions (from POS checkout, room checkout, split pay, or room transfer)
+        if (Array.isArray(data?.stockDeductions) && data.stockDeductions.length > 0) {
+          for (const adj of data.stockDeductions) {
+            if (!adj?.productId || !(adj.deductQty > 0)) continue;
+            const idx = (store.products || []).findIndex((p: any) => p.id === adj.productId);
+            if (idx >= 0) {
+              const prod = store.products[idx];
+              if (prod.category === 'service') continue;
+              const nextStock = Math.max(0, (Number(prod.stock) || 0) - Number(adj.deductQty));
+              const updatedProd: any = {
+                ...prod,
+                stock: nextStock,
+                updatedAt: nowIso,
+              };
+              if (updatedProd.hasMultiUnit) {
+                const mult = Number(updatedProd.packMultiplier) || 24;
+                updatedProd.packsInStock = Math.floor(nextStock / mult);
+                updatedProd.looseBottles = nextStock % mult;
+              }
+              store.products[idx] = updatedProd;
+              hasChanged = true;
+            }
+          }
+        }
+
+        // 2. Granular Products Merge (changedProducts + explicit deletedProductIds)
+        const incomingProducts = Array.isArray(data?.changedProducts)
+          ? data.changedProducts
+          : action === 'saveProducts' && Array.isArray(data?.products)
+          ? data.products
+          : null;
+
+        if (data?.clearProducts === true) {
+          if ((store.products || []).length > 0) {
+            store.products = [];
+            hasChanged = true;
+          }
+        } else {
+          if (incomingProducts && incomingProducts.length > 0) {
+            const current = [...(store.products || [])];
+            for (const inc of incomingProducts) {
+              if (!inc?.id) continue;
+              const idx = current.findIndex((p: any) => p.id === inc.id);
+              const inTs = parseTs(inc.updatedAt);
+              if (idx === -1) {
+                current.push({ ...inc, updatedAt: inc.updatedAt || nowIso });
+                hasChanged = true;
+              } else {
+                const ex = current[idx];
+                const exTs = parseTs(ex.updatedAt);
+                if ((exTs > 0 && inTs > 0 && inTs < exTs) || (exTs > 0 && inTs === 0 && clientBaseVersion > 0 && clientBaseVersion < store.version)) {
+                  rejectedStale = true;
+                  continue;
+                }
+                const mergedProd = {
+                  ...inc,
+                  imageUrl: inc.imageUrl || ex.imageUrl || '',
+                  updatedAt: inc.updatedAt || nowIso,
+                };
+                if (JSON.stringify(ex) !== JSON.stringify(mergedProd)) {
+                  current[idx] = mergedProd;
+                  hasChanged = true;
+                }
+              }
+            }
+            store.products = current;
+          }
+          if (Array.isArray(data?.deletedProductIds) && data.deletedProductIds.length > 0) {
+            const delSet = new Set(data.deletedProductIds);
+            const filtered = (store.products || []).filter((p: any) => !delSet.has(p.id));
+            if (filtered.length !== (store.products || []).length) {
+              store.products = filtered;
+              hasChanged = true;
+            }
+          }
+        }
+
+        // 3. Granular Rooms Merge (changedRooms + explicit deletedRoomIds)
+        const incomingRooms = Array.isArray(data?.changedRooms)
+          ? data.changedRooms
+          : action === 'saveRooms' && Array.isArray(data?.rooms)
+          ? data.rooms
+          : null;
+
+        if (incomingRooms && incomingRooms.length > 0) {
+          const current = [...(store.rooms || [])];
+          for (const inc of incomingRooms) {
+            if (!inc?.id && !inc?.name) continue;
+            const idx = current.findIndex(
+              (r: any) => r.id === inc.id || (inc.name && r.name === inc.name)
+            );
+            const inTs = parseTs(inc.updatedAt);
+            if (idx === -1) {
+              current.push({ ...inc, updatedAt: inc.updatedAt || nowIso });
+              hasChanged = true;
+            } else {
+              const ex = current[idx];
+              const exTs = parseTs(ex.updatedAt);
+              // Timestamp guard: NEVER let older device overwrite newer room state on server
+              if (
+                (exTs > 0 && inTs > 0 && inTs < exTs) ||
+                (exTs > 0 && inTs === 0 && clientBaseVersion > 0 && clientBaseVersion < store.version)
+              ) {
+                rejectedStale = true;
+                continue;
+              }
+              const nextRoom = { ...inc, updatedAt: inc.updatedAt || nowIso };
+              if (JSON.stringify(ex) !== JSON.stringify(nextRoom)) {
+                current[idx] = nextRoom;
+                hasChanged = true;
+              }
+            }
+          }
+          store.rooms = current;
+        }
+        if (Array.isArray(data?.deletedRoomIds) && data.deletedRoomIds.length > 0) {
+          const delSet = new Set(data.deletedRoomIds);
+          const filtered = (store.rooms || []).filter((r: any) => !delSet.has(r.id));
+          if (filtered.length !== (store.rooms || []).length) {
+            store.rooms = filtered;
+            hasChanged = true;
+          }
+        }
+
+        // 4. Granular Bills Merge (Upsert single/changed bill — NEVER overwrite full bills array blindly)
+        if (data?.clearAllBills === true || action === 'clearAllBills') {
+          if ((store.bills || []).length > 0) {
+            store.bills = [];
+            hasChanged = true;
+          }
+        } else {
+          const billsToUpsert = [
+            ...(data?.bill ? [data.bill] : []),
+            ...(Array.isArray(data?.changedBills) ? data.changedBills : []),
+          ];
+          if (billsToUpsert.length > 0) {
+            const current = [...(store.bills || [])];
+            for (const inc of billsToUpsert) {
+              if (!inc?.id) continue;
+              const trimNum = (inc.billNumber || '').trim();
+              const idx = current.findIndex(
+                (b: any) => b.id === inc.id || (trimNum && (b.billNumber || '').trim() === trimNum)
+              );
+              const stamped = { ...inc, updatedAt: inc.updatedAt || nowIso };
+              if (idx === -1) {
+                current.unshift(stamped);
+                hasChanged = true;
+              } else {
+                const ex = current[idx];
+                const inTs = parseTs(inc.updatedAt);
+                const exTs = parseTs(ex.updatedAt);
+                if (exTs > 0 && inTs > 0 && inTs < exTs) {
+                  rejectedStale = true;
+                  continue;
+                }
+                if (JSON.stringify(ex) !== JSON.stringify(stamped)) {
+                  current[idx] = stamped;
+                  hasChanged = true;
+                }
+              }
+            }
+            store.bills = current;
+          }
+          if (Array.isArray(data?.deletedBillIds) && data.deletedBillIds.length > 0) {
+            const delSet = new Set(data.deletedBillIds);
+            const delNums = new Set(
+              (store.bills || [])
+                .filter((b: any) => delSet.has(b.id) && b.billNumber?.trim())
+                .map((b: any) => b.billNumber.trim())
+            );
+            const filtered = (store.bills || []).filter(
+              (b: any) => !delSet.has(b.id) && (!b.billNumber?.trim() || !delNums.has(b.billNumber.trim()))
+            );
+            if (filtered.length !== (store.bills || []).length) {
+              store.bills = filtered;
+              hasChanged = true;
+            }
+          }
+        }
+
+        // 5. Granular Debts Merge (changedDebts + deletedDebtIds)
+        if (data?.clearAllDebts === true) {
+          if ((store.debts || []).length > 0) {
+            store.debts = [];
+            hasChanged = true;
+          }
+        } else {
+          const incomingDebts = Array.isArray(data?.changedDebts)
+            ? data.changedDebts
+            : action === 'saveDebts' && Array.isArray(data?.debts)
+            ? data.debts
+            : null;
+          if (incomingDebts && incomingDebts.length > 0) {
+            const current = [...(store.debts || [])];
+            for (const inc of incomingDebts) {
+              if (!inc?.id) continue;
+              const idx = current.findIndex((d: any) => d.id === inc.id);
+              const inTs = parseTs(inc.updatedAt);
+              if (idx === -1) {
+                current.unshift({ ...inc, updatedAt: inc.updatedAt || nowIso });
+                hasChanged = true;
+              } else {
+                const ex = current[idx];
+                const exTs = parseTs(ex.updatedAt);
+                if (exTs > 0 && inTs > 0 && inTs < exTs) {
+                  rejectedStale = true;
+                  continue;
+                }
+                const stamped = { ...inc, updatedAt: inc.updatedAt || nowIso };
+                if (JSON.stringify(ex) !== JSON.stringify(stamped)) {
+                  current[idx] = stamped;
+                  hasChanged = true;
+                }
+              }
+            }
+            store.debts = current;
+          }
+          if (Array.isArray(data?.deletedDebtIds) && data.deletedDebtIds.length > 0) {
+            const delSet = new Set(data.deletedDebtIds);
+            const filtered = (store.debts || []).filter((d: any) => !delSet.has(d.id));
+            if (filtered.length !== (store.debts || []).length) {
+              store.debts = filtered;
+              hasChanged = true;
+            }
+          }
+        }
+
+        // 6. Packages, Staff & Settings
+        if (action === 'savePackages' && Array.isArray(data?.packages)) {
+          if (JSON.stringify(store.packages) !== JSON.stringify(data.packages)) {
+            store.packages = data.packages;
+            hasChanged = true;
+          }
+        }
+        if (action === 'saveStaff' && Array.isArray(data?.staff)) {
+          if (JSON.stringify(store.staff) !== JSON.stringify(data.staff)) {
+            store.staff = data.staff;
+            hasChanged = true;
+          }
+        }
+        if (action === 'saveSettings' && data?.settings) {
+          const mergedSettings = { ...store.settings, ...data.settings };
+          if (JSON.stringify(store.settings) !== JSON.stringify(mergedSettings)) {
+            store.settings = mergedSettings;
+            hasChanged = true;
+          }
+        }
       }
 
       if (hasChanged) {
         store.version += 1;
-        store.lastUpdated = new Date().toISOString();
+        store.lastUpdated = nowIso;
         saveStore();
 
-        // Broadcast change notification instantly to iOS, Android & Windows clients
+        // Broadcast authoritative merged state instantly to all other connected devices
         broadcastSse({
           type: 'update',
           action,
           version: store.version,
           lastUpdated: store.lastUpdated,
           senderDeviceId: senderDeviceId || 'unknown',
-          data: {
-            ...data,
-            bills: store.bills,
-            rooms: store.rooms,
-            products: store.products,
-            debts: store.debts,
-            packages: store.packages,
-            staff: store.staff,
-            settings: store.settings,
-          },
+          data: store,
         });
       }
 
@@ -496,6 +683,8 @@ async function startServer() {
         success: true,
         version: store.version,
         lastUpdated: store.lastUpdated,
+        rejectedStale,
+        data: store,
       });
     } catch (err: any) {
       console.error('Error handling sync update:', err);

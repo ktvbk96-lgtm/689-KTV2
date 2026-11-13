@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Printer,
   Bluetooth,
@@ -34,7 +34,9 @@ import { FormattedNumberInput } from './FormattedNumberInput';
 interface BillingModalProps {
   bill: BillRecord;
   settings: AppSettings;
+  isDraftBill?: boolean;
   onClose: () => void;
+  onCancelBill?: () => void;
   onConfirmPayment: (bill: BillRecord) => void;
   bluetoothConnected: boolean;
   onOpenBluetoothSetup: () => void;
@@ -45,7 +47,9 @@ interface BillingModalProps {
 export const BillingModal: React.FC<BillingModalProps> = ({
   bill,
   settings,
+  isDraftBill = false,
   onClose,
+  onCancelBill,
   onConfirmPayment,
   bluetoothConnected,
   onOpenBluetoothSetup,
@@ -53,6 +57,9 @@ export const BillingModal: React.FC<BillingModalProps> = ({
   onUpdateSettings,
 }) => {
   const [discount, setDiscount] = useState<number>(bill.discount || 0);
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'transfer'>(
+    bill.payment?.method === 'transfer' ? 'transfer' : 'cash'
+  );
   const netTotal = Math.max(0, bill.subtotal - discount);
 
   // Font Size & Paper Width state for instant adjustments right on the receipt
@@ -81,7 +88,10 @@ export const BillingModal: React.FC<BillingModalProps> = ({
     discount,
     total: netTotal,
     payment: {
-      method: 'cash',
+      ...(bill.payment || { method: paymentMethod }),
+      method: paymentMethod,
+      cashReceived: paymentMethod === 'cash' ? netTotal : undefined,
+      change: 0,
     },
   };
 
@@ -132,7 +142,7 @@ export const BillingModal: React.FC<BillingModalProps> = ({
     return () => {
       isCancelled = true;
     };
-  }, [discount, activeSettings.receiptLogoUrl, receiptFontSize, receiptPaperWidth]);
+  }, [discount, paymentMethod, activeSettings.receiptLogoUrl, receiptFontSize, receiptPaperWidth]);
 
   // Handle discount adjustments
   const handleSetDiscount = (val: number) => {
@@ -306,7 +316,12 @@ export const BillingModal: React.FC<BillingModalProps> = ({
     }
   };
 
+  const hasConfirmedRef = useRef<boolean>(false);
+
   const handleFinalConfirm = async () => {
+    if (hasConfirmedRef.current) return;
+    hasConfirmedRef.current = true;
+
     if (settings.autoSyncGoogleSheets && onSyncGoogleSheet) {
       setIsSyncingSheet(true);
       try {
@@ -341,7 +356,9 @@ export const BillingModal: React.FC<BillingModalProps> = ({
             </div>
           </div>
           <button
-            onClick={onClose}
+            type="button"
+            onClick={() => (isDraftBill && onCancelBill ? onCancelBill() : onClose())}
+            title={isDraftBill ? 'ຍົກເລີກບິນນີ້ (ບໍ່ບັນທຶກລົງຍອດຂາຍ)' : 'ປິດໜ້າຕ່າງ'}
             className="p-1.5 rounded-xl hover:bg-slate-800 text-slate-400 cursor-pointer"
           >
             <X className="w-6 h-6" />
@@ -595,17 +612,14 @@ export const BillingModal: React.FC<BillingModalProps> = ({
 
           {/* Items breakdown */}
           <div className="py-2 border-b border-dashed border-slate-400 space-y-1.5">
-            {bill.roomCharge > 0 ? (
-              <div className="flex justify-between font-semibold">
-                <span>ຄ່າຫ້ອງຄາຣາໂອເກະ</span>
+            {bill.roomCharge > 0 && (
+              <div className={`flex justify-between font-semibold ${bill.isRoomChargePaid ? 'text-emerald-800 bg-emerald-50 px-1 py-0.5 rounded' : ''}`}>
+                <span>
+                  ຄ່າຫ້ອງຄາຣາໂອເກະ{bill.isRoomChargePaid ? ' (ຈ່າຍກ່ອນແລ້ວ)' : ''}
+                </span>
                 <span>{formatCurrency(bill.roomCharge, settings.currencySymbol)}</span>
               </div>
-            ) : bill.type === 'ktv_room' && (bill.isRoomChargePaid || bill.roomCharge === 0) ? (
-              <div className="flex justify-between font-semibold text-emerald-800 bg-emerald-50 px-1 py-0.5 rounded">
-                <span>ຄ່າຫ້ອງຄາຣາໂອເກະ (ຈ່າຍແລ້ວ)</span>
-                <span>0 {settings.currencySymbol}</span>
-              </div>
-            ) : null}
+            )}
 
             {bill.items.map((item, idx) => (
               <div key={idx} className="space-y-0.5">
@@ -888,12 +902,54 @@ export const BillingModal: React.FC<BillingModalProps> = ({
             </div>
           </div>
 
-          {/* Confirm & Close */}
-          <div className="pt-1">
+          {/* Payment Method Selector */}
+          <div className="grid grid-cols-2 gap-2 pt-1">
             <button
+              type="button"
+              onClick={() => setPaymentMethod('cash')}
+              className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                paymentMethod === 'cash'
+                  ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300 shadow-sm'
+                  : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              💵 ເງິນສົດ (Cash)
+            </button>
+            <button
+              type="button"
+              onClick={() => setPaymentMethod('transfer')}
+              className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                paymentMethod === 'transfer'
+                  ? 'bg-sky-500/20 border-sky-500 text-sky-300 shadow-sm'
+                  : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              🏦 ເງິນໂອນ (Transfer)
+            </button>
+          </div>
+
+          {/* Cancel & Confirm Actions */}
+          <div className={isDraftBill ? 'grid grid-cols-1 sm:grid-cols-12 gap-2 pt-1' : 'pt-1'}>
+            {isDraftBill && (
+              <button
+                type="button"
+                onClick={() => (onCancelBill ? onCancelBill() : onClose())}
+                disabled={isSyncingSheet}
+                className="sm:col-span-4 py-3 px-3 rounded-2xl bg-slate-800 hover:bg-rose-950/80 border border-slate-700 hover:border-rose-500/60 text-slate-300 hover:text-rose-300 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-[0.98]"
+                title="ຍົກເລີກບິນໂດຍບໍ່ບັນທຶກລົງສະຫຼຸບຍອດຂາຍ"
+              >
+                <X className="w-4 h-4 text-rose-400" />
+                <span>ຍົກເລີກບິນ</span>
+              </button>
+            )}
+
+            <button
+              type="button"
               onClick={handleFinalConfirm}
               disabled={isSyncingSheet}
-              className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-rose-500 via-rose-600 to-amber-500 hover:from-rose-600 hover:to-amber-600 text-white text-sm font-black shadow-xl shadow-rose-600/30 flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.98]"
+              className={`${
+                isDraftBill ? 'sm:col-span-8' : 'w-full'
+              } py-3 px-4 rounded-2xl bg-gradient-to-r from-rose-500 via-rose-600 to-amber-500 hover:from-rose-600 hover:to-amber-600 text-white text-sm font-black shadow-xl shadow-rose-600/30 flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.98]`}
             >
               <CheckCircle2 className="w-5 h-5" />
               <span>

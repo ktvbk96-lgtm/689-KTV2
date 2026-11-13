@@ -26,11 +26,26 @@ import {
   RefreshCw,
   ArrowRightLeft,
   MoveRight,
+  CheckSquare,
+  Square,
+  Split,
 } from 'lucide-react';
-import { Room, RoomPackage, Product, StaffMember, AppSettings, CartItem, Role, RoomPricingType } from '../types';
+import {
+  Room,
+  RoomPackage,
+  RoomOrder,
+  Product,
+  ProductCategory,
+  StaffMember,
+  AppSettings,
+  CartItem,
+  Role,
+  RoomPricingType,
+} from '../types';
 import { formatCurrency } from '../lib/storage';
 import { formatWithSeparators, parseCleanNumber, FormattedNumberInput } from './FormattedNumberInput';
 import { normalizeImageUrl } from '../lib/imageUtils';
+import { calculatePackageBasedRoomCharge, calculateRoomSessionFee } from '../lib/roomPricing';
 
 interface RoomManagementProps {
   rooms: Room[];
@@ -49,6 +64,7 @@ interface RoomManagementProps {
     endTimeStr?: string,
     timeRangeStr?: string
   ) => void;
+  onSplitCheckoutRoom?: (room: Room, selectedOrders: RoomOrder[]) => void;
 }
 
 export const RoomManagement: React.FC<RoomManagementProps> = ({
@@ -61,6 +77,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
   currentStaff,
   onUpdateRooms,
   onCheckoutRoom,
+  onSplitCheckoutRoom,
 }) => {
   // Live ticker for time
   const [now, setNow] = useState<Date>(new Date());
@@ -152,6 +169,8 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
   const [selectedRoomForDetails, setSelectedRoomForDetails] = useState<Room | null>(null);
   const [orderSearch, setOrderSearch] = useState<string>('');
   const [orderStaffId, setOrderStaffId] = useState<string>(currentStaff?.id || staffList[0]?.id || '');
+  const [isSplitPayMode, setIsSplitPayMode] = useState<boolean>(false);
+  const [selectedSplitOrderIds, setSelectedSplitOrderIds] = useState<string[]>([]);
 
   // Dedicated Price & Seller input modal for Room Orders (Mandatory when price needs input or seller is required)
   const [pendingOrderItem, setPendingOrderItem] = useState<Product | null>(null);
@@ -173,6 +192,25 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
     }, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Keep Room Details modal synced with external room updates (e.g. split payment confirmation / room clear)
+  useEffect(() => {
+    if (!selectedRoomForDetails) {
+      setIsSplitPayMode(false);
+      setSelectedSplitOrderIds([]);
+      return;
+    }
+    const fresh = rooms.find((r) => r.id === selectedRoomForDetails.id);
+    if (!fresh || fresh.status !== 'in_use') {
+      setSelectedRoomForDetails(null);
+      setIsSplitPayMode(false);
+      setSelectedSplitOrderIds([]);
+      return;
+    }
+    setSelectedRoomForDetails(fresh);
+    const validIds = new Set((fresh.orders || []).map((o) => o.id));
+    setSelectedSplitOrderIds((prev) => prev.filter((id) => validIds.has(id)));
+  }, [rooms]);
 
   // Automatically sync openEndTimeInput when start time or hours change, unless manual override is set
   useEffect(() => {
@@ -272,7 +310,8 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
       effectiveHours = hoursOrPackage.hours !== undefined ? hoursOrPackage.hours : parsePackageDurationHours(pkg);
       const durationMins = Math.round(effectiveHours * 60);
       target = new Date(startDate.getTime() + durationMins * 60 * 1000);
-      hoursLabel = `${effectiveHours} ຊົ່ວໂມງ (${pkg?.name || 'ແພັກເກັດ'})`;
+      const pkgPrice = Number(pkg?.price) || 0;
+      hoursLabel = `${effectiveHours} ຊົ່ວໂມງ ${pkgPrice > 0 ? formatCurrency(pkgPrice, settings.currencySymbol) : `(${pkg?.name || 'ແພັກເກັດ'})`}`;
     } else {
       effectiveHours = hoursOrPackage.hours || 4;
       target = new Date(startDate.getTime() + effectiveHours * 60 * 60 * 1000);
@@ -282,30 +321,23 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
     return { targetDate: target, hoursLabel, effectiveHours, isOpenEnded: false };
   };
 
+  // Calculate true room fee according to pricing mode (package returns full package price 100%)
+  const calculateActualRoomFee = (room: Room): number => {
+    if (room.status !== 'in_use' || !room.openedAt) return 0;
+    const minutes = Math.max(1, calculateDurationMinutes(room.openedAt));
+    return calculateRoomSessionFee(
+      room,
+      packages,
+      settings.defaultHourlyRate || 100000,
+      minutes
+    );
+  };
+
+  // Unpaid room fee balance still due at checkout
   const calculateRoomFee = (room: Room): number => {
     if (room.status !== 'in_use' || !room.openedAt) return 0;
-
-    // IF CUSTOMER ALREADY PAID: Do NOT calculate fee (room charge = 0 ₭), only calculate elapsed time!
     if (room.isPaid) return 0;
-
-    if (room.pricingType === 'package') {
-      const pkg = packages.find((p) => p.id === room.packageId) || packages.find((p) => p.name === room.packageName);
-      return pkg ? pkg.price : room.hourlyRate || 0;
-    }
-
-    const minutes = calculateDurationMinutes(room.openedAt);
-
-    // Open-ended count-up mode: Auto calculate based on elapsed minutes from opened time until now/checkout!
-    if (room.pricingType === 'open_time') {
-      // Minimum 30 mins, pro-rated in 30-min (0.5 hr) blocks
-      const actualHours = Math.max(0.5, Math.ceil(minutes / 30) * 0.5);
-      return Math.round(actualHours * room.hourlyRate);
-    }
-
-    // Fixed hourly rate (if booked specific hours, charge booked hours or actual duration, whichever is greater)
-    const actualHours = Math.max(0.5, Math.ceil(minutes / 30) * 0.5);
-    const hoursToCharge = room.bookedHours ? Math.max(room.bookedHours, actualHours) : actualHours;
-    return Math.round(hoursToCharge * room.hourlyRate);
+    return calculateActualRoomFee(room);
   };
 
   // Trigger open room modal and pre-initialize times
@@ -364,9 +396,10 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
           pricingType: pricingChoice,
           packageId: pricingChoice === 'package' ? selectedPackageId : undefined,
           packageName: pricingChoice === 'package' ? pkg?.name : undefined,
+          packagePrice: pricingChoice === 'package' ? (Number(pkg?.price) || 0) : undefined,
           hourlyRate: (pricingChoice === 'fixed_hourly' || pricingChoice === 'open_time')
             ? customHourlyRate
-            : (pkg?.price || r.hourlyRate),
+            : (r.hourlyRate || settings.defaultHourlyRate || 100000),
           bookedHours: pricingChoice === 'open_time' ? 0 : effectiveHours,
           openedAt: startD.toISOString(),
           targetEndTime: targetD ? targetD.toISOString() : undefined,
@@ -438,6 +471,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
       openedAt: newStart.toISOString(),
       targetEndTime: newTarget ? newTarget.toISOString() : undefined,
       bookedHours: finalHours,
+      updatedAt: new Date().toISOString(),
     };
 
     const updatedRooms = rooms.map((r) => (r.id === editingTimeRoom.id ? updatedRoom : r));
@@ -459,6 +493,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
       ...room,
       targetEndTime: newTarget.toISOString(),
       bookedHours: newBookedHours,
+      updatedAt: new Date().toISOString(),
     };
 
     const updatedRooms = rooms.map((r) => (r.id === room.id ? updatedRoom : r));
@@ -517,6 +552,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
     const updatedRoom: Room = {
       ...selectedRoomForDetails,
       orders: [...selectedRoomForDetails.orders, newOrder],
+      updatedAt: new Date().toISOString(),
     };
 
     const updatedRooms = rooms.map((r) => (r.id === selectedRoomForDetails.id ? updatedRoom : r));
@@ -560,6 +596,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
     const updatedRoom: Room = {
       ...selectedRoomForDetails,
       orders: [...selectedRoomForDetails.orders, newOrder],
+      updatedAt: new Date().toISOString(),
     };
 
     const updatedRooms = rooms.map((r) => (r.id === selectedRoomForDetails.id ? updatedRoom : r));
@@ -592,6 +629,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
     const updatedRoom: Room = {
       ...selectedRoomForDetails,
       orders: updatedOrders,
+      updatedAt: new Date().toISOString(),
     };
 
     const updatedRooms = rooms.map((r) => (r.id === selectedRoomForDetails.id ? updatedRoom : r));
@@ -600,8 +638,9 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
   };
 
   const handleCheckoutClick = (room: Room) => {
-    const duration = calculateDurationMinutes(room.openedAt);
-    const roomFee = calculateRoomFee(room);
+    if (room.status !== 'in_use') return;
+    const duration = Math.max(1, calculateDurationMinutes(room.openedAt));
+    const roomFee = calculateActualRoomFee(room);
 
     const startStr = room.openedAt
       ? new Date(room.openedAt).toLocaleTimeString('lo-LA', { hour: '2-digit', minute: '2-digit', hour12: false })
@@ -617,28 +656,8 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
           : `${startStr} - ${endStr} (ກຳນົດ: ${startStr} - ${targetStr || endStr})`)
       : undefined;
 
-    // Immediately reset room state back to available with 00:00 time and 0 hours
-    const nowIso = new Date().toISOString();
-    const clearedRoom: Room = {
-      ...room,
-      status: 'available',
-      pricingType: 'fixed_hourly',
-      openedAt: undefined,
-      targetEndTime: undefined,
-      bookedHours: 0,
-      openedByStaffId: undefined,
-      openedByStaffName: undefined,
-      packageId: undefined,
-      packageName: undefined,
-      isPaid: undefined,
-      orders: [],
-      updatedAt: nowIso,
-    };
-    const updated = rooms.map((r) =>
-      r.id === room.id || (room.name && r.name === room.name) ? clearedRoom : r
-    );
-    onUpdateRooms(updated);
-
+    // Open BillingModal in Draft mode without clearing the room yet
+    // Room is cleared ONLY when payment is confirmed (so Cancel Bill leaves room intact & excludes from Sales Summary)
     setSelectedRoomForDetails(null);
     setOpeningRoom(null);
     onCheckoutRoom(room, roomFee, duration, startStr, endStr, timeRangeStr);
@@ -671,6 +690,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
             openedByStaffName: undefined,
             packageId: undefined,
             packageName: undefined,
+            packagePrice: undefined,
             isPaid: undefined,
             orders: [],
             updatedAt: nowIso,
@@ -718,6 +738,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
           openedByStaffName: undefined,
           packageId: undefined,
           packageName: undefined,
+          packagePrice: undefined,
           isPaid: undefined,
           orders: [],
           updatedAt: nowIso,
@@ -778,6 +799,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
             openedByStaffName: transferSourceRoom.openedByStaffName,
             packageId: transferSourceRoom.packageId,
             packageName: transferSourceRoom.packageName,
+            packagePrice: transferSourceRoom.packagePrice,
             isPaid: transferSourceRoom.isPaid,
             orders: [...transferSourceRoom.orders],
             hourlyRate: effectiveHourlyRate,
@@ -797,6 +819,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
             openedByStaffName: undefined,
             packageId: undefined,
             packageName: undefined,
+            packagePrice: undefined,
             isPaid: undefined,
             orders: [],
             updatedAt: nowIso,
@@ -914,6 +937,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         {rooms.map((room) => {
           const isInUse = room.status === 'in_use';
+          const actualRoomFee = isInUse ? calculateActualRoomFee(room) : 0;
           const roomCharge = isInUse ? calculateRoomFee(room) : 0;
           const itemsTotal = room.orders.reduce(
             (acc, curr) => acc + curr.price * curr.quantity,
@@ -1065,7 +1089,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                             <span>ຈ່າຍຄ່າຫ້ອງແລ້ວ:</span>
                           </span>
                           <span className="font-mono font-black text-emerald-300">
-                            0 {settings.currencySymbol} (ຄິດໄລ່ແຕ່ເວລາ)
+                            {formatCurrency(actualRoomFee, settings.currencySymbol)}
                           </span>
                         </div>
                       ) : room.pricingType === 'open_time' || !targetFormatted ? (
@@ -1133,21 +1157,31 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                         <span>{room.isPaid ? 'ລູກຄ້າຈ່າຍຄ່າຫ້ອງແລ້ວ (ຄິດໄລ່ແຕ່ເວລາ)' : 'ຕິກຖ້າລູກຄ້າຈ່າຍຄ່າຫ້ອງແລ້ວ'}</span>
                       </span>
                       <span className="font-mono font-black text-[11px]">
-                        {room.isPaid ? '0 ₭' : 'ຍັງບໍ່ຈ່າຍ'}
+                        {room.isPaid ? formatCurrency(actualRoomFee, settings.currencySymbol) : 'ຍັງບໍ່ຈ່າຍ'}
                       </span>
                     </button>
 
                     {/* Pricing Type Badge */}
                     <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-800/80">
                       <span className="text-slate-400">ປະເພດລາຄາ:</span>
-                      <span className="font-semibold text-rose-300">
+                      <span className="font-semibold text-rose-300 text-right">
                         {room.isPaid
-                          ? 'ຈ່າຍແລ້ວ • ຄິດໄລ່ແຕ່ເວລາ (0 ₭)'
+                          ? `ຈ່າຍແລ້ວ (${formatCurrency(actualRoomFee, settings.currencySymbol)})`
                           : room.pricingType === 'package'
-                          ? `ແພັກເກັດ: ${room.packageName}`
+                          ? `ແພັກເກັດ: ${room.packageName || ''} (${formatCurrency(actualRoomFee, settings.currencySymbol)})`
                           : room.pricingType === 'open_time'
                           ? `ນັບຕາມເວລາຈິງ (ບໍ່ມີກຳນົດເວລາ)`
                           : `ລາຄາຕາຍຕົວ (${formatCurrency(room.hourlyRate, settings.currencySymbol)}/ຊມ)`}
+                      </span>
+                    </div>
+
+                    {/* Explicit Room Fee Line */}
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-400">ຄ່າຫ້ອງ:</span>
+                      <span className={`font-mono font-bold ${room.isPaid ? 'text-emerald-400' : 'text-amber-300'}`}>
+                        {room.isPaid
+                          ? `0 ${settings.currencySymbol} (ຈ່າຍແລ້ວ)`
+                          : formatCurrency(roomCharge, settings.currencySymbol)}
                       </span>
                     </div>
 
@@ -1155,7 +1189,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-slate-400">ລາຍການສັ່ງເພີ່ມ:</span>
                       <span className="font-bold text-slate-200">
-                        {room.orders.reduce((sum, o) => sum + o.quantity, 0)} ລາຍການ
+                        {room.orders.reduce((sum, o) => sum + o.quantity, 0)} ລາຍການ ({formatCurrency(itemsTotal, settings.currencySymbol)})
                       </span>
                     </div>
 
@@ -1717,7 +1751,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                 <div className="p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-[11px] text-emerald-300 flex items-start gap-2">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                   <span>
-                    ຕອນເຊັກບິນ: ລະບົບຈະຄຳນວນເວລາເລີ່ມຈົນຮອດຕອນເຊັກບິນ ແລະ ຄິດໄລ່ຕາມອັດຕາ <strong>{formatCurrency(customHourlyRate, settings.currencySymbol)}/ຊມ</strong> ໃຫ້ອັດຕະໂນມັດ.
+                    ເລີ່ມຕົ້ນ 1 ຊົ່ວໂມງທຳອິດ = <strong>{formatCurrency(customHourlyRate, settings.currencySymbol)}</strong> (ບໍ່ນັບເສດ 1,000-2,000 ₭) • ຄົບຮອບ 1.5 ຊມ = <strong>{formatCurrency(Math.round(customHourlyRate * 1.5), settings.currencySymbol)}</strong> • ຄົບ 2 ຊມ = <strong>{formatCurrency(customHourlyRate * 2, settings.currencySymbol)}</strong>
                   </span>
                 </div>
               </div>
@@ -1777,11 +1811,11 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
               </div>
             )}
 
-            {/* If Choice 1: Package List */}
+            {/* If Choice 3: Package List */}
             {pricingChoice === 'package' && (
               <div className="mb-4 space-y-3">
                 <label className="block text-xs text-slate-300 font-bold">
-                  ເລືອກແພັກເກັດຮ້ານ (Choice 1):
+                  ເລືອກແພັກເກັດຮ້ານ (Choice 3):
                 </label>
                 <div className="space-y-2 max-h-52 overflow-y-auto pr-1 scrollbar-thin">
                   {packages.map((pkg) => {
@@ -1831,8 +1865,8 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                       {packageHours} ຊົ່ວໂມງ
                     </span>
                   </div>
-                  <div className="grid grid-cols-6 gap-1.5">
-                    {[1, 2, 3, 4, 5, 6].map((h) => (
+                  <div className="grid grid-cols-7 gap-1.5">
+                    {[1, 2, 3, 4, 5, 6, 7].map((h) => (
                       <button
                         key={h}
                         type="button"
@@ -1911,13 +1945,24 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
               <button
                 type="button"
                 onClick={handleOpenRoomSubmit}
-                className="flex-1 min-h-[44px] py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-[0.98] text-white text-xs sm:text-sm font-bold shadow-lg shadow-emerald-600/30 cursor-pointer touch-manipulation flex items-center justify-center"
+                className="flex-1 min-h-[44px] py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-[0.98] text-white text-xs sm:text-sm font-bold shadow-lg shadow-emerald-600/30 cursor-pointer touch-manipulation flex items-center justify-center text-center"
               >
-                {isOpenRoomPaid
-                  ? 'ຢືນຢັນເປີດຫ້ອງ (ຈ່າຍແລ້ວ • ຄິດໄລ່ແຕ່ເວລາ)'
-                  : pricingChoice === 'open_time'
-                  ? `ຢືນຢັນເປີດຫ້ອງ (ນັບຕາມຈິງ ${formatCurrency(customHourlyRate, settings.currencySymbol)}/ຊມ)`
-                  : `ຢືນຢັນເປີດຫ້ອງ (${previewEndTime.hoursLabel})`}
+                {(() => {
+                  const selectedPkg = packages.find((p) => p.id === selectedPackageId);
+                  const selectedPkgPrice = Number(selectedPkg?.price) || 0;
+                  if (isOpenRoomPaid) {
+                    return pricingChoice === 'package'
+                      ? `ຢືນຢັນເປີດຫ້ອງ (ຈ່າຍແລ້ວ • ${previewEffectiveHours} ຊົ່ວໂມງ ${formatCurrency(selectedPkgPrice, settings.currencySymbol)})`
+                      : 'ຢືນຢັນເປີດຫ້ອງ (ຈ່າຍແລ້ວ • ຄິດໄລ່ແຕ່ເວລາ)';
+                  }
+                  if (pricingChoice === 'open_time') {
+                    return `ຢືນຢັນເປີດຫ້ອງ (ນັບຕາມຈິງ ${formatCurrency(customHourlyRate, settings.currencySymbol)}/ຊມ)`;
+                  }
+                  if (pricingChoice === 'package') {
+                    return `ຢືນຢັນເປີດຫ້ອງ (${previewEffectiveHours} ຊົ່ວໂມງ ${formatCurrency(selectedPkgPrice, settings.currencySymbol)})`;
+                  }
+                  return `ຢືນຢັນເປີດຫ້ອງ (${previewEffectiveHours} ຊົ່ວໂມງ ${formatCurrency(previewEffectiveHours * customHourlyRate, settings.currencySymbol)})`;
+                })()}
               </button>
             </div>
           </div>
@@ -1997,13 +2042,32 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
 
             {/* Modal Body: Left side = Current Orders, Right side = Quick Add Catalog */}
             <div className="grid grid-cols-1 md:grid-cols-12 gap-5 py-4 flex-1 overflow-hidden">
-              {/* Left Column: Current Orders (5 cols) */}
+              {/* Left Column: Current Orders & Split Pay by Category (5 cols) */}
               <div className="md:col-span-5 flex flex-col border border-slate-800 rounded-2xl p-4 bg-slate-950/60 overflow-hidden">
                 <div className="flex items-center justify-between pb-2 border-b border-slate-800 mb-2 gap-2 flex-wrap">
                   <h4 className="font-bold text-xs text-slate-200">
                     ລາຍການທີ່ສັ່ງແລ້ວ ({selectedRoomForDetails.orders.length})
                   </h4>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {selectedRoomForDetails.orders.length > 0 && onSplitCheckoutRoom && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = !isSplitPayMode;
+                          setIsSplitPayMode(next);
+                          setSelectedSplitOrderIds([]);
+                        }}
+                        className={`px-2.5 py-1 rounded-xl text-[11px] font-bold border transition-all cursor-pointer flex items-center gap-1 ${
+                          isSplitPayMode
+                            ? 'bg-amber-500 border-amber-400 text-slate-950 font-black shadow'
+                            : 'bg-indigo-950/60 border-indigo-500/40 text-indigo-300 hover:bg-indigo-900/50'
+                        }`}
+                        title="ເລືອກແຍກຈ່າຍສະເພາະປະເພດສິນຄ້າ ຫຼື ບາງລາຍການ (ຫ້ອງຍັງເປີດຢູ່)"
+                      >
+                        <Split className="w-3 h-3" />
+                        <span>{isSplitPayMode ? 'ປິດໂໝດແຍກຈ່າຍ' : 'ແຍກຈ່າຍຕາມປະເພດ'}</span>
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => handleToggleRoomPaid(selectedRoomForDetails)}
@@ -2020,13 +2084,98 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                         onChange={() => {}}
                         className="w-3.5 h-3.5 rounded text-emerald-500 pointer-events-none"
                       />
-                      <span>{selectedRoomForDetails.isPaid ? 'ຈ່າຍແລ້ວ (0 ₭)' : 'ຕິກຖ້າຈ່າຍແລ້ວ'}</span>
+                      <span>{selectedRoomForDetails.isPaid ? 'ຈ່າຍແລ້ວ' : 'ຕິກຖ້າຈ່າຍແລ້ວ'}</span>
                     </button>
                     <span className="text-xs font-mono font-bold text-amber-400">
-                      ຄ່າຫ້ອງ: {selectedRoomForDetails.isPaid ? `0 ${settings.currencySymbol}` : formatCurrency(calculateRoomFee(selectedRoomForDetails), settings.currencySymbol)}
+                      ຄ່າຫ້ອງ: {formatCurrency(calculateActualRoomFee(selectedRoomForDetails), settings.currencySymbol)}
+                      {selectedRoomForDetails.isPaid ? ' (ຈ່າຍກ່ອນແລ້ວ)' : ''}
                     </span>
                   </div>
                 </div>
+
+                {/* Split Payment Category Filter Chips */}
+                {isSplitPayMode && selectedRoomForDetails.orders.length > 0 && (() => {
+                  const catLabels: Record<ProductCategory, string> = {
+                    beer: '🍺 ເບຍ/ເຫຼົ້າ',
+                    drink: '🥤 ເຄື່ອງດື່ມ',
+                    food: '🍗 ອາຫານ',
+                    snack: '🍟 ຂອງກິນຫຼິ້ນ',
+                    service: '👑 ບໍລິການ PR',
+                    other: '📦 ອື່ນໆ',
+                  };
+                  const presentCats = Array.from(
+                    new Set(selectedRoomForDetails.orders.map((o) => o.product.category))
+                  ) as ProductCategory[];
+
+                  const allSelected =
+                    selectedSplitOrderIds.length === selectedRoomForDetails.orders.length &&
+                    selectedRoomForDetails.orders.length > 0;
+
+                  return (
+                    <div className="mb-2.5 p-2.5 rounded-xl bg-amber-950/30 border border-amber-500/30 space-y-2">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-bold text-amber-300">
+                          ເລືອກປະເພດສິນຄ້າທີ່ຕ້ອງການແຍກຈ່າຍ:
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (allSelected) {
+                              setSelectedSplitOrderIds([]);
+                            } else {
+                              setSelectedSplitOrderIds(
+                                selectedRoomForDetails.orders.map((o) => o.id)
+                              );
+                            }
+                          }}
+                          className="text-[10px] font-bold text-amber-300 hover:text-amber-200 underline cursor-pointer"
+                        >
+                          {allSelected ? 'ລ້າງການເລືອກ' : 'ເລືອກທັງໝົດ'}
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {presentCats.map((cat) => {
+                          const catOrders = selectedRoomForDetails.orders.filter(
+                            (o) => o.product.category === cat
+                          );
+                          const catIds = catOrders.map((o) => o.id);
+                          const isCatAllSelected =
+                            catIds.length > 0 &&
+                            catIds.every((id) => selectedSplitOrderIds.includes(id));
+                          const catSum = catOrders.reduce(
+                            (s, o) => s + o.price * o.quantity,
+                            0
+                          );
+                          return (
+                            <button
+                              key={cat}
+                              type="button"
+                              onClick={() => {
+                                setSelectedSplitOrderIds((prev) => {
+                                  if (isCatAllSelected) {
+                                    return prev.filter((id) => !catIds.includes(id));
+                                  }
+                                  const merged = new Set([...prev, ...catIds]);
+                                  return Array.from(merged);
+                                });
+                              }}
+                              className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer flex items-center gap-1 ${
+                                isCatAllSelected
+                                  ? 'bg-amber-500 border-amber-400 text-slate-950 font-black shadow'
+                                  : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-amber-500/50'
+                              }`}
+                            >
+                              <span>{catLabels[cat] || cat}</span>
+                              <span className="opacity-80 font-mono">
+                                ({catOrders.length} • {formatCurrency(catSum, settings.currencySymbol)})
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 <div className="flex-1 overflow-y-auto space-y-2 pr-1 scrollbar-thin">
                   {selectedRoomForDetails.orders.length === 0 ? (
@@ -2035,55 +2184,131 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                       ເລືອກສິນຄ້າຈາກເມນູດ້ານຂວາເພື່ອສັ່ງເຂົ້າຫ້ອງ
                     </div>
                   ) : (
-                    selectedRoomForDetails.orders.map((ord) => (
-                      <div
-                        key={ord.id}
-                        className="p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/60 flex items-center justify-between gap-2"
-                      >
-                        <div className="flex-1 min-w-0">
-                          <h5 className="font-bold text-xs text-slate-100 truncate">
-                            {ord.product.name}
-                          </h5>
-                          <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5">
-                            <span className="font-mono text-amber-400">
-                              {formatCurrency(ord.price, settings.currencySymbol)}
+                    selectedRoomForDetails.orders.map((ord) => {
+                      const isChecked = selectedSplitOrderIds.includes(ord.id);
+                      return (
+                        <div
+                          key={ord.id}
+                          onClick={() => {
+                            if (!isSplitPayMode) return;
+                            setSelectedSplitOrderIds((prev) =>
+                              prev.includes(ord.id)
+                                ? prev.filter((id) => id !== ord.id)
+                                : [...prev, ord.id]
+                            );
+                          }}
+                          className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 transition-all ${
+                            isSplitPayMode ? 'cursor-pointer ' : ''
+                          }${
+                            isSplitPayMode && isChecked
+                              ? 'bg-amber-950/40 border-amber-500/70'
+                              : 'bg-slate-800/80 border-slate-700/60'
+                          }`}
+                        >
+                          {isSplitPayMode && (
+                            <span className="shrink-0 text-amber-400">
+                              {isChecked ? (
+                                <CheckSquare className="w-4 h-4 text-amber-400" />
+                              ) : (
+                                <Square className="w-4 h-4 text-slate-500" />
+                              )}
                             </span>
-                            {ord.sellerName && (
-                              <span className="bg-purple-900/50 text-purple-300 px-1 rounded">
-                                {ord.sellerName}
+                          )}
+
+                          <div className="flex-1 min-w-0">
+                            <h5 className="font-bold text-xs text-slate-100 truncate">
+                              {ord.product.name}
+                            </h5>
+                            <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5 flex-wrap">
+                              <span className="font-mono text-amber-400">
+                                {formatCurrency(ord.price * ord.quantity, settings.currencySymbol)}
                               </span>
-                            )}
+                              <span className="text-slate-500">
+                                ({ord.quantity} x {formatCurrency(ord.price, '')})
+                              </span>
+                              {ord.sellerName && (
+                                <span className="bg-purple-900/50 text-purple-300 px-1 rounded">
+                                  {ord.sellerName}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Quantity modifier (hidden or stops propagation in split mode) */}
+                          <div
+                            className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-700"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateOrderItem(ord.id, -1)}
+                              disabled={ord.quantity <= 1 && currentRole !== 'admin'}
+                              className={`w-5 h-5 rounded text-xs flex items-center justify-center transition-all ${
+                                ord.quantity <= 1 && currentRole !== 'admin'
+                                  ? 'bg-slate-800/40 text-slate-600 cursor-not-allowed'
+                                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer'
+                              }`}
+                              title={ord.quantity <= 1 && currentRole !== 'admin' ? 'ພະນັກງານບໍ່ມີສິດລຶບລາຍການສິນຄ້າ (ສະເພາະ Admin)' : 'ຫຼຸດຈຳນວນ'}
+                            >
+                              -
+                            </button>
+                            <span className="w-5 text-center text-xs font-mono font-bold">
+                              {ord.quantity}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateOrderItem(ord.id, 1)}
+                              className="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 text-xs flex items-center justify-center cursor-pointer"
+                            >
+                              +
+                            </button>
                           </div>
                         </div>
-
-                        {/* Quantity modifier */}
-                        <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-700">
-                          <button
-                            onClick={() => handleUpdateOrderItem(ord.id, -1)}
-                            disabled={ord.quantity <= 1 && currentRole !== 'admin'}
-                            className={`w-5 h-5 rounded text-xs flex items-center justify-center transition-all ${
-                              ord.quantity <= 1 && currentRole !== 'admin'
-                                ? 'bg-slate-800/40 text-slate-600 cursor-not-allowed'
-                                : 'bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer'
-                            }`}
-                            title={ord.quantity <= 1 && currentRole !== 'admin' ? 'ພະນັກງານບໍ່ມີສິດລຶບລາຍການສິນຄ້າ (ສະເພາະ Admin)' : 'ຫຼຸດຈຳນວນ'}
-                          >
-                            -
-                          </button>
-                          <span className="w-5 text-center text-xs font-mono font-bold">
-                            {ord.quantity}
-                          </span>
-                          <button
-                            onClick={() => handleUpdateOrderItem(ord.id, 1)}
-                            className="w-5 h-5 rounded bg-slate-800 hover:bg-slate-700 text-xs flex items-center justify-center cursor-pointer"
-                          >
-                            +
-                          </button>
-                        </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
+
+                {/* Split Pay Action Box (When Split Mode is active) */}
+                {isSplitPayMode && selectedRoomForDetails.orders.length > 0 && (() => {
+                  const selectedOrders = selectedRoomForDetails.orders.filter((o) =>
+                    selectedSplitOrderIds.includes(o.id)
+                  );
+                  const splitTotal = selectedOrders.reduce(
+                    (sum, o) => sum + o.price * o.quantity,
+                    0
+                  );
+                  return (
+                    <div className="mt-2 p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-500/40 space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-emerald-300 font-bold">
+                          ຍອດແຍກຈ່າຍ ({selectedOrders.length} ລາຍການ):
+                        </span>
+                        <span className="font-mono font-black text-amber-400">
+                          {formatCurrency(splitTotal, settings.currencySymbol)}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={selectedOrders.length === 0}
+                        onClick={() => {
+                          if (selectedOrders.length === 0 || !onSplitCheckoutRoom) return;
+                          onSplitCheckoutRoom(selectedRoomForDetails, selectedOrders);
+                        }}
+                        className={`w-full py-2 px-3 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all ${
+                          selectedOrders.length > 0
+                            ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg cursor-pointer active:scale-95'
+                            : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                        }`}
+                      >
+                        <Receipt className="w-3.5 h-3.5" />
+                        <span>
+                          ຊຳລະສະເພາະທີ່ເລືອກ ({formatCurrency(splitTotal, settings.currencySymbol)})
+                        </span>
+                      </button>
+                    </div>
+                  );
+                })()}
 
                 {/* Subtotal of Room */}
                 <div className="pt-3 border-t border-slate-800 mt-2 space-y-1">

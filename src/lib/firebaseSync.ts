@@ -1,7 +1,7 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * 
+ *
  * 689 KTV - Firebase Firestore Real-Time Cloud Synchronization
  * Connects directly to project ktv-e97cb with live onSnapshot listeners.
  */
@@ -57,11 +57,10 @@ export async function pushToFirebaseStore(payload: any): Promise<boolean> {
       docRef,
       {
         ...cleanPayload,
-        lastUpdated: new Date().toISOString(),
+        lastUpdated: payload?.lastUpdated || new Date().toISOString(),
       },
       { merge: true }
     );
-    console.log('Firebase store updated successfully');
     return true;
   } catch (err: any) {
     console.warn('Firestore push note:', err.message);

@@ -2487,7 +2487,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                       <div className="flex items-center gap-2 flex-wrap">
                         {/* Quick hour buttons */}
-                        {[1, 2, 3, 4, 5, 6].map((h) => (
+                        {[1, 2, 3, 4, 5, 6, 7].map((h) => (
                           <button
                             key={h}
                             type="button"

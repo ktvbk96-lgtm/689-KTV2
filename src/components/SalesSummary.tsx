@@ -59,6 +59,17 @@ import {
   getBluetoothStatus,
   isBluetoothBlockedError,
 } from '../lib/bluetoothPrinter';
+import {
+  deduplicateBills,
+  getLocalDateKey,
+  getLocalMonthKey,
+  calculatePackageBasedRoomCharge,
+  calculateRoomSessionFee,
+  isKtvRoomBill,
+  resolveBillDurationMinutes,
+  resolveBillRoomCharge,
+  resolveBillEffectiveTotal,
+} from '../lib/roomPricing';
 
 interface SalesSummaryProps {
   bills: BillRecord[];
@@ -96,23 +107,26 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
   // Choice 1: Overall Summary vs Choice 2: Itemized & Profit Breakdown vs Choice 3: Bills & Delete vs Choice 4: KTV Rooms & Time
   const [activeChoice, setActiveChoice] = useState<'overall' | 'itemized' | 'ktv_rooms' | 'bills'>('ktv_rooms');
 
-  // Timeframe filter: daily, monthly, yearly, custom
+  // Timeframe filter: daily, monthly, yearly, custom (using local calendar dates)
   const [timeframe, setTimeframe] = useState<'daily' | 'monthly' | 'yearly' | 'custom'>('daily');
-  const [selectedDate, setSelectedDate] = useState<string>(
-    new Date().toISOString().split('T')[0]
-  );
-  const [selectedMonth, setSelectedMonth] = useState<string>(
-    new Date().toISOString().slice(0, 7)
-  );
+  const [selectedDate, setSelectedDate] = useState<string>(getLocalDateKey());
+  const [selectedMonth, setSelectedMonth] = useState<string>(getLocalMonthKey());
   const [selectedYear, setSelectedYear] = useState<string>(
     new Date().getFullYear().toString()
   );
   const [customStartDate, setCustomStartDate] = useState<string>(
-    new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+    getLocalDateKey(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000))
   );
-  const [customEndDate, setCustomEndDate] = useState<string>(
-    new Date().toISOString().split('T')[0]
-  );
+  const [customEndDate, setCustomEndDate] = useState<string>(getLocalDateKey());
+
+  // Deduplicate bills in-memory by Bill Number / ID without ever mutating stored records
+  const uniqueBills = useMemo(() => deduplicateBills(bills), [bills]);
+
+  const fallbackRate = settings.defaultHourlyRate || 100000;
+  const getResolvedRoomCharge = (bill: BillRecord) =>
+    resolveBillRoomCharge(bill, packages, fallbackRate);
+  const getResolvedBillTotal = (bill: BillRecord) =>
+    resolveBillEffectiveTotal(bill, packages, fallbackRate);
 
   // Filters for Itemized view & Seller details
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -220,16 +234,15 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
     return map;
   }, [products]);
 
-  // Set quick date helpers
+  // Set quick date helpers (local calendar)
   const handleSetToday = () => {
     setTimeframe('daily');
-    setSelectedDate(new Date().toISOString().split('T')[0]);
+    setSelectedDate(getLocalDateKey());
   };
 
   const handleSetYesterday = () => {
     setTimeframe('daily');
-    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    setSelectedDate(yesterday);
+    setSelectedDate(getLocalDateKey(new Date(Date.now() - 24 * 60 * 60 * 1000)));
   };
 
   const openDeleteSingleBill = (bill: BillRecord) => {
@@ -237,6 +250,7 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
       alert('ຂໍອະໄພ! ພະນັກງານບໍ່ມີສິດລຶບໃບບິນ! ສະເພາະ Admin ເທົ່ານັ້ນ.');
       return;
     }
+    const resolvedBillTotal = getResolvedBillTotal(bill);
     setAdminPinInput('');
     setPinError('');
     setShowPinInput(false);
@@ -246,9 +260,9 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
       targetBill: bill,
       targetIds: [bill.id],
       count: 1,
-      totalAmount: bill.total,
+      totalAmount: resolvedBillTotal,
       title: `ລຶບໃບບິນ "${bill.billNumber}"`,
-      description: `ທ່ານກຳລັງຈະລຶບໃບບິນເລກທີ ${bill.billNumber} (${bill.roomName || 'POS'}) ຈຳນວນເງິນ ${formatCurrency(bill.total, settings.currencySymbol)} ອອກຈາກລະບົບ`,
+      description: `ທ່ານກຳລັງຈະລຶບໃບບິນເລກທີ ${bill.billNumber} (${bill.roomName || 'POS'}) ຈຳນວນເງິນ ${formatCurrency(resolvedBillTotal, settings.currencySymbol)} ອອກຈາກລະບົບ`,
     });
   };
 
@@ -258,7 +272,7 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
       return;
     }
     const ids = filteredBills.map((b) => b.id);
-    const sum = filteredBills.reduce((acc, b) => acc + b.total, 0);
+    const sum = filteredBills.reduce((acc, b) => acc + getResolvedBillTotal(b), 0);
     setAdminPinInput('');
     setPinError('');
     setShowPinInput(false);
@@ -278,8 +292,8 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
       alert('ຂໍອະໄພ! ພະນັກງານບໍ່ມີສິດລຶບໃບບິນ! ສະເພາະ Admin ເທົ່ານັ້ນ.');
       return;
     }
-    const ids = bills.map((b) => b.id);
-    const sum = bills.reduce((acc, b) => acc + b.total, 0);
+    const ids = uniqueBills.map((b) => b.id);
+    const sum = uniqueBills.reduce((acc, b) => acc + getResolvedBillTotal(b), 0);
     setAdminPinInput('');
     setPinError('');
     setShowPinInput(false);
@@ -289,8 +303,8 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
       targetIds: ids,
       count: ids.length,
       totalAmount: sum,
-      title: `⚠️ ລ້າງປະຫວັດບິນທັງໝົດໃນລະບົບ (${bills.length} ບິນ)`,
-      description: `ເຕືອນ: ການກະທຳນີ້ຈະລຶບປະຫວັດໃບບິນ ແລະ ຍອດຂາຍທັງໝົດ ${bills.length} ບິນ ລວມຍອດເງິນ ${formatCurrency(sum, settings.currencySymbol)} ອອກຈາກລະບົບແບບຖາວອນ!`,
+      title: `⚠️ ລ້າງປະຫວັດບິນທັງໝົດໃນລະບົບ (${uniqueBills.length} ບິນ)`,
+      description: `ເຕືອນ: ການກະທຳນີ້ຈະລຶບປະຫວັດໃບບິນ ແລະ ຍອດຂາຍທັງໝົດ ${uniqueBills.length} ບິນ ລວມຍອດເງິນ ${formatCurrency(sum, settings.currencySymbol)} ອອກຈາກລະບົບແບບຖາວອນ!`,
     });
   };
 
@@ -300,8 +314,8 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
       return;
     }
     const ids = Array.from(selectedBillIds);
-    const selectedObjs = bills.filter((b) => selectedBillIds.has(b.id));
-    const sum = selectedObjs.reduce((acc, b) => acc + b.total, 0);
+    const selectedObjs = uniqueBills.filter((b) => selectedBillIds.has(b.id));
+    const sum = selectedObjs.reduce((acc, b) => acc + getResolvedBillTotal(b), 0);
     setAdminPinInput('');
     setPinError('');
     setShowPinInput(false);
@@ -372,26 +386,23 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
     openDeleteAllBills();
   };
 
-  // Filter bills by chosen timeframe
+  // Filter deduplicated bills strictly by chosen timeframe (using local calendar dates)
   const filteredBills = useMemo(() => {
-    return bills.filter((b) => {
+    return uniqueBills.filter((b) => {
       const billDate = new Date(b.endTime);
       if (timeframe === 'daily') {
-        const dateStr = billDate.toISOString().split('T')[0];
-        return dateStr === selectedDate;
+        return getLocalDateKey(billDate) === selectedDate;
       } else if (timeframe === 'monthly') {
-        const monthStr = billDate.toISOString().slice(0, 7);
-        return monthStr === selectedMonth;
+        return getLocalMonthKey(billDate) === selectedMonth;
       } else if (timeframe === 'yearly') {
-        const yearStr = billDate.getFullYear().toString();
-        return yearStr === selectedYear;
+        return billDate.getFullYear().toString() === selectedYear;
       } else if (timeframe === 'custom') {
-        const dateStr = billDate.toISOString().split('T')[0];
+        const dateStr = getLocalDateKey(billDate);
         return dateStr >= customStartDate && dateStr <= customEndDate;
       }
       return true;
     });
-  }, [bills, timeframe, selectedDate, selectedMonth, selectedYear, customStartDate, customEndDate]);
+  }, [uniqueBills, timeframe, selectedDate, selectedMonth, selectedYear, customStartDate, customEndDate]);
 
   // Collect all unique sellers across all bills
   const availableSellers = useMemo(() => {
@@ -407,22 +418,21 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
 
   // Real-time Room & Usage Time Analytics (Checked-out bills + Live active rooms)
   const roomAnalytics = useMemo(() => {
+    const todayLocalStr = getLocalDateKey();
+    const todayLocalMonth = getLocalMonthKey();
     const isToday =
       timeframe === 'daily'
-        ? selectedDate === new Date().toISOString().split('T')[0]
+        ? selectedDate === todayLocalStr
         : timeframe === 'monthly'
-        ? selectedMonth === new Date().toISOString().slice(0, 7)
+        ? selectedMonth === todayLocalMonth
         : timeframe === 'yearly'
         ? selectedYear === new Date().getFullYear().toString()
         : timeframe === 'custom'
-        ? new Date().toISOString().split('T')[0] >= customStartDate &&
-          new Date().toISOString().split('T')[0] <= customEndDate
+        ? todayLocalStr >= customStartDate && todayLocalStr <= customEndDate
         : true;
 
     // 1. Process Completed KTV Bills in filtered timeframe
-    const completedRoomBills = filteredBills.filter(
-      (b) => b.type === 'ktv_room' || (b.roomName && b.roomName.trim().length > 0)
-    );
+    const completedRoomBills = filteredBills.filter(isKtvRoomBill);
 
     let checkedOutRoomRevenue = 0;
     let checkedOutPrepaidRevenue = 0;
@@ -478,37 +488,13 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
       const roomName = b.roomName || 'ຫ້ອງ KTV';
       const stat = getOrInitRoomStats(roomName, b.roomId);
 
-      // Duration in minutes
-      let durationMins = b.durationMinutes;
-      if (!durationMins || durationMins <= 0) {
-        if (b.startTime && b.endTime) {
-          const diffMs = Math.max(0, new Date(b.endTime).getTime() - new Date(b.startTime).getTime());
-          durationMins = Math.floor(diffMs / 60000);
-        } else if (b.bookedHours && b.bookedHours > 0) {
-          durationMins = Math.round(b.bookedHours * 60);
-        } else {
-          durationMins = 0;
-        }
-      }
-
-      // Room charge computation
-      let billRoomCharge = b.roomCharge || 0;
+      const durationMins = resolveBillDurationMinutes(b);
+      const billRoomCharge = resolveBillRoomCharge(
+        b,
+        packages,
+        settings.defaultHourlyRate || 100000
+      );
       const isPrepaid = !!b.isRoomChargePaid;
-
-      // If customer paid upfront and bill.roomCharge was set to 0, resolve original upfront payment
-      if (billRoomCharge === 0 && isPrepaid) {
-        if (b.packageName) {
-          const matchedPkg = packages.find(
-            (p) => p.name === b.packageName || p.id === b.packageName
-          );
-          billRoomCharge = matchedPkg ? matchedPkg.price : (settings.defaultHourlyRate || 70000);
-        } else if (b.bookedHours && b.bookedHours > 0) {
-          billRoomCharge = b.bookedHours * (settings.defaultHourlyRate || 70000);
-        } else {
-          const hrs = Math.max(0.5, Math.ceil((durationMins || 60) / 30) * 0.5);
-          billRoomCharge = Math.round(hrs * (settings.defaultHourlyRate || 70000));
-        }
-      }
 
       const foodDrink = b.items.reduce((s, it) => s + it.total, 0);
 
@@ -555,30 +541,16 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
     rooms.forEach((room) => {
       if (room.status === 'in_use' && room.openedAt) {
         const startMs = new Date(room.openedAt).getTime();
-        const elapsedMins = Math.max(0, Math.floor((now - startMs) / 60000));
+        const elapsedMins = Math.max(1, Math.floor((now - startMs) / 60000));
 
-        // Determine fee based on upfront payment vs post-pay
-        let roomFee = 0;
+        // Calculate active room fee according to room pricing mode (package uses full package price)
         const isPrepaid = !!room.isPaid;
-
-        if (room.pricingType === 'package') {
-          const pkg =
-            packages.find((p) => p.id === room.packageId) ||
-            packages.find((p) => p.name === room.packageName);
-          roomFee = pkg ? pkg.price : (room.hourlyRate || settings.defaultHourlyRate || 70000);
-        } else if (room.pricingType === 'open_time') {
-          const actualHours = Math.max(0.5, Math.ceil(elapsedMins / 30) * 0.5);
-          roomFee = Math.round(actualHours * (room.hourlyRate || settings.defaultHourlyRate || 70000));
-        } else {
-          // fixed_hourly
-          if (isPrepaid && room.bookedHours && room.bookedHours > 0) {
-            roomFee = Math.round(room.bookedHours * (room.hourlyRate || settings.defaultHourlyRate || 70000));
-          } else {
-            const actualHours = Math.max(0.5, Math.ceil(elapsedMins / 30) * 0.5);
-            const hoursToCharge = room.bookedHours ? Math.max(room.bookedHours, actualHours) : actualHours;
-            roomFee = Math.round(hoursToCharge * (room.hourlyRate || settings.defaultHourlyRate || 70000));
-          }
-        }
+        const roomFee = calculateRoomSessionFee(
+          room,
+          packages,
+          settings.defaultHourlyRate || 100000,
+          elapsedMins
+        );
 
         const ordersTotal = (room.orders || []).reduce((s, o) => s + o.price * o.quantity, 0);
         const grandTotal = roomFee + ordersTotal;
@@ -689,9 +661,9 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
     customEndDate,
   ]);
 
-  // Day-by-Day Room Opening Analytics (ມື້ນີ້ ແລະ ວັນຕໍ່ວັນ: ເປີດກີ່ຫ້ອງ, ກີ່ຊົ່ວໂມງ, ໄດ້ເງິນເທົ່າໃດ)
+  // Day-by-Day Room Opening Analytics (ວັນຕໍ່ວັນ: ເປີດກີ່ຫ້ອງ, ກີ່ຊົ່ວໂມງ, ໄດ້ເງິນເທົ່າໃດ)
   const dayByDayRoomAnalytics = useMemo(() => {
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getLocalDateKey();
 
     const dateMap = new Map<
       string,
@@ -760,45 +732,20 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
     // Ensure today entry always exists
     getOrInitDay(todayStr);
 
-    // Process all completed room bills
-    const allRoomBills = bills.filter(
-      (b) => b.type === 'ktv_room' || (b.roomName && b.roomName.trim().length > 0)
-    );
+    // Process all deduplicated completed room bills
+    const allRoomBills = uniqueBills.filter(isKtvRoomBill);
 
     allRoomBills.forEach((b) => {
-      const bDate = new Date(b.endTime);
-      const dateStr = bDate.toISOString().split('T')[0];
+      const dateStr = getLocalDateKey(b.endTime);
       const day = getOrInitDay(dateStr);
 
-      let durMins = b.durationMinutes;
-      if (!durMins || durMins <= 0) {
-        if (b.startTime && b.endTime) {
-          const diffMs = Math.max(0, new Date(b.endTime).getTime() - new Date(b.startTime).getTime());
-          durMins = Math.floor(diffMs / 60000);
-        } else if (b.bookedHours && b.bookedHours > 0) {
-          durMins = Math.round(b.bookedHours * 60);
-        } else {
-          durMins = 0;
-        }
-      }
-
-      let billRoomCharge = b.roomCharge || 0;
+      const durMins = resolveBillDurationMinutes(b);
+      const billRoomCharge = resolveBillRoomCharge(
+        b,
+        packages,
+        settings.defaultHourlyRate || 100000
+      );
       const isPrepaid = !!b.isRoomChargePaid;
-
-      if (billRoomCharge === 0 && isPrepaid) {
-        if (b.packageName) {
-          const matchedPkg = packages.find(
-            (p) => p.name === b.packageName || p.id === b.packageName
-          );
-          billRoomCharge = matchedPkg ? matchedPkg.price : (settings.defaultHourlyRate || 70000);
-        } else if (b.bookedHours && b.bookedHours > 0) {
-          billRoomCharge = b.bookedHours * (settings.defaultHourlyRate || 70000);
-        } else {
-          const hrs = Math.max(0.5, Math.ceil((durMins || 60) / 30) * 0.5);
-          billRoomCharge = Math.round(hrs * (settings.defaultHourlyRate || 70000));
-        }
-      }
-
       const foodDrink = b.items.reduce((s, it) => s + it.total, 0);
 
       day.roomSessionsCount += 1;
@@ -886,7 +833,7 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
       totalAllDaysFoodDrink,
       totalAllDaysGrandRevenue,
     };
-  }, [bills, packages, settings, roomAnalytics]);
+  }, [uniqueBills, packages, settings, roomAnalytics]);
 
   // Comprehensive Seller Performance Map (Sales, Cost, Gross Profit per seller + Room Time Fees Added!)
   const sellerPerformanceList = useMemo(() => {
@@ -938,22 +885,12 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
       billStaff.billsHandled += 1;
 
       // Attribute Room Time Fee to the staff handling this bill
-      if (b.type === 'ktv_room' || b.roomName || (b.roomCharge && b.roomCharge > 0) || b.isRoomChargePaid) {
-        let billRoomCharge = b.roomCharge || 0;
-        if (billRoomCharge === 0 && b.isRoomChargePaid) {
-          if (b.packageName) {
-            const matchedPkg = packages.find(
-              (p) => p.name === b.packageName || p.id === b.packageName
-            );
-            billRoomCharge = matchedPkg ? matchedPkg.price : (settings.defaultHourlyRate || 70000);
-          } else if (b.bookedHours && b.bookedHours > 0) {
-            billRoomCharge = b.bookedHours * (settings.defaultHourlyRate || 70000);
-          } else {
-            const durMins = b.durationMinutes || 60;
-            const hrs = Math.max(0.5, Math.ceil(durMins / 30) * 0.5);
-            billRoomCharge = Math.round(hrs * (settings.defaultHourlyRate || 70000));
-          }
-        }
+      if (isKtvRoomBill(b) || (b.roomCharge && b.roomCharge > 0) || b.isRoomChargePaid) {
+        const billRoomCharge = resolveBillRoomCharge(
+          b,
+          packages,
+          settings.defaultHourlyRate || 100000
+        );
 
         if (billRoomCharge > 0) {
           billStaff.roomRevenue += billRoomCharge;
@@ -1016,9 +953,9 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
       .sort((a, b) => b.grossProfit - a.grossProfit);
   }, [filteredBills, productLookup, packages, settings, roomAnalytics]);
 
-  // Calculate Overall Store Totals
-  const totalRevenue = filteredBills.reduce((acc, b) => acc + b.total, 0);
-  const totalRoomCharge = filteredBills.reduce((acc, b) => acc + b.roomCharge, 0);
+  // Calculate Overall Store Totals (strictly within filteredBills using resolved room fees)
+  const totalRevenue = filteredBills.reduce((acc, b) => acc + getResolvedBillTotal(b), 0);
+  const totalRoomCharge = filteredBills.reduce((acc, b) => acc + getResolvedRoomCharge(b), 0);
   const totalItemsCharge = filteredBills.reduce(
     (acc, b) => acc + b.items.reduce((sum, item) => sum + item.total, 0),
     0
@@ -1026,10 +963,10 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
   const totalDiscount = filteredBills.reduce((acc, b) => acc + b.discount, 0);
   const totalCash = filteredBills
     .filter((b) => b.payment.method === 'cash')
-    .reduce((acc, b) => acc + b.total, 0);
+    .reduce((acc, b) => acc + getResolvedBillTotal(b), 0);
   const totalTransfer = filteredBills
     .filter((b) => b.payment.method === 'transfer')
-    .reduce((acc, b) => acc + b.total, 0);
+    .reduce((acc, b) => acc + getResolvedBillTotal(b), 0);
 
   // Helper to compute cost and profit for a single bill
   const getBillCostAndProfit = (b: BillRecord) => {
@@ -1044,9 +981,10 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
       billItemsCost += item.quantity * cost;
       billItemsRevenue += item.total;
     });
+    const resolvedTotal = getResolvedBillTotal(b);
     // Bill profit = Net bill total (including room & minus discounts) - items cost
-    const billProfit = b.total - billItemsCost;
-    const margin = b.total > 0 ? (billProfit / b.total) * 100 : 0;
+    const billProfit = resolvedTotal - billItemsCost;
+    const margin = resolvedTotal > 0 ? (billProfit / resolvedTotal) * 100 : 0;
     return { billItemsCost, billItemsRevenue, billProfit, margin };
   };
 
@@ -1245,10 +1183,14 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
     totalRevenue,
   ]);
 
-  // Timeframe label for display
+  // Timeframe label for display (parsed safely in local calendar time)
   const timeframeLabel = useMemo(() => {
     if (timeframe === 'daily') {
-      const d = new Date(selectedDate);
+      const parts = selectedDate.split('-');
+      const d =
+        parts.length === 3
+          ? new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10), 12, 0, 0)
+          : new Date(selectedDate);
       return `ວັນທີ ${d.toLocaleDateString('lo-LA', {
         day: 'numeric',
         month: 'long',
@@ -1265,15 +1207,45 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
     }
   }, [timeframe, selectedDate, selectedMonth, selectedYear, customStartDate, customEndDate]);
 
-  const totalAllStoreRevenue = useMemo(() => bills.reduce((acc, b) => acc + b.total, 0), [bills]);
+  // Period Spotlight for Choice 4 View 1 (strictly follows active timeframe / selectedDate filter)
+  const selectedPeriodRoomSpotlight = useMemo(() => {
+    const activeRooms = roomAnalytics.isToday ? roomAnalytics.activeRoomsList : [];
+    const uniqueRoomsSet = new Set<string>();
+    roomAnalytics.completedRoomBills.forEach((b) => {
+      if (b.roomName && b.roomName.trim()) uniqueRoomsSet.add(b.roomName.trim());
+    });
+    activeRooms.forEach((a) => {
+      if (a.room?.name && a.room.name.trim()) uniqueRoomsSet.add(a.room.name.trim());
+    });
+    const uniqueRoomsList = Array.from(uniqueRoomsSet).sort();
+    return {
+      roomSessionsCount: roomAnalytics.grandTotalSessions,
+      uniqueRoomsCount: uniqueRoomsList.length,
+      uniqueRoomsList,
+      completedBills: roomAnalytics.completedRoomBills,
+      activeRooms,
+      hoursFormatted: roomAnalytics.formatHoursMinutes(roomAnalytics.grandRoomTotalMinutes).text,
+      hoursDecimal: Number((roomAnalytics.grandRoomTotalMinutes / 60).toFixed(1)),
+      roomRevenue: roomAnalytics.grandRoomRevenue,
+      prepaidRevenue: roomAnalytics.grandRoomPrepaidRevenue,
+      postpaidRevenue: roomAnalytics.grandRoomPostpaidRevenue,
+      foodDrinkRevenue: roomAnalytics.grandFoodDrinkRevenue,
+      grandTotalRevenue: roomAnalytics.grandOverallRevenue,
+    };
+  }, [roomAnalytics]);
+
+  const totalAllStoreRevenue = useMemo(
+    () => uniqueBills.reduce((acc, b) => acc + resolveBillEffectiveTotal(b, packages, fallbackRate), 0),
+    [uniqueBills, packages, fallbackRate]
+  );
 
   // Filtered bills for the dedicated Bills Management View
   const managedBills = useMemo(() => {
-    const sourceBills = billsTimeScope === 'filtered' ? filteredBills : bills;
+    const sourceBills = billsTimeScope === 'filtered' ? filteredBills : uniqueBills;
     return sourceBills.filter((b) => {
       // Type filter
-      if (billsTypeFilter === 'ktv_room' && b.type !== 'ktv_room') return false;
-      if (billsTypeFilter === 'pos' && b.type === 'ktv_room') return false;
+      if (billsTypeFilter === 'ktv_room' && !isKtvRoomBill(b)) return false;
+      if (billsTypeFilter === 'pos' && isKtvRoomBill(b)) return false;
       // Search query
       if (billsSearchQuery.trim()) {
         const q = billsSearchQuery.trim().toLowerCase();
@@ -1285,7 +1257,7 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
       }
       return true;
     });
-  }, [bills, filteredBills, billsTimeScope, billsTypeFilter, billsSearchQuery]);
+  }, [uniqueBills, filteredBills, billsTimeScope, billsTypeFilter, billsSearchQuery]);
 
   // Export CSV of product sales, profit & sellers
   const handleExportCsv = () => {
@@ -1445,7 +1417,7 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
             }`}
           >
             <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-            <span>Choice 3: ປະຫວັດບິນ & ລຶບ ({bills.length})</span>
+            <span>Choice 3: ປະຫວັດບິນ & ລຶບ ({uniqueBills.length})</span>
           </button>
         </div>
       </div>
@@ -1642,7 +1614,7 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                ທຸກບິນໃນລະບົບ: <span className="font-bold text-amber-300 font-mono">{bills.length} ບິນ</span> ({formatCurrency(totalAllStoreRevenue, settings.currencySymbol)}) | ຊ່ວງເວລານີ້: <span className="font-bold text-rose-300 font-mono">{filteredBills.length} ບິນ</span> ({formatCurrency(totalRevenue, settings.currencySymbol)})
+                ທຸກບິນໃນລະບົບ: <span className="font-bold text-amber-300 font-mono">{uniqueBills.length} ບິນ</span> ({formatCurrency(totalAllStoreRevenue, settings.currencySymbol)}) | ຊ່ວງເວລານີ້: <span className="font-bold text-rose-300 font-mono">{filteredBills.length} ບິນ</span> ({formatCurrency(totalRevenue, settings.currencySymbol)})
               </p>
             </div>
           </div>
@@ -1662,7 +1634,7 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
             <button
               type="button"
               onClick={openDeleteAllBills}
-              disabled={bills.length === 0}
+              disabled={uniqueBills.length === 0}
               className="flex-1 sm:flex-none px-3.5 py-2.5 rounded-2xl bg-red-600 hover:bg-red-500 text-white text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-red-600/25 disabled:opacity-40 disabled:cursor-not-allowed"
               title="ລຶບປະຫວັດບິນທັງໝົດໃນລະບົບ"
             >
@@ -1680,7 +1652,7 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
               }`}
             >
               <Receipt className="w-3.5 h-3.5" />
-              <span>ຈັດການລາຍບິນ ({bills.length})</span>
+              <span>ຈັດການລາຍບິນ ({uniqueBills.length})</span>
             </button>
           </div>
         </div>
@@ -2131,8 +2103,8 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
       {/* CHOICE 1: OVERALL SUMMARY & STORE FINANCIAL SNAPSHOT + SELLER PERFORMANCE */}
       {activeChoice === 'overall' && (
         <div className="space-y-6">
-          {/* Active Rooms Real-time Alert Banner if any rooms in use */}
-          {roomAnalytics.activeRoomsList.length > 0 && (
+          {/* Active Rooms Real-time Alert Banner if any rooms in use (only when selected timeframe includes today) */}
+          {roomAnalytics.isToday && roomAnalytics.activeRoomsList.length > 0 && (
             <div className="bg-gradient-to-r from-purple-950/70 via-slate-900 to-rose-950/60 border border-purple-500/40 rounded-3xl p-4 shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-2xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300 shrink-0">
@@ -2523,7 +2495,7 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                       <span>ລຶບຊ່ວງເວລານີ້ ({filteredBills.length})</span>
                     </button>
                   )}
-                  {onClearAllBills && bills.length > 0 && (
+                  {onClearAllBills && uniqueBills.length > 0 && (
                     <button
                       type="button"
                       onClick={openDeleteAllBills}
@@ -2564,6 +2536,8 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                   ) : (
                     filteredBills.map((b) => {
                       const { billItemsCost, billProfit } = getBillCostAndProfit(b);
+                      const resolvedRoomCharge = getResolvedRoomCharge(b);
+                      const resolvedBillTotal = getResolvedBillTotal(b);
                       const isExpanded = expandedBillIds.has(b.id);
                       return (
                         <React.Fragment key={b.id}>
@@ -2633,13 +2607,13 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                             </td>
                             <td className="py-3 px-4 text-slate-300 font-semibold">{b.staffName}</td>
                             <td className="py-3 px-4 text-right font-mono text-slate-400">
-                              {formatCurrency(b.roomCharge, settings.currencySymbol)}
+                              {formatCurrency(resolvedRoomCharge, settings.currencySymbol)}
                             </td>
                             <td className="py-3 px-4 text-right font-mono text-rose-400">
                               {formatCurrency(billItemsCost, settings.currencySymbol)}
                             </td>
                             <td className="py-3 px-4 text-right font-mono font-bold text-amber-300">
-                              {formatCurrency(b.total, settings.currencySymbol)}
+                              {formatCurrency(resolvedBillTotal, settings.currencySymbol)}
                             </td>
                             <td className="py-3 px-4 text-right font-mono font-black text-emerald-400">
                               +{formatCurrency(billProfit, settings.currencySymbol)}
@@ -2730,13 +2704,13 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
 
                                   <div className="flex items-center justify-between pt-2 border-t border-slate-800 text-xs">
                                     <div className="text-slate-400 text-[11px]">
-                                      {b.roomCharge > 0 && (
-                                        <span>ຄ່າຫ້ອງ: <b className="font-mono text-purple-300">{formatCurrency(b.roomCharge, settings.currencySymbol)}</b> • </span>
+                                      {resolvedRoomCharge > 0 && (
+                                        <span>ຄ່າຫ້ອງ: <b className="font-mono text-purple-300">{formatCurrency(resolvedRoomCharge, settings.currencySymbol)}</b> • </span>
                                       )}
                                       <span>ລວມສິນຄ້າ: <b className="font-mono text-amber-300">{formatCurrency(b.items.reduce((s, it) => s + it.total, 0), settings.currencySymbol)}</b></span>
                                     </div>
                                     <div className="font-mono font-black text-white text-sm">
-                                      ຍອດສຸດທິ: <span className="text-emerald-400">{formatCurrency(b.total, settings.currencySymbol)}</span>
+                                      ຍອດສຸດທິ: <span className="text-emerald-400">{formatCurrency(resolvedBillTotal, settings.currencySymbol)}</span>
                                     </div>
                                   </div>
                                 </div>
@@ -2804,10 +2778,10 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
               }`}
             >
               <Sparkles className="w-4 h-4 text-amber-300" />
-              <span>1. 📊 ສະຫຼຸບມື້ນີ້ (Today Summary)</span>
-              {dayByDayRoomAnalytics.todayData.roomSessionsCount > 0 && (
+              <span>1. 📊 {roomAnalytics.isToday ? 'ສະຫຼຸບມື້ນີ້ (Today Summary)' : 'ສະຫຼຸບຕາມວັນທີທີ່ເລືອກ'}</span>
+              {selectedPeriodRoomSpotlight.roomSessionsCount > 0 && (
                 <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-purple-900/80 text-purple-200 border border-purple-700">
-                  {dayByDayRoomAnalytics.todayData.roomSessionsCount} ຫ້ອງ
+                  {selectedPeriodRoomSpotlight.roomSessionsCount} ຫ້ອງ
                 </span>
               )}
             </button>
@@ -2865,102 +2839,104 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="text-xs uppercase tracking-wider font-black text-purple-300 bg-purple-900/60 px-2.5 py-0.5 rounded-full border border-purple-700/60">
-                          ສະຫຼຸບປະຈຳວັນ (Today's Summary)
+                          {roomAnalytics.isToday ? "ສະຫຼຸບປະຈຳວັນ (Today's Summary)" : 'ສະຫຼຸບຕາມຊ່ວງເວລາທີ່ເລືອກ'}
                         </span>
                         <span className="text-xs text-slate-400 font-mono">
-                          {new Date().toLocaleDateString('lo-LA', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                          {timeframeLabel}
                         </span>
                       </div>
                       <h3 className="text-xl sm:text-2xl font-black text-white mt-1">
-                        ສະຫຼຸບການເປີດຫ້ອງ KTV ມື້ນີ້
+                        ສະຫຼຸບການເປີດຫ້ອງ KTV — {timeframeLabel}
                       </h3>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <span className="px-3 py-1 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-bold flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                      {roomAnalytics.activeRoomsList.length > 0 ? `ກຳລັງຫຼິ້ນຢູ່ ${roomAnalytics.activeRoomsList.length} ຫ້ອງ` : 'ບໍ່ມີຫ້ອງເປີດຄ້າງ'}
-                    </span>
-                  </div>
+                  {roomAnalytics.isToday && (
+                    <div className="flex items-center gap-2">
+                      <span className="px-3 py-1 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-bold flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                        {roomAnalytics.activeRoomsList.length > 0 ? `ກຳລັງຫຼິ້ນຢູ່ ${roomAnalytics.activeRoomsList.length} ຫ້ອງ` : 'ບໍ່ມີຫ້ອງເປີດຄ້າງ'}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
-                {/* 4 Golden Direct Answers: เปิดกี่ห้อง, กี่ชั่วโมง, ได้เงินเท่าไหร่, รวมทั้งหมดเท่าไหร่ */}
+                {/* 4 Golden Direct Answers: เปิดกี่ห้อง, กี่ชั่วโมง, ได้เงินเท่าไหร่, รวมทั้งหมดเท่าไหร่ (strictly filtered by timeframe/selectedDate) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-5">
-                  {/* Answer 1: เปิดกี่ห้องวันนี้ */}
+                  {/* Answer 1 */}
                   <div className="bg-slate-900/90 rounded-2xl p-4 border border-purple-500/40 shadow-lg">
                     <div className="text-xs text-purple-300 font-bold mb-1 flex items-center justify-between">
-                      <span>🚪 ມື້ນີ້ເປີດໄປທັງໝົດ</span>
+                      <span>🚪 ເປີດໄປທັງໝົດ</span>
                       <span className="text-[10px] text-slate-400">Total Rooms</span>
                     </div>
                     <div className="text-3xl font-black text-white flex items-baseline gap-1.5">
-                      <span className="text-purple-400">{dayByDayRoomAnalytics.todayData.roomSessionsCount}</span>
+                      <span className="text-purple-400">{selectedPeriodRoomSpotlight.roomSessionsCount}</span>
                       <span className="text-sm font-semibold text-slate-300">ຮອບ</span>
-                      {dayByDayRoomAnalytics.todayData.uniqueRoomsCount > 0 && (
+                      {selectedPeriodRoomSpotlight.uniqueRoomsCount > 0 && (
                         <span className="text-xs text-slate-400 font-normal">
-                          ({dayByDayRoomAnalytics.todayData.uniqueRoomsCount} ຫ້ອງ)
+                          ({selectedPeriodRoomSpotlight.uniqueRoomsCount} ຫ້ອງ)
                         </span>
                       )}
                     </div>
                     <div className="mt-2 text-[11px] text-slate-400 flex justify-between border-t border-slate-800 pt-1.5">
-                      <span>ເຊັກບິນແລ້ວ: {dayByDayRoomAnalytics.todayData.completedBills.length}</span>
-                      <span className="text-emerald-400 font-semibold">ເປີດຢູ່ຕອນນີ້: {dayByDayRoomAnalytics.todayData.activeRooms.length}</span>
+                      <span>ເຊັກບິນແລ້ວ: {selectedPeriodRoomSpotlight.completedBills.length}</span>
+                      <span className="text-emerald-400 font-semibold">ເປີດຢູ່ຕອນນີ້: {selectedPeriodRoomSpotlight.activeRooms.length}</span>
                     </div>
                   </div>
 
-                  {/* Answer 2: เปิดกี่ชั่วโมงวันนี้ */}
+                  {/* Answer 2 */}
                   <div className="bg-slate-900/90 rounded-2xl p-4 border border-amber-500/40 shadow-lg">
                     <div className="text-xs text-amber-300 font-bold mb-1 flex items-center justify-between">
-                      <span>⏱️ ເວລາເປີດຫ້ອງລວມມື້ນີ້</span>
+                      <span>⏱️ ເວລາເປີດຫ້ອງລວມ</span>
                       <span className="text-[10px] text-slate-400">Total Hours</span>
                     </div>
                     <div className="text-2xl sm:text-3xl font-black text-amber-300">
-                      {dayByDayRoomAnalytics.todayData.hoursFormatted}
+                      {selectedPeriodRoomSpotlight.hoursFormatted}
                     </div>
                     <div className="mt-2 text-[11px] text-slate-400 flex justify-between border-t border-slate-800 pt-1.5">
                       <span>ລວມເປັນຊົ່ວໂມງ:</span>
-                      <span className="font-mono text-amber-400 font-bold">~{dayByDayRoomAnalytics.todayData.hoursDecimal} ຊົ່ວໂມງ</span>
+                      <span className="font-mono text-amber-400 font-bold">~{selectedPeriodRoomSpotlight.hoursDecimal} ຊົ່ວໂມງ</span>
                     </div>
                   </div>
 
-                  {/* Answer 3: ได้เงินค่าห้องเท่าไหร่ */}
+                  {/* Answer 3 */}
                   <div className="bg-slate-900/90 rounded-2xl p-4 border border-emerald-500/40 shadow-lg">
                     <div className="text-xs text-emerald-300 font-bold mb-1 flex items-center justify-between">
-                      <span>💰 ໄດ້ເງິນຄ່າຫ້ອງມື້ນີ້</span>
+                      <span>💰 ໄດ້ເງິນຄ່າຫ້ອງ</span>
                       <span className="text-[10px] text-slate-400">Room Fee Income</span>
                     </div>
                     <div className="text-2xl sm:text-3xl font-black text-emerald-400 font-mono">
-                      {formatCurrency(dayByDayRoomAnalytics.todayData.roomRevenue, settings.currencySymbol)}
+                      {formatCurrency(selectedPeriodRoomSpotlight.roomRevenue, settings.currencySymbol)}
                     </div>
                     <div className="mt-2 text-[11px] text-slate-400 flex justify-between border-t border-slate-800 pt-1.5">
-                      <span>ຈ່າຍກ່ອນ: {formatCurrency(dayByDayRoomAnalytics.todayData.prepaidRevenue, '')}</span>
-                      <span>ຈ່າຍຫຼັງ: {formatCurrency(dayByDayRoomAnalytics.todayData.postpaidRevenue, '')}</span>
+                      <span>ຈ່າຍກ່ອນ: {formatCurrency(selectedPeriodRoomSpotlight.prepaidRevenue, '')}</span>
+                      <span>ຈ່າຍຫຼັງ: {formatCurrency(selectedPeriodRoomSpotlight.postpaidRevenue, '')}</span>
                     </div>
                   </div>
 
-                  {/* Answer 4: รวมได้เงินทั้งหมดวันนี้ (ค่าห้อง + ค่าสินค้า/อาหาร) */}
+                  {/* Answer 4 */}
                   <div className="bg-slate-900/90 rounded-2xl p-4 border border-rose-500/40 shadow-lg">
                     <div className="text-xs text-rose-300 font-bold mb-1 flex items-center justify-between">
-                      <span>💵 ລວມຍອດເງິນທັງໝົດມື້ນີ້</span>
+                      <span>💵 ລວມຍອດເງິນທັງໝົດ</span>
                       <span className="text-[10px] text-slate-400">Grand Total</span>
                     </div>
                     <div className="text-2xl sm:text-3xl font-black text-rose-400 font-mono">
-                      {formatCurrency(dayByDayRoomAnalytics.todayData.grandTotalRevenue, settings.currencySymbol)}
+                      {formatCurrency(selectedPeriodRoomSpotlight.grandTotalRevenue, settings.currencySymbol)}
                     </div>
                     <div className="mt-2 text-[11px] text-slate-400 flex justify-between border-t border-slate-800 pt-1.5">
                       <span>ສິນຄ້າ/ອາຫານ:</span>
                       <span className="font-mono text-amber-300 font-bold">
-                        {formatCurrency(dayByDayRoomAnalytics.todayData.foodDrinkRevenue, settings.currencySymbol)}
+                        {formatCurrency(selectedPeriodRoomSpotlight.foodDrinkRevenue, settings.currencySymbol)}
                       </span>
                     </div>
                   </div>
                 </div>
 
-                {/* List of Unique Room Names opened today */}
-                {dayByDayRoomAnalytics.todayData.uniqueRoomsList.length > 0 && (
+                {/* List of Unique Room Names opened in this selected period */}
+                {selectedPeriodRoomSpotlight.uniqueRoomsList.length > 0 && (
                   <div className="mt-4 pt-3 border-t border-purple-850/60 flex flex-wrap items-center gap-2 text-xs">
-                    <span className="text-slate-400 font-bold">ຫ້ອງທີ່ເປີດໃຊ້ງານມື້ນີ້:</span>
-                    {dayByDayRoomAnalytics.todayData.uniqueRoomsList.map((rm) => (
+                    <span className="text-slate-400 font-bold">ຫ້ອງທີ່ເປີດໃຊ້ງານ ({timeframeLabel}):</span>
+                    {selectedPeriodRoomSpotlight.uniqueRoomsList.map((rm) => (
                       <span
                         key={rm}
                         className="px-2.5 py-1 rounded-xl bg-purple-900/50 border border-purple-700/60 text-purple-200 font-black flex items-center gap-1.5"
@@ -2973,7 +2949,8 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                 )}
               </div>
 
-              {/* LIVE ACTIVE ROOMS (IF ANY OPEN RIGHT NOW) */}
+              {/* LIVE ACTIVE ROOMS (ONLY SHOWN WHEN SELECTED PERIOD INCLUDES TODAY) */}
+              {roomAnalytics.isToday && (
               <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-xl space-y-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -3079,14 +3056,15 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                   </div>
                 )}
               </div>
+              )}
 
-              {/* TODAY'S COMPLETED ROOM BILLS WITH PRODUCT ITEMS */}
+              {/* COMPLETED ROOM BILLS IN SELECTED TIMEFRAME */}
               <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
                 <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between">
                   <div>
                     <h3 className="font-black text-sm text-slate-100 flex items-center gap-2">
                       <Receipt className="w-4 h-4 text-rose-500" />
-                      <span>ປະຫວັດຫ້ອງ KTV ທີ່ເຊັກບິນແລ້ວມື້ນີ້ ({dayByDayRoomAnalytics.todayData.completedBills.length} ບິນ)</span>
+                      <span>ປະຫວັດຫ້ອງ KTV ທີ່ເຊັກບິນແລ້ວ ({timeframeLabel} — {selectedPeriodRoomSpotlight.completedBills.length} ບິນ)</span>
                     </h3>
                     <p className="text-xs text-slate-400">
                       ລາຍລະອຽດການເປີດຫ້ອງ, ເວລາ, ແລະ ລາຍການສິນຄ້າທີ່ລູກຄ້າສັ່ງ
@@ -3110,21 +3088,19 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 font-sans">
-                      {dayByDayRoomAnalytics.todayData.completedBills.length === 0 ? (
+                      {selectedPeriodRoomSpotlight.completedBills.length === 0 ? (
                         <tr>
                           <td colSpan={9} className="py-8 text-center text-slate-500">
-                            ຍັງບໍ່ມີໃບບິນຫ້ອງ KTV ທີ່ເຊັກບິນໃນມື້ນີ້
+                            ຍັງບໍ່ມີໃບບິນຫ້ອງ KTV ທີ່ເຊັກບິນໃນຊ່ວງເວລານີ້
                           </td>
                         </tr>
                       ) : (
-                        dayByDayRoomAnalytics.todayData.completedBills.map((b) => {
-                          const durMins =
-                            b.durationMinutes ||
-                            (b.startTime && b.endTime
-                              ? Math.max(0, Math.floor((new Date(b.endTime).getTime() - new Date(b.startTime).getTime()) / 60000))
-                              : (b.bookedHours ? b.bookedHours * 60 : 0));
+                        selectedPeriodRoomSpotlight.completedBills.map((b) => {
+                          const durMins = resolveBillDurationMinutes(b);
                           const durFormatted = roomAnalytics.formatHoursMinutes(durMins).text;
                           const itemsSum = b.items.reduce((s, it) => s + it.total, 0);
+                          const resolvedRoomCharge = getResolvedRoomCharge(b);
+                          const resolvedBillTotal = getResolvedBillTotal(b);
                           const isExpanded = expandedBillIds.has(b.id);
 
                           return (
@@ -3191,13 +3167,13 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                                   </div>
                                 </td>
                                 <td className="py-3 px-3 text-right font-mono font-bold text-purple-400">
-                                  {formatCurrency(b.roomCharge, settings.currencySymbol)}
+                                  {formatCurrency(resolvedRoomCharge, settings.currencySymbol)}
                                 </td>
                                 <td className="py-3 px-3 text-right font-mono font-bold text-amber-400">
                                   {formatCurrency(itemsSum, settings.currencySymbol)}
                                 </td>
                                 <td className="py-3 px-4 text-right font-mono font-black text-emerald-400 text-sm">
-                                  {formatCurrency(b.total, settings.currencySymbol)}
+                                  {formatCurrency(resolvedBillTotal, settings.currencySymbol)}
                                 </td>
                                 <td className="py-3 px-3 text-center">
                                   <button
@@ -3264,13 +3240,13 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
 
                                       <div className="flex items-center justify-between pt-2 border-t border-slate-800 text-xs">
                                         <div className="text-slate-400 text-[11px]">
-                                          {b.roomCharge > 0 && (
-                                            <span>ຄ່າຫ້ອງ: <b className="font-mono text-purple-300">{formatCurrency(b.roomCharge, settings.currencySymbol)}</b> • </span>
+                                          {resolvedRoomCharge > 0 && (
+                                            <span>ຄ່າຫ້ອງ: <b className="font-mono text-purple-300">{formatCurrency(resolvedRoomCharge, settings.currencySymbol)}</b> • </span>
                                           )}
                                           <span>ລວມສິນຄ້າ: <b className="font-mono text-amber-300">{formatCurrency(itemsSum, settings.currencySymbol)}</b></span>
                                         </div>
                                         <div className="font-mono font-black text-white text-sm">
-                                          ຍອດສຸດທິ: <span className="text-emerald-400">{formatCurrency(b.total, settings.currencySymbol)}</span>
+                                          ຍອດສຸດທິ: <span className="text-emerald-400">{formatCurrency(resolvedBillTotal, settings.currencySymbol)}</span>
                                         </div>
                                       </div>
                                     </div>
@@ -3529,13 +3505,10 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                                       ) : (
                                         <div className="space-y-3">
                                           {day.completedBills.map((b) => {
-                                            const durMins =
-                                              b.durationMinutes ||
-                                              (b.startTime && b.endTime
-                                                ? Math.max(0, Math.floor((new Date(b.endTime).getTime() - new Date(b.startTime).getTime()) / 60000))
-                                                : (b.bookedHours ? b.bookedHours * 60 : 0));
+                                            const durMins = resolveBillDurationMinutes(b);
                                             const durFormatted = roomAnalytics.formatHoursMinutes(durMins).text;
-                                            const itemsSum = b.items.reduce((s, it) => s + it.total, 0);
+                                            const resolvedRoomCharge = getResolvedRoomCharge(b);
+                                            const resolvedBillTotal = getResolvedBillTotal(b);
 
                                             return (
                                               <div
@@ -3563,11 +3536,11 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
 
                                                   <div className="flex items-center gap-2">
                                                     <span className="text-xs text-slate-400">
-                                                      ຄ່າຫ້ອງ: <b className="font-mono text-purple-300">{formatCurrency(b.roomCharge, settings.currencySymbol)}</b>
+                                                      ຄ່າຫ້ອງ: <b className="font-mono text-purple-300">{formatCurrency(resolvedRoomCharge, settings.currencySymbol)}</b>
                                                     </span>
                                                     <span className="text-xs text-slate-400">•</span>
                                                     <span className="text-xs font-black text-emerald-400 font-mono">
-                                                      ລວມບິນ: {formatCurrency(b.total, settings.currencySymbol)}
+                                                      ລວມບິນ: {formatCurrency(resolvedBillTotal, settings.currencySymbol)}
                                                     </span>
                                                     <button
                                                       type="button"
@@ -3827,12 +3800,10 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                       </tr>
                     ) : (
                       roomAnalytics.completedRoomBills.map((b) => {
-                        const durMins =
-                          b.durationMinutes ||
-                          (b.startTime && b.endTime
-                            ? Math.max(0, Math.floor((new Date(b.endTime).getTime() - new Date(b.startTime).getTime()) / 60000))
-                            : (b.bookedHours ? b.bookedHours * 60 : 0));
+                        const durMins = resolveBillDurationMinutes(b);
                         const durFormatted = roomAnalytics.formatHoursMinutes(durMins).text;
+                        const resolvedRoomCharge = getResolvedRoomCharge(b);
+                        const resolvedBillTotal = getResolvedBillTotal(b);
 
                         const startFormatted = b.startTime
                           ? new Date(b.startTime).toLocaleTimeString('lo-LA', {
@@ -3925,13 +3896,13 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                                 )}
                               </td>
                               <td className="py-3 px-3 text-right font-mono font-bold text-purple-400">
-                                {formatCurrency(b.roomCharge, settings.currencySymbol)}
+                                {formatCurrency(resolvedRoomCharge, settings.currencySymbol)}
                               </td>
                               <td className="py-3 px-3 text-right font-mono font-bold text-amber-400">
                                 {formatCurrency(itemsSum, settings.currencySymbol)}
                               </td>
                               <td className="py-3 px-4 text-right font-mono font-black text-emerald-400 text-sm">
-                                {formatCurrency(b.total, settings.currencySymbol)}
+                                {formatCurrency(resolvedBillTotal, settings.currencySymbol)}
                               </td>
                               <td className="py-3 px-3 text-center text-slate-400 text-[11px]">
                                 {b.staffName || '-'}
@@ -4001,13 +3972,13 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
 
                                     <div className="flex items-center justify-between pt-2 border-t border-slate-800 text-xs">
                                       <div className="text-slate-400 text-[11px]">
-                                        {b.roomCharge > 0 && (
-                                          <span>ຄ່າຫ້ອງ: <b className="font-mono text-purple-300">{formatCurrency(b.roomCharge, settings.currencySymbol)}</b> • </span>
+                                        {resolvedRoomCharge > 0 && (
+                                          <span>ຄ່າຫ້ອງ: <b className="font-mono text-purple-300">{formatCurrency(resolvedRoomCharge, settings.currencySymbol)}</b> • </span>
                                         )}
                                         <span>ລວມສິນຄ້າ: <b className="font-mono text-amber-300">{formatCurrency(itemsSum, settings.currencySymbol)}</b></span>
                                       </div>
                                       <div className="font-mono font-black text-white text-sm">
-                                        ຍອດສຸດທິ: <span className="text-emerald-400">{formatCurrency(b.total, settings.currencySymbol)}</span>
+                                        ຍອດສຸດທິ: <span className="text-emerald-400">{formatCurrency(resolvedBillTotal, settings.currencySymbol)}</span>
                                       </div>
                                     </div>
                                   </div>
@@ -4076,7 +4047,7 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                         : 'text-slate-400 hover:text-slate-200'
                     }`}
                   >
-                    ທັງໝົດໃນຮ້ານ ({bills.length})
+                    ທັງໝົດໃນຮ້ານ ({uniqueBills.length})
                   </button>
                 </div>
 
@@ -4203,6 +4174,8 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                   ) : (
                     managedBills.map((b) => {
                       const { billItemsCost, billProfit } = getBillCostAndProfit(b);
+                      const resolvedRoomCharge = getResolvedRoomCharge(b);
+                      const resolvedBillTotal = getResolvedBillTotal(b);
                       const isChecked = selectedBillIds.has(b.id);
                       const isExpanded = expandedBillIds.has(b.id);
                       return (
@@ -4298,13 +4271,13 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                             </td>
                             <td className="py-3 px-4 text-slate-300 font-semibold">{b.staffName}</td>
                             <td className="py-3 px-4 text-right font-mono text-slate-400">
-                              {formatCurrency(b.roomCharge, settings.currencySymbol)}
+                              {formatCurrency(resolvedRoomCharge, settings.currencySymbol)}
                             </td>
                             <td className="py-3 px-4 text-right font-mono text-rose-400">
                               {formatCurrency(billItemsCost, settings.currencySymbol)}
                             </td>
                             <td className="py-3 px-4 text-right font-mono font-bold text-amber-300">
-                              {formatCurrency(b.total, settings.currencySymbol)}
+                              {formatCurrency(resolvedBillTotal, settings.currencySymbol)}
                             </td>
                             <td className="py-3 px-4 text-right font-mono font-black text-emerald-400">
                               +{formatCurrency(billProfit, settings.currencySymbol)}
@@ -4395,13 +4368,13 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
 
                                   <div className="flex items-center justify-between pt-2 border-t border-slate-800 text-xs">
                                     <div className="text-slate-400 text-[11px]">
-                                      {b.roomCharge > 0 && (
-                                        <span>ຄ່າຫ້ອງ: <b className="font-mono text-purple-300">{formatCurrency(b.roomCharge, settings.currencySymbol)}</b> • </span>
+                                      {resolvedRoomCharge > 0 && (
+                                        <span>ຄ່າຫ້ອງ: <b className="font-mono text-purple-300">{formatCurrency(resolvedRoomCharge, settings.currencySymbol)}</b> • </span>
                                       )}
                                       <span>ລວມສິນຄ້າ: <b className="font-mono text-amber-300">{formatCurrency(b.items.reduce((s, it) => s + it.total, 0), settings.currencySymbol)}</b></span>
                                     </div>
                                     <div className="font-mono font-black text-white text-sm">
-                                      ຍອດສຸດທິ: <span className="text-emerald-400">{formatCurrency(b.total, settings.currencySymbol)}</span>
+                                      ຍອດສຸດທິ: <span className="text-emerald-400">{formatCurrency(resolvedBillTotal, settings.currencySymbol)}</span>
                                     </div>
                                   </div>
                                 </div>
@@ -4530,7 +4503,10 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                 )}
 
                 {/* Room Charge Card if this was a KTV bill */}
-                {(inspectedBill.roomCharge > 0 || inspectedBill.roomName) && (
+                {(getResolvedRoomCharge(inspectedBill) > 0 || isKtvRoomBill(inspectedBill)) && (() => {
+                  const inspectedDurMins = resolveBillDurationMinutes(inspectedBill);
+                  const inspectedRoomFee = getResolvedRoomCharge(inspectedBill);
+                  return (
                   <div className="bg-gradient-to-r from-purple-950/80 to-slate-900 border border-purple-800/60 p-3 rounded-xl flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
                       <div className="p-2 rounded-lg bg-purple-900/60 text-purple-300">
@@ -4541,18 +4517,19 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                           ຄ່າເປີດຫ້ອງ {inspectedBill.roomName || 'KTV'}
                         </div>
                         <div className="text-[10px] text-purple-300">
-                          {inspectedBill.durationMinutes
-                            ? `${Math.floor(inspectedBill.durationMinutes / 60)} ຊມ ${inspectedBill.durationMinutes % 60} ນາທີ`
+                          {inspectedDurMins > 0
+                            ? `${Math.floor(inspectedDurMins / 60)} ຊມ ${inspectedDurMins % 60} ນາທີ`
                             : inspectedBill.timeRangeFormatted || 'ນັບຕາມເວລາ'}
                           {inspectedBill.isRoomChargePaid ? ' • (ຈ່າຍກ່ອນແລ້ວ)' : ''}
                         </div>
                       </div>
                     </div>
                     <div className="font-mono font-black text-purple-300 text-sm">
-                      {formatCurrency(inspectedBill.roomCharge, settings.currencySymbol)}
+                      {formatCurrency(inspectedRoomFee, settings.currencySymbol)}
                     </div>
                   </div>
-                )}
+                  );
+                })()}
 
                 {/* Items List */}
                 <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
@@ -4623,11 +4600,11 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                       )}
                     </span>
                   </div>
-                  {inspectedBill.roomCharge > 0 && (
+                  {getResolvedRoomCharge(inspectedBill) > 0 && (
                     <div className="flex justify-between text-slate-400">
-                      <span>ຄ່າຫ້ອງ:</span>
+                      <span>ຄ່າຫ້ອງ{inspectedBill.isRoomChargePaid ? ' (ຈ່າຍກ່ອນແລ້ວ)' : ''}:</span>
                       <span className="font-mono text-purple-300 font-bold">
-                        {formatCurrency(inspectedBill.roomCharge, settings.currencySymbol)}
+                        {formatCurrency(getResolvedRoomCharge(inspectedBill), settings.currencySymbol)}
                       </span>
                     </div>
                   )}
@@ -4640,7 +4617,7 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                   <div className="flex justify-between text-sm font-black text-white pt-1.5 border-t border-slate-800">
                     <span>ຍອດລວມສຸດທິ (Total):</span>
                     <span className="font-mono text-emerald-400 text-base">
-                      {formatCurrency(inspectedBill.total, settings.currencySymbol)}
+                      {formatCurrency(getResolvedBillTotal(inspectedBill), settings.currencySymbol)}
                     </span>
                   </div>
                 </div>
@@ -4706,26 +4683,26 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                   </div>
 
                   {/* KTV Room Charge Line */}
-                  {inspectedBill.roomCharge > 0 && (
+                  {getResolvedRoomCharge(inspectedBill) > 0 && (() => {
+                    const inspectedDurMins = resolveBillDurationMinutes(inspectedBill);
+                    const inspectedRoomFee = getResolvedRoomCharge(inspectedBill);
+                    return (
                     <div className="flex justify-between text-slate-800">
                       <div>
-                        <div className="font-bold">ຄ່າຫ້ອງ ({inspectedBill.roomName})</div>
+                        <div className="font-bold">
+                          ຄ່າຫ້ອງ ({inspectedBill.roomName || 'KTV'})
+                          {inspectedBill.isRoomChargePaid ? ' (ຈ່າຍກ່ອນແລ້ວ)' : ''}
+                        </div>
                         <div className="text-[10px] text-slate-500">
-                          {inspectedBill.durationMinutes ? `${Math.floor(inspectedBill.durationMinutes / 60)} ຊມ ${inspectedBill.durationMinutes % 60} ນາທີ` : 'ນັບຕາມເວລາ'}
+                          {inspectedDurMins > 0 ? `${Math.floor(inspectedDurMins / 60)} ຊມ ${inspectedDurMins % 60} ນາທີ` : 'ນັບຕາມເວລາ'}
                         </div>
                       </div>
                       <div className="font-bold">
-                        {formatCurrency(inspectedBill.roomCharge, settings.currencySymbol)}
+                        {formatCurrency(inspectedRoomFee, settings.currencySymbol)}
                       </div>
                     </div>
-                  )}
-
-                  {inspectedBill.isRoomChargePaid && (
-                    <div className="flex justify-between text-emerald-700 text-[11px] font-bold">
-                      <span>ຄ່າຫ້ອງ ({inspectedBill.roomName}):</span>
-                      <span>ຈ່າຍແລ້ວ (0 ₭)</span>
-                    </div>
-                  )}
+                    );
+                  })()}
 
                   {/* Products & Services List */}
                   {inspectedBill.items.map((it, idx) => (
@@ -4748,7 +4725,7 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                 <div className="space-y-1 pt-1 text-[11px]">
                   <div className="flex justify-between text-slate-600">
                     <span>ລວມເງິນ (Subtotal):</span>
-                    <span>{formatCurrency(inspectedBill.subtotal, settings.currencySymbol)}</span>
+                    <span>{formatCurrency(getResolvedBillTotal(inspectedBill) + (inspectedBill.discount || 0), settings.currencySymbol)}</span>
                   </div>
                   {inspectedBill.discount > 0 && (
                     <div className="flex justify-between text-rose-600 font-bold">
@@ -4758,7 +4735,7 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                   )}
                   <div className="flex justify-between text-sm font-black text-slate-900 pt-1 border-t border-slate-400">
                     <span>ຍອດລວມສຸດທິ (Total):</span>
-                    <span>{formatCurrency(inspectedBill.total, settings.currencySymbol)}</span>
+                    <span>{formatCurrency(getResolvedBillTotal(inspectedBill), settings.currencySymbol)}</span>
                   </div>
                   <div className="flex justify-between text-[10px] text-slate-500">
                     <span>ການຊຳລະ:</span>
@@ -4813,11 +4790,12 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
 
                 {(() => {
                   const { billItemsCost, billProfit } = getBillCostAndProfit(inspectedBill);
+                  const resolvedBillTotal = getResolvedBillTotal(inspectedBill);
                   return (
                     <div className="space-y-1.5 pt-2 border-t border-slate-800 text-xs">
                       <div className="flex justify-between text-slate-400">
                         <span>ລວມເງິນ:</span>
-                        <span>{formatCurrency(inspectedBill.subtotal, settings.currencySymbol)}</span>
+                        <span>{formatCurrency(resolvedBillTotal + (inspectedBill.discount || 0), settings.currencySymbol)}</span>
                       </div>
                       {inspectedBill.discount > 0 && (
                         <div className="flex justify-between text-rose-400">
@@ -4833,7 +4811,7 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                       </div>
                       <div className="flex justify-between text-sm font-bold text-amber-300 pt-1 border-t border-slate-800">
                         <span>ຍອດສຸດທິ:</span>
-                        <span>{formatCurrency(inspectedBill.total, settings.currencySymbol)}</span>
+                        <span>{formatCurrency(resolvedBillTotal, settings.currencySymbol)}</span>
                       </div>
                       <div className="flex justify-between text-base font-black text-emerald-400 pt-1 border-t border-slate-700 bg-emerald-950/40 px-2.5 py-1.5 rounded-xl">
                         <span>ຍອດກຳໄລບິນນີ້:</span>
