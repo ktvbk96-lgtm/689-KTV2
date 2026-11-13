@@ -266,6 +266,7 @@ export default function App() {
   const lastLocalActionTimeRef = useRef<number>(0);
   const lastServerUpdatedMsRef = useRef<number>(0);
   const isServerHydratedRef = useRef<boolean>(false);
+  const serverOfflineRef = useRef<boolean>(false);
 
   useEffect(() => {
     productsRef.current = products;
@@ -528,14 +529,16 @@ export default function App() {
     }
   };
 
-  // Set up multi-device real-time sync across iOS, Android, and Windows PC (Fetch First + SSE + 3.5s Polling + BroadcastChannel)
+  // Set up multi-device real-time sync across iOS, Android, and Windows PC (Read-First GET /api/sync + 3.5s Polling + BroadcastChannel)
   useEffect(() => {
     const cleanup = initMultiDeviceSync({
       onDataReceived: (remoteData, action, meta) => {
+        serverOfflineRef.current = false;
         applyRemoteSyncData(remoteData, action, meta);
       },
       onStatusChange: (status, message) => {
         if (status === 'connected') {
+          serverOfflineRef.current = false;
           setSyncStatus('success');
           setSyncMessage(message || 'Real-time: ພ້ອມຊິ້ງຫຼາຍເຄື່ອງ (PC & ມືຖື)');
           setTimeout(() => setSyncStatus('idle'), 2500);
@@ -543,6 +546,7 @@ export default function App() {
           setSyncStatus('loading');
           if (message) setSyncMessage(message);
         } else if (status === 'offline') {
+          serverOfflineRef.current = true;
           setSyncStatus('error');
           if (message) setSyncMessage(message);
           // Only if Server is genuinely unreachable on boot, fall back cleanly to non-mock local cache
@@ -579,15 +583,16 @@ export default function App() {
         return;
       }
 
-      // Wait until real Express Server has hydrated first, and NEVER let older Firestore docs overwrite newer Server state
-      if (!isServerHydratedRef.current) {
+      // Wait until /api/sync hydrates first unless /api/sync is genuinely offline
+      if (!isServerHydratedRef.current && !serverOfflineRef.current) {
         return;
       }
 
       const remoteTime = remoteData.lastUpdated ? new Date(remoteData.lastUpdated).getTime() : 0;
       if (
-        remoteTime === 0 ||
-        remoteTime <= Math.max(lastLocalActionTimeRef.current, lastServerUpdatedMsRef.current)
+        isServerHydratedRef.current &&
+        (remoteTime === 0 ||
+          remoteTime <= Math.max(lastLocalActionTimeRef.current, lastServerUpdatedMsRef.current))
       ) {
         return;
       }
@@ -666,7 +671,7 @@ export default function App() {
     let serverAuthoritativeData: SyncPayload | undefined;
     let pushOk = false;
 
-    // 1. Instantly push granular delta to Express Backend Server & SSE
+    // 1. Instantly push granular delta to Vercel Serverless API (/api/sync)
     try {
       const result = await pushMultiDeviceUpdate(action, granularPayload);
       pushOk = result.success;
@@ -691,31 +696,34 @@ export default function App() {
     }
 
     // 2. Sync authoritative merged state to Firebase Firestore Cloud (ktv-e97cb)
-    try {
-      const deviceId = getDeviceId();
-      const cloudState = serverAuthoritativeData || {
-        bills: billsRef.current,
-        debts: debtsRef.current,
-        products: productsRef.current,
-        rooms: roomsRef.current,
-        packages: packagesRef.current,
-        staff: staffRef.current,
-        settings,
-      };
-      await pushToFirebaseStore({
-        lastSenderId: deviceId,
-        lastAction: action,
-        lastUpdated: serverAuthoritativeData?.lastUpdated || timestamp,
-        bills: cloudState.bills ?? billsRef.current,
-        debts: cloudState.debts ?? debtsRef.current,
-        products: cloudState.products ?? productsRef.current,
-        rooms: cloudState.rooms ?? roomsRef.current,
-        packages: cloudState.packages ?? packagesRef.current,
-        staff: cloudState.staff ?? staffRef.current,
-        settings: cloudState.settings ?? settings,
-      });
-    } catch (e) {
-      console.warn('Firebase push note:', e);
+    // Never push unhydrated local client arrays if /api/sync hasn't loaded yet
+    if (serverAuthoritativeData || isServerHydratedRef.current) {
+      try {
+        const deviceId = getDeviceId();
+        const cloudState = serverAuthoritativeData || {
+          bills: billsRef.current,
+          debts: debtsRef.current,
+          products: productsRef.current,
+          rooms: roomsRef.current,
+          packages: packagesRef.current,
+          staff: staffRef.current,
+          settings,
+        };
+        await pushToFirebaseStore({
+          lastSenderId: deviceId,
+          lastAction: action,
+          lastUpdated: serverAuthoritativeData?.lastUpdated || timestamp,
+          bills: cloudState.bills ?? billsRef.current,
+          debts: cloudState.debts ?? debtsRef.current,
+          products: cloudState.products ?? productsRef.current,
+          rooms: cloudState.rooms ?? roomsRef.current,
+          packages: cloudState.packages ?? packagesRef.current,
+          staff: cloudState.staff ?? staffRef.current,
+          settings: cloudState.settings ?? settings,
+        });
+      } catch (e) {
+        console.warn('Firebase push note:', e);
+      }
     }
 
     // 3. Forward to Google Sheets Web App if configured
@@ -1549,7 +1557,7 @@ export default function App() {
           <div className="hidden sm:flex items-center gap-1.5 ml-2 pl-2 border-l border-slate-700 text-[10px] text-emerald-300">
             <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 font-bold border border-emerald-500/30">
               <Zap className="w-3 h-3" />
-              <span>Real-time 3.5s + SSE</span>
+              <span>Real-time Sync 3.5s</span>
             </span>
             <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800/90 text-slate-300 font-semibold border border-slate-700">
               <Monitor className="w-3 h-3" />

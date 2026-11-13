@@ -2,12 +2,12 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * 689 KTV - Real-Time Multi-Device Sync Engine
- * Supports seamless, instant synchronization across iOS, Android, and Windows PC.
+ * 689 KTV - Real-Time Multi-Device Sync Engine (Vercel Serverless Compatible)
+ * Supports seamless synchronization across iOS, Android, and Windows PC.
  * Implements:
- * 1. Fetch First on Load (Server is Single Source of Truth)
- * 2. Granular Delta + Timestamp-Guarded Updates (No full state overwrite)
- * 3. Server-Sent Events (SSE) + 3.5s Version Polling + Tab Focus/Wakeup + Local BroadcastChannel
+ * 1. Read-First / Fetch-First on Load (GET /api/sync — Server is Single Source of Truth)
+ * 2. Granular Delta + Timestamp-Guarded Updates (POST /api/sync — No full state overwrite)
+ * 3. Smart 3.5s Version Polling (GET /api/sync/version) + Tab Focus/Wakeup + Local BroadcastChannel
  */
 
 import { Product, Room, RoomPackage, StaffMember, AppSettings, DebtRecord, BillRecord } from '../types';
@@ -112,7 +112,7 @@ try {
 }
 
 let currentServerVersion = 0;
-let eventSource: EventSource | null = null;
+let currentServerLastUpdated = '';
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let isBroadcasting = false;
 let isFetchingState = false;
@@ -123,7 +123,8 @@ export function getCurrentServerVersion(): number {
 }
 
 /**
- * Push a granular delta update to the Server and notify all other devices (iOS, Android, Windows)
+ * Push a granular delta update to the Server (/api/sync) and notify other tabs.
+ * Never called automatically on page load — only on explicit user mutations.
  */
 export async function pushMultiDeviceUpdate(
   action: SyncAction,
@@ -146,7 +147,7 @@ export async function pushMultiDeviceUpdate(
     }
   }
 
-  // 2. Send granular delta + baseVersion to Backend Server (/api/sync)
+  // 2. Send granular delta + baseVersion to Vercel Serverless API (/api/sync)
   try {
     const res = await fetch('/api/sync', {
       method: 'POST',
@@ -167,6 +168,9 @@ export async function pushMultiDeviceUpdate(
         const json = await res.json();
         if (typeof json?.version === 'number') {
           currentServerVersion = json.version;
+        }
+        if (typeof json?.lastUpdated === 'string') {
+          currentServerLastUpdated = json.lastUpdated;
         }
         return {
           success: !!json?.success,
@@ -189,7 +193,7 @@ export async function pushMultiDeviceUpdate(
 }
 
 /**
- * Fetch latest authoritative snapshot from Server (never pushes local data to server)
+ * Fetch latest authoritative snapshot from Server (Read-Only GET /api/sync — never overwrites server)
  */
 export async function fetchLatestServerSnapshot(isManual = false): Promise<boolean> {
   if (!activeCallbacks) return false;
@@ -209,6 +213,9 @@ export async function fetchLatestServerSnapshot(isManual = false): Promise<boole
           if (typeof json.version === 'number') {
             currentServerVersion = json.version;
           }
+          if (typeof json.lastUpdated === 'string') {
+            currentServerLastUpdated = json.lastUpdated;
+          }
           activeCallbacks.onDataReceived(json.data, 'syncAll', {
             isInitialSync: isManual,
             isFullSnapshot: true,
@@ -216,7 +223,7 @@ export async function fetchLatestServerSnapshot(isManual = false): Promise<boole
           });
           activeCallbacks.onStatusChange?.(
             'connected',
-            'ຊິ້ງຫຼາຍເຄື່ອງ Real-time (SSE + 3.5s) ເຊື່ອມຕໍ່ແລ້ວ'
+            'ຊິ້ງຫຼາຍເຄື່ອງ Real-time (Polling 3.5s) ເຊື່ອມຕໍ່ແລ້ວ'
           );
           return true;
         }
@@ -233,13 +240,13 @@ export async function fetchLatestServerSnapshot(isManual = false): Promise<boole
 }
 
 /**
- * Initialize Multi-Device Real-Time Listener (Fetch-First + SSE + 3.5s Polling + Tab Wakeup)
+ * Initialize Multi-Device Real-Time Listener (Fetch-First GET /api/sync + 3.5s Version Polling + Tab Wakeup)
  */
 export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
   const deviceId = getDeviceId();
   activeCallbacks = callbacks;
 
-  // 1. Fetch First on Load (Server is the Single Source of Truth)
+  // 1. Read-First on Load (GET /api/sync — Server is the Single Source of Truth)
   const fetchFullState = async (isInitialSync: boolean) => {
     if (isFetchingState) return;
     isFetchingState = true;
@@ -256,6 +263,9 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
             if (typeof json.version === 'number') {
               currentServerVersion = json.version;
             }
+            if (typeof json.lastUpdated === 'string') {
+              currentServerLastUpdated = json.lastUpdated;
+            }
             callbacks.onDataReceived(json.data, 'syncAll', {
               isInitialSync,
               isFullSnapshot: true,
@@ -263,16 +273,16 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
             });
             callbacks.onStatusChange?.(
               'connected',
-              'ຊິ້ງຫຼາຍເຄື່ອງ Real-time (SSE + 3.5s) ເຊື່ອມຕໍ່ແລ້ວ'
+              'ຊິ້ງຫຼາຍເຄື່ອງ Real-time (Polling 3.5s) ເຊື່ອມຕໍ່ແລ້ວ'
             );
             return;
           }
         }
       }
-      callbacks.onStatusChange?.('connected', 'Real-time: ພ້ອມຊິ້ງຫຼາຍເຄື່ອງ (PC & ມືຖື)');
+      callbacks.onStatusChange?.('offline', 'ບໍ່ສາມາດດຶງ /api/sync ໄດ້ຊົ່ວຄາວ');
     } catch (err) {
       console.warn('Initial /api/sync note:', err);
-      callbacks.onStatusChange?.('offline', 'ໂໝດອອບລາຍ (ກຳລັງໃຊ້ຂໍ້ມູນໃນເຄື່ອງຊົ່ວຄາວ)');
+      callbacks.onStatusChange?.('offline', 'ໂໝດອອບລາຍ (ກຳລັງໃຊ້ຂໍ້ມູນສຳຮອງ)');
     } finally {
       isFetchingState = false;
     }
@@ -280,68 +290,7 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
 
   fetchFullState(true);
 
-  // 2. Setup Server-Sent Events (SSE) for Real-Time Instant Push
-  let consecutiveSseErrors = 0;
-  const setupSse = () => {
-    if (typeof EventSource === 'undefined') return;
-
-    try {
-      if (eventSource) {
-        eventSource.close();
-      }
-
-      eventSource = new EventSource('/api/sync/events');
-
-      eventSource.onopen = () => {
-        consecutiveSseErrors = 0;
-        callbacks.onStatusChange?.('connected', 'ຊິ້ງຫຼາຍເຄື່ອງ Real-time (SSE + 3.5s) ອອນໄລນ໌');
-      };
-
-      eventSource.onmessage = (event) => {
-        try {
-          const payload = JSON.parse(event.data);
-          if (payload.type === 'handshake') {
-            if (typeof payload.version === 'number' && payload.version > currentServerVersion) {
-              fetchFullState(false);
-            }
-            return;
-          }
-          if (payload.type === 'update') {
-            if (typeof payload.version === 'number') {
-              currentServerVersion = payload.version;
-            }
-
-            // Apply updates pushed by other devices immediately
-            if (payload.senderDeviceId !== deviceId && payload.data) {
-              callbacks.onDataReceived(payload.data, payload.action, {
-                isInitialSync: false,
-                isFullSnapshot: true,
-                version: payload.version,
-              });
-              callbacks.onStatusChange?.('connected', '⚡ ອັບເດດຂໍ້ມູນຈາກເຄື່ອງອື່ນແລ້ວ');
-            }
-          }
-        } catch (e) {
-          console.error('Error parsing SSE event:', e);
-        }
-      };
-
-      eventSource.onerror = () => {
-        consecutiveSseErrors++;
-        if (consecutiveSseErrors <= 2) {
-          callbacks.onStatusChange?.('syncing', 'ກຳລັງເຊື່ອມຕໍ່ Real-time ໃໝ່...');
-        } else {
-          callbacks.onStatusChange?.('connected', 'Real-time Polling 3.5s ກຳລັງທຳງານ');
-        }
-      };
-    } catch (err) {
-      console.warn('SSE initialization note:', err);
-    }
-  };
-
-  setupSse();
-
-  // 3. Listen on local BroadcastChannel (Same-browser multi-tab instant updates)
+  // 2. Listen on local BroadcastChannel (Same-browser multi-tab instant updates)
   const handleBroadcastMessage = (event: MessageEvent) => {
     const { action, data, senderDeviceId } = event.data || {};
     if (senderDeviceId !== deviceId && data) {
@@ -356,7 +305,7 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
     broadcastChannel.addEventListener('message', handleBroadcastMessage);
   }
 
-  // 4. Smart Version Polling every 3.5s (Reliable cross-device fallback for Mobile/PC)
+  // 3. Smart Version Polling every 3.5s via /api/sync/version (100% Vercel Serverless compatible)
   const checkVersion = async () => {
     if (isBroadcasting || isFetchingState) return;
     try {
@@ -365,7 +314,14 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           const json = await res.json();
-          if (typeof json?.version === 'number' && json.version !== currentServerVersion) {
+          const versionChanged =
+            typeof json?.version === 'number' && json.version !== currentServerVersion;
+          const tsChanged =
+            typeof json?.lastUpdated === 'string' &&
+            json.lastUpdated !== '' &&
+            json.lastUpdated !== currentServerLastUpdated;
+
+          if (versionChanged || tsChanged) {
             await fetchFullState(false);
           }
         }
@@ -381,13 +337,10 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
     }
   }, 3500);
 
-  // 5. Immediate sync check when switching tabs, unlocking mobile phone, or reconnecting network
+  // 4. Immediate sync check when switching tabs, unlocking mobile phone, or reconnecting network
   const handleWakeUp = () => {
     if (document.visibilityState === 'visible' && navigator.onLine !== false) {
       checkVersion();
-      if (!eventSource || eventSource.readyState === EventSource.CLOSED) {
-        setupSse();
-      }
     }
   };
 
@@ -398,7 +351,6 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
   // Return cleanup function
   return () => {
     if (pollTimer) clearInterval(pollTimer);
-    if (eventSource) eventSource.close();
     if (broadcastChannel) {
       broadcastChannel.removeEventListener('message', handleBroadcastMessage);
     }
