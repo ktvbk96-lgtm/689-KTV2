@@ -240,6 +240,20 @@ export function markCloudSnapshotApplied(meta: {
   });
 }
 
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs = 12000
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Push a granular delta update to Neon Postgres (/api/sync).
  * Never called automatically on page load — only on explicit user actions.
@@ -293,20 +307,24 @@ export async function pushMultiDeviceUpdate(
 
   // 2. Push to Vercel Serverless /api/sync (Neon Postgres)
   try {
-    const res = await fetch('/api/sync', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+    const res = await fetchWithTimeout(
+      '/api/sync',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action,
+          data,
+          senderDeviceId: deviceId,
+          deviceType,
+          deviceLabel,
+          baseVersion: currentServerVersion,
+        }),
       },
-      body: JSON.stringify({
-        action,
-        data,
-        senderDeviceId: deviceId,
-        deviceType,
-        deviceLabel,
-        baseVersion: currentServerVersion,
-      }),
-    });
+      15000
+    );
 
     if (res.ok) {
       const contentType = res.headers.get('content-type') || '';
@@ -380,7 +398,7 @@ export async function fetchLatestServerSnapshot(isManual = false): Promise<{
     if (isManual) {
       activeCallbacks.onStatusChange?.('syncing', 'ກຳລັງດຶງຂໍ້ມູນລ່າສຸດຈາກ Neon Postgres...');
     }
-    const res = await fetch(`/api/sync?_t=${Date.now()}`, { cache: 'no-store' });
+    const res = await fetchWithTimeout(`/api/sync?_t=${Date.now()}`, { cache: 'no-store' }, 12000);
     if (res.ok) {
       const contentType = res.headers.get('content-type') || '';
       if (contentType.includes('application/json')) {
@@ -459,14 +477,14 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
     }
   };
 
-  const fetchFullState = async (isInitialSync: boolean) => {
-    if (isFetchingState) return;
+  const fetchFullState = async (isInitialSync: boolean, retryAttempt = 0): Promise<void> => {
+    if (isFetchingState && retryAttempt === 0) return;
     isFetchingState = true;
     try {
-      if (isInitialSync) {
+      if (isInitialSync && retryAttempt === 0) {
         callbacks.onStatusChange?.('syncing', 'ກຳລັງກວດສອບຂໍ້ມູນລ່າສຸດຈາກ Neon Postgres...');
       }
-      const res = await fetch(`/api/sync?_t=${Date.now()}`, { cache: 'no-store' });
+      const res = await fetchWithTimeout(`/api/sync?_t=${Date.now()}`, { cache: 'no-store' }, 12000);
       if (res.ok) {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
@@ -565,12 +583,23 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
           }
         }
       }
+      // Retry once on initial Neon serverless cold-start 5xx before reporting offline
+      if (isInitialSync && retryAttempt < 1) {
+        await new Promise((r) => setTimeout(r, 1200));
+        return await fetchFullState(true, retryAttempt + 1);
+      }
       callbacks.onStatusChange?.('offline', 'ບໍ່ສາມາດດຶງ /api/sync ໄດ້ຊົ່ວຄາວ');
     } catch (err) {
+      if (isInitialSync && retryAttempt < 1) {
+        await new Promise((r) => setTimeout(r, 1200));
+        return await fetchFullState(true, retryAttempt + 1);
+      }
       console.warn('Initial /api/sync note:', err);
       callbacks.onStatusChange?.('offline', 'ໂໝດອອບລາຍ (ກຳລັງໃຊ້ຂໍ້ມູນໃນເຄື່ອງຊົ່ວຄາວ)');
     } finally {
-      isFetchingState = false;
+      if (retryAttempt === 0) {
+        isFetchingState = false;
+      }
     }
   };
 
@@ -595,7 +624,7 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
   const checkVersion = async () => {
     if (isBroadcasting || isFetchingState || isLocalPreviewMode) return;
     try {
-      const res = await fetch(`/api/sync/version?_t=${Date.now()}`, { cache: 'no-store' });
+      const res = await fetchWithTimeout(`/api/sync/version?_t=${Date.now()}`, { cache: 'no-store' }, 8000);
       if (res.ok) {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {

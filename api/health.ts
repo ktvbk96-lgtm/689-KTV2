@@ -1,4 +1,4 @@
-import { readStoreVersion } from './_store';
+import { readStoreVersion } from './_store.js';
 
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');

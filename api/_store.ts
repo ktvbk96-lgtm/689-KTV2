@@ -88,9 +88,18 @@ function createEmptyStore(): AppStore {
   };
 }
 
+function getDatabaseUrl(): string {
+  const raw =
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.NEON_DATABASE_URL ||
+    process.env.DATABASE_URL_UNPOOLED ||
+    '';
+  return raw.trim().replace(/^['"]+|['"]+$/g, '').trim();
+}
+
 export function hasNeonDatabase(): boolean {
-  const url = process.env.DATABASE_URL;
-  return Boolean(url && url.trim().length > 0);
+  return getDatabaseUrl().length > 0;
 }
 
 export function parseTs(val?: string | null): number {
@@ -118,45 +127,59 @@ function normalizeStaffRow(s: any): any {
 }
 
 function getSqlClient() {
-  const url = process.env.DATABASE_URL;
-  if (!url || !url.trim()) {
+  const url = getDatabaseUrl();
+  if (!url) {
     return null;
   }
-  return neon(url.trim());
+  return neon(url);
 }
 
 let tablesInitialized = false;
+let tablesInitPromise: Promise<void> | null = null;
 
 /**
  * Safely auto-creates tables via CREATE TABLE IF NOT EXISTS.
+ * Uses single-flight promise to avoid concurrent DDL race conditions on cold start.
  * NEVER uses DROP or TRUNCATE.
  */
 async function ensureTablesExist(sql: ReturnType<typeof neon<false, false>>): Promise<void> {
   if (tablesInitialized) return;
+  if (tablesInitPromise) {
+    return tablesInitPromise;
+  }
 
-  await sql`
-    CREATE TABLE IF NOT EXISTS ktv_store_state (
-      store_key TEXT PRIMARY KEY,
-      version BIGINT NOT NULL DEFAULT 1,
-      last_updated TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      data JSONB NOT NULL DEFAULT '{}'::jsonb
-    )
-  `;
+  tablesInitPromise = (async () => {
+    try {
+      await sql`
+        CREATE TABLE IF NOT EXISTS ktv_store_state (
+          store_key TEXT PRIMARY KEY,
+          version BIGINT NOT NULL DEFAULT 1,
+          last_updated TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          data JSONB NOT NULL DEFAULT '{}'::jsonb
+        )
+      `;
 
-  await sql`
-    CREATE TABLE IF NOT EXISTS ktv_staff_permissions (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'staff',
-      pin TEXT,
-      phone TEXT,
-      active BOOLEAN NOT NULL DEFAULT TRUE,
-      permissions JSONB NOT NULL DEFAULT '{}'::jsonb,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `;
+      await sql`
+        CREATE TABLE IF NOT EXISTS ktv_staff_permissions (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          role TEXT NOT NULL DEFAULT 'staff',
+          pin TEXT,
+          phone TEXT,
+          active BOOLEAN NOT NULL DEFAULT TRUE,
+          permissions JSONB NOT NULL DEFAULT '{}'::jsonb,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `;
 
-  tablesInitialized = true;
+      tablesInitialized = true;
+    } catch (err) {
+      tablesInitPromise = null;
+      throw err;
+    }
+  })();
+
+  return tablesInitPromise;
 }
 
 function parseJsonField(val: any): any {
@@ -416,6 +439,10 @@ export async function applyGranularMergeAndSave(body: any): Promise<{
   skippedRemoteWrite?: boolean;
   version: number;
   lastUpdated: string;
+  lastUpdatedByDevice?: string;
+  lastUpdatedDeviceType?: 'Mobile' | 'Tablet' | 'PC';
+  lastSenderId?: string;
+  lastAction?: string;
   rejectedStale: boolean;
   data: AppStore | null;
 }> {
@@ -882,6 +909,10 @@ export async function applyGranularMergeAndSave(body: any): Promise<{
     hasDatabase: true,
     version: nextVersion,
     lastUpdated: store.lastUpdated,
+    lastUpdatedByDevice: store.lastUpdatedByDevice || '',
+    lastUpdatedDeviceType: store.lastUpdatedDeviceType,
+    lastSenderId: store.lastSenderId || '',
+    lastAction: store.lastAction || '',
     rejectedStale,
     data: store,
   };
