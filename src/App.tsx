@@ -15,6 +15,7 @@ import {
   BillRecord,
   DebtRecord,
   CartItem,
+  StockRestockRecord,
 } from './types';
 import {
   getStoredProducts,
@@ -32,6 +33,8 @@ import {
   updateStoredBills,
   getStoredDebts,
   saveStoredDebts,
+  getStoredStockHistory,
+  saveStoredStockHistory,
   getLastSyncedMeta,
   LastSyncedMeta,
 } from './lib/storage';
@@ -238,6 +241,7 @@ export default function App() {
   const [settings, setSettings] = useState<AppSettings>(getStoredSettings());
   const [bills, setBills] = useState<BillRecord[]>([]);
   const [debts, setDebts] = useState<DebtRecord[]>([]);
+  const [stockHistory, setStockHistory] = useState<StockRestockRecord[]>([]);
 
   // Granular Effective Staff Permissions (Admin ALWAYS retains all 8 permissions)
   const effectivePermissions = getEffectivePermissions(currentRole, currentStaff);
@@ -309,6 +313,7 @@ export default function App() {
   const staffRef = useRef<StaffMember[]>(staffList);
   const debtsRef = useRef<DebtRecord[]>(debts);
   const billsRef = useRef<BillRecord[]>(bills);
+  const stockHistoryRef = useRef<StockRestockRecord[]>(stockHistory);
   const isPushingRef = useRef<boolean>(false);
   const lastRoomLocalActionTimeRef = useRef<number>(0);
   // Start at 0 so newly opened devices ALWAYS accept the Server snapshot first (never blocked by boot Date.now())
@@ -340,6 +345,10 @@ export default function App() {
   useEffect(() => {
     billsRef.current = bills;
   }, [bills]);
+
+  useEffect(() => {
+    stockHistoryRef.current = stockHistory;
+  }, [stockHistory]);
 
   // Keep logged-in staff member's granular permissions synced live when staffList updates
   useEffect(() => {
@@ -625,6 +634,37 @@ export default function App() {
       });
     }
 
+    // 8. Stock Restock History (Additive — never wipes existing local history on partial updates)
+    if (Array.isArray(remoteData.stockHistory)) {
+      const nextHistory = isInitialSync
+        ? remoteData.stockHistory
+        : mergeEntitiesByUpdatedAt(stockHistoryRef.current, remoteData.stockHistory, isFullSnapshot);
+      if (JSON.stringify(stockHistoryRef.current) !== JSON.stringify(nextHistory)) {
+        setStockHistory(nextHistory);
+        stockHistoryRef.current = nextHistory;
+        saveStoredStockHistory(nextHistory);
+        changed = true;
+      }
+    } else if (
+      Array.isArray(remoteData.changedStockHistory) ||
+      Array.isArray(remoteData.deletedStockHistoryIds)
+    ) {
+      let nextHistory = [...stockHistoryRef.current];
+      if (Array.isArray(remoteData.changedStockHistory) && remoteData.changedStockHistory.length > 0) {
+        nextHistory = mergeEntitiesByUpdatedAt(nextHistory, remoteData.changedStockHistory, false);
+      }
+      if (Array.isArray(remoteData.deletedStockHistoryIds) && remoteData.deletedStockHistoryIds.length > 0) {
+        const delSet = new Set(remoteData.deletedStockHistoryIds);
+        nextHistory = nextHistory.filter((h) => !delSet.has(h.id));
+      }
+      if (JSON.stringify(stockHistoryRef.current) !== JSON.stringify(nextHistory)) {
+        setStockHistory(nextHistory);
+        stockHistoryRef.current = nextHistory;
+        saveStoredStockHistory(nextHistory);
+        changed = true;
+      }
+    }
+
     if (changed && !isInitialSync) {
       showToast('⚡ ອັບເດດ Real-time ຈາກເຄື່ອງອື່ນອັດຕະໂນມັດແລ້ວ!');
     }
@@ -639,6 +679,7 @@ export default function App() {
       const cachedStaff = getStoredStaff();
       const cachedBills = getStoredBills();
       const cachedDebts = getStoredDebts();
+      const cachedStockHistory = getStoredStockHistory();
       if (cachedProducts.length > 0) {
         setProducts(cachedProducts);
         productsRef.current = cachedProducts;
@@ -662,6 +703,10 @@ export default function App() {
       if (cachedDebts.length > 0) {
         setDebts(cachedDebts);
         debtsRef.current = cachedDebts;
+      }
+      if (cachedStockHistory.length > 0) {
+        setStockHistory(cachedStockHistory);
+        stockHistoryRef.current = cachedStockHistory;
       }
     };
 
@@ -1059,6 +1104,7 @@ export default function App() {
       setRooms(getStoredRooms());
       setBills(getStoredBills());
       setDebts(getStoredDebts());
+      setStockHistory(getStoredStockHistory());
     };
 
     window.addEventListener('storage', handleStorageUpdate);
@@ -1066,6 +1112,7 @@ export default function App() {
     window.addEventListener('689ktv_rooms_updated', handleStorageUpdate);
     window.addEventListener('689ktv_bills_updated', handleStorageUpdate);
     window.addEventListener('689ktv_debts_updated', handleStorageUpdate);
+    window.addEventListener('689ktv_stock_history_updated', handleStorageUpdate);
 
     return () => {
       clearInterval(btInterval);
@@ -1074,6 +1121,7 @@ export default function App() {
       window.removeEventListener('689ktv_rooms_updated', handleStorageUpdate);
       window.removeEventListener('689ktv_bills_updated', handleStorageUpdate);
       window.removeEventListener('689ktv_debts_updated', handleStorageUpdate);
+      window.removeEventListener('689ktv_stock_history_updated', handleStorageUpdate);
     };
   }, []);
 
@@ -1140,6 +1188,8 @@ export default function App() {
     const localStaff = staffRef.current.length > 0 ? staffRef.current : getStoredStaff();
     const localBills = billsRef.current.length > 0 ? billsRef.current : getStoredBills();
     const localDebts = debtsRef.current.length > 0 ? debtsRef.current : getStoredDebts();
+    const localStockHistory =
+      stockHistoryRef.current.length > 0 ? stockHistoryRef.current : getStoredStockHistory();
 
     const totalItems =
       localProducts.length +
@@ -1147,7 +1197,8 @@ export default function App() {
       localPackages.length +
       localStaff.length +
       localBills.length +
-      localDebts.length;
+      localDebts.length +
+      localStockHistory.length;
 
     if (totalItems === 0) {
       showToast('⚠️ ບໍ່ມີຂໍ້ມູນໃນເຄື່ອງນີ້ສຳລັບອັບໂຫຼດຂຶ້ນ Cloud (ປ້ອງກັນການຂຽນທັບຂໍ້ມູນວ່າງ)');
@@ -1166,6 +1217,7 @@ export default function App() {
         ...(localStaff.length > 0 ? { staff: localStaff } : {}),
         ...(localBills.length > 0 ? { bills: localBills } : {}),
         ...(localDebts.length > 0 ? { debts: localDebts } : {}),
+        ...(localStockHistory.length > 0 ? { stockHistory: localStockHistory } : {}),
         settings,
         lastUpdated: new Date().toISOString(),
       };
@@ -2083,7 +2135,9 @@ export default function App() {
           <InventoryManagement
             products={products}
             currentRole={currentRole}
+            currentStaffName={currentStaff?.name || (currentRole === 'admin' ? 'Admin' : 'ພະນັກງານ')}
             permissions={effectivePermissions}
+            stockHistory={stockHistory}
             onRequestAdminOverride={requestAdminOverride}
             settings={settings}
             onSaveProducts={async (updated) => {
@@ -2118,6 +2172,45 @@ export default function App() {
                 });
               }
               showToast('✅ ບັນທຶກ ແລະ ອັບເດດສະຕັອກສິນຄ້າສຳເລັດແລ້ວ!');
+            }}
+            onSaveStockHistory={async (updatedHistory) => {
+              const nowIso = new Date().toISOString();
+              const prevHistory = stockHistoryRef.current;
+              const deletedStockHistoryIds = prevHistory
+                .filter((p) => !updatedHistory.some((u) => u.id === p.id))
+                .map((p) => p.id);
+              const editedExisting = updatedHistory.some((rec) => {
+                const prev = prevHistory.find((p) => p.id === rec.id);
+                return prev && JSON.stringify(prev) !== JSON.stringify(rec);
+              });
+
+              // Double guard: ONLY Admin can edit or delete restock history records
+              if ((deletedStockHistoryIds.length > 0 || editedExisting) && currentRole !== 'admin') {
+                showToast('⚠️ เฉพาะ Admin เท่านั้นที่สามารถแก้ไขหรือลบประวัติการเติมสต็อกได้');
+                return;
+              }
+
+              const changedStockHistory: StockRestockRecord[] = [];
+              const stampedAll = updatedHistory.map((rec) => {
+                const prev = prevHistory.find((p) => p.id === rec.id);
+                if (!prev || JSON.stringify(prev) !== JSON.stringify(rec)) {
+                  const stamped = { ...rec, updatedAt: nowIso };
+                  changedStockHistory.push(stamped);
+                  return stamped;
+                }
+                return rec;
+              });
+
+              setStockHistory(stampedAll);
+              stockHistoryRef.current = stampedAll;
+              saveStoredStockHistory(stampedAll);
+              lastLocalActionTimeRef.current = Date.now();
+              if (changedStockHistory.length > 0 || deletedStockHistoryIds.length > 0) {
+                await triggerGasSync('saveStockHistory', {
+                  ...(changedStockHistory.length > 0 ? { changedStockHistory } : {}),
+                  ...(deletedStockHistoryIds.length > 0 ? { deletedStockHistoryIds } : {}),
+                });
+              }
             }}
           />
         )}

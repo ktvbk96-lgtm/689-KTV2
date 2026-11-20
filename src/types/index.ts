@@ -46,6 +46,27 @@ export interface Product {
   updatedAt?: string;
 }
 
+export interface StockRestockRecord {
+  id: string;
+  productId: string;
+  productName: string;
+  category: ProductCategory;
+  unit: string;
+  unitType: 'single' | 'pack';
+  unitLabel: string;
+  packMultiplier: number;
+  inputQty: number;
+  addedQty: number;
+  stockBefore: number;
+  stockAfter: number;
+  unitCostPrice: number;
+  totalCost: number;
+  restockedAt: string;
+  note?: string;
+  recordedBy?: string;
+  updatedAt?: string;
+}
+
 export interface CartItem {
   product: Product;
   quantity: number;

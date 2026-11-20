@@ -25,6 +25,7 @@ export interface AppStore {
   settings: any;
   debts: any[];
   bills: any[];
+  stockHistory: any[];
 }
 
 const ADMIN_ALL_PERMISSIONS: StaffPermissionsPayload = {
@@ -83,6 +84,7 @@ function createEmptyStore(): AppStore {
     settings: { ...DEFAULT_SETTINGS },
     debts: [],
     bills: [],
+    stockHistory: [],
   };
 }
 
@@ -275,6 +277,7 @@ export async function readAuthoritativeStore(): Promise<{
         : { ...DEFAULT_SETTINGS };
     store.debts = Array.isArray(data.debts) ? data.debts : [];
     store.bills = Array.isArray(data.bills) ? data.bills : [];
+    store.stockHistory = Array.isArray(data.stockHistory) ? data.stockHistory : [];
   }
 
   // Hydrate staff & granular permissions directly from ktv_staff_permissions table if populated
@@ -476,7 +479,8 @@ export async function applyGranularMergeAndSave(body: any): Promise<{
     (Array.isArray(data.packages) && data.packages.length === 0 && store.packages.length > 0) ||
     (Array.isArray(data.staff) && data.staff.length === 0 && store.staff.length > 0) ||
     (Array.isArray(data.bills) && data.bills.length === 0 && store.bills.length > 0) ||
-    (Array.isArray(data.debts) && data.debts.length === 0 && store.debts.length > 0);
+    (Array.isArray(data.debts) && data.debts.length === 0 && store.debts.length > 0) ||
+    (Array.isArray(data.stockHistory) && data.stockHistory.length === 0 && (store.stockHistory || []).length > 0);
   if (emptyOverwriteBlocked) {
     return {
       success: false,
@@ -537,6 +541,13 @@ export async function applyGranularMergeAndSave(body: any): Promise<{
       const merged = mergeBillsByIdOrNumber(store.bills, data.bills, nowIso);
       if (JSON.stringify(store.bills) !== JSON.stringify(merged)) {
         store.bills = merged;
+        hasChanged = true;
+      }
+    }
+    if (Array.isArray(data.stockHistory) && data.stockHistory.length > 0) {
+      const merged = mergeArrayById(store.stockHistory || [], data.stockHistory, nowIso);
+      if (JSON.stringify(store.stockHistory || []) !== JSON.stringify(merged)) {
+        store.stockHistory = merged;
         hasChanged = true;
       }
     }
@@ -785,6 +796,47 @@ export async function applyGranularMergeAndSave(body: any): Promise<{
       const mergedSettings = { ...store.settings, ...data.settings };
       if (JSON.stringify(store.settings) !== JSON.stringify(mergedSettings)) {
         store.settings = mergedSettings;
+        hasChanged = true;
+      }
+    }
+
+    // 9. Granular Stock Restock History Merge (Additive — NEVER wipes existing history with empty [])
+    const incomingStockHistory = Array.isArray(data.changedStockHistory)
+      ? data.changedStockHistory
+      : action === 'saveStockHistory' && Array.isArray(data.stockHistory) && data.stockHistory.length > 0
+      ? data.stockHistory
+      : null;
+
+    if (incomingStockHistory && incomingStockHistory.length > 0) {
+      const current = [...(store.stockHistory || [])];
+      for (const inc of incomingStockHistory) {
+        if (!inc?.id) continue;
+        const idx = current.findIndex((h: any) => h.id === inc.id);
+        const inTs = parseTs(inc.updatedAt);
+        if (idx === -1) {
+          current.unshift({ ...inc, updatedAt: inc.updatedAt || nowIso });
+          hasChanged = true;
+        } else {
+          const ex = current[idx];
+          const exTs = parseTs(ex.updatedAt);
+          if (exTs > 0 && inTs > 0 && inTs < exTs) {
+            rejectedStale = true;
+            continue;
+          }
+          const stamped = { ...inc, updatedAt: inc.updatedAt || nowIso };
+          if (JSON.stringify(ex) !== JSON.stringify(stamped)) {
+            current[idx] = stamped;
+            hasChanged = true;
+          }
+        }
+      }
+      store.stockHistory = current;
+    }
+    if (Array.isArray(data.deletedStockHistoryIds) && data.deletedStockHistoryIds.length > 0) {
+      const delSet = new Set(data.deletedStockHistoryIds);
+      const filtered = (store.stockHistory || []).filter((h: any) => !delSet.has(h.id));
+      if (filtered.length !== (store.stockHistory || []).length) {
+        store.stockHistory = filtered;
         hasChanged = true;
       }
     }

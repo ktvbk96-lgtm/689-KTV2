@@ -11,7 +11,7 @@
  * 5. Smart 3.5s Version Polling (GET /api/sync/version) + Tab Focus / Visibility / Online Wakeup
  */
 
-import { Product, Room, RoomPackage, StaffMember, AppSettings, DebtRecord, BillRecord } from '../types';
+import { Product, Room, RoomPackage, StaffMember, AppSettings, DebtRecord, BillRecord, StockRestockRecord } from '../types';
 import { getLastSyncedMeta, saveLastSyncedMeta, hasAnyLocalStoredData } from './storage';
 
 export type DeviceType = 'Mobile' | 'Tablet' | 'PC';
@@ -42,6 +42,9 @@ export interface SyncPayload {
   deletedBillIds?: string[];
   clearAllBills?: boolean;
   bill?: BillRecord;
+  stockHistory?: StockRestockRecord[];
+  changedStockHistory?: StockRestockRecord[];
+  deletedStockHistoryIds?: string[];
   lastUpdated?: string;
   lastSenderId?: string;
   lastUpdatedByDevice?: string;
@@ -52,6 +55,7 @@ export interface SyncPayload {
 export type SyncAction =
   | 'saveRooms'
   | 'saveProducts'
+  | 'saveStockHistory'
   | 'savePackages'
   | 'saveStaff'
   | 'saveDebts'

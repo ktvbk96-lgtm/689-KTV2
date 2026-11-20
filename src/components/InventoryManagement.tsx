@@ -22,35 +22,92 @@ import {
   PackagePlus,
   Package,
   RefreshCw,
+  History,
+  Calendar,
+  FileText,
+  ArrowLeft,
+  Lock,
 } from 'lucide-react';
-import { Product, ProductCategory, Role, AppSettings, StaffPermissions } from '../types';
+import { Product, ProductCategory, Role, AppSettings, StaffPermissions, StockRestockRecord } from '../types';
 import { formatCurrency } from '../lib/storage';
 import { FormattedNumberInput } from './FormattedNumberInput';
 import { calculateAvailablePacksAndSingles } from '../lib/multiUnitInventory';
 import { normalizeImageUrl, uploadProductImage } from '../lib/imageUtils';
 import { uploadToVercelBlob } from '../lib/vercelBlob';
 
+const toLocalDateTimeInputValue = (isoOrDate?: string | Date): string => {
+  const d = isoOrDate ? new Date(isoOrDate) : new Date();
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+const formatRestockDateTime = (iso?: string): string => {
+  if (!iso) return '-';
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleString('th-TH', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+  } catch {
+    return iso;
+  }
+};
+
 interface InventoryManagementProps {
   products: Product[];
   currentRole: Role;
+  currentStaffName?: string;
   settings: AppSettings;
   permissions?: StaffPermissions;
+  stockHistory?: StockRestockRecord[];
   onRequestAdminOverride?: (title: string, description: string, onApproved: () => void) => void;
   onSaveProducts: (updatedProducts: Product[]) => void;
+  onSaveStockHistory?: (updatedHistory: StockRestockRecord[]) => void;
 }
 
 export const InventoryManagement: React.FC<InventoryManagementProps> = ({
   products,
   currentRole,
+  currentStaffName,
   settings,
   permissions,
+  stockHistory = [],
   onRequestAdminOverride,
   onSaveProducts,
+  onSaveStockHistory,
 }) => {
   const canDeleteProduct = currentRole === 'admin';
+  const [activeView, setActiveView] = useState<'stock' | 'history'>('stock');
   const [search, setSearch] = useState<string>('');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [stockStatusFilter, setStockStatusFilter] = useState<'all' | 'out' | 'low' | 'normal'>('all');
+
+  // Restock History Filters & Admin Edit Modal
+  const [historySearch, setHistorySearch] = useState<string>('');
+  const [historyProductFilter, setHistoryProductFilter] = useState<string>('all');
+  const [historyDateFrom, setHistoryDateFrom] = useState<string>('');
+  const [historyDateTo, setHistoryDateTo] = useState<string>('');
+  const [editingHistoryRecord, setEditingHistoryRecord] = useState<StockRestockRecord | null>(null);
+  const [editHistoryForm, setEditHistoryForm] = useState<{
+    inputQty: number;
+    unitCostPrice: number;
+    totalCost: number;
+    restockedAt: string;
+    note: string;
+  }>({
+    inputQty: 1,
+    unitCostPrice: 0,
+    totalCost: 0,
+    restockedAt: '',
+    note: '',
+  });
 
   // Add / Edit Product Modal state
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -61,6 +118,9 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
   const [restockProduct, setRestockProduct] = useState<Product | null>(null);
   const [restockAddAmount, setRestockAddAmount] = useState<number>(20);
   const [restockUnitType, setRestockUnitType] = useState<'single' | 'pack'>('single');
+  const [restockUnitCost, setRestockUnitCost] = useState<number>(0);
+  const [restockDateTime, setRestockDateTime] = useState<string>(() => toLocalDateTimeInputValue());
+  const [restockNote, setRestockNote] = useState<string>('');
 
   // Form State
   const [formData, setFormData] = useState<Partial<Product>>({
@@ -298,22 +358,61 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
   };
 
   const handleQuickAdjustStock = (productId: string, delta: number) => {
+    const target = products.find((p) => p.id === productId);
+    if (!target) return;
+    const stockBefore = Number(target.stock) || 0;
+    const stockAfter = Math.max(0, stockBefore + delta);
     const updated = products.map((p) => {
       if (p.id === productId) {
         return {
           ...p,
-          stock: Math.max(0, p.stock + delta),
+          stock: stockAfter,
         };
       }
       return p;
     });
     onSaveProducts(updated);
+
+    // Record stock-in history automatically when quick-adding stock (+5, +12, +20)
+    if (delta > 0 && onSaveStockHistory) {
+      const nowIso = new Date().toISOString();
+      const unitCost = Number(target.costPrice) || 0;
+      const newRecord: StockRestockRecord = {
+        id: `restock-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        productId: target.id,
+        productName: target.name,
+        category: target.category,
+        unit: target.unit,
+        unitType: 'single',
+        unitLabel: target.unit,
+        packMultiplier: 1,
+        inputQty: delta,
+        addedQty: delta,
+        stockBefore,
+        stockAfter,
+        unitCostPrice: unitCost,
+        totalCost: unitCost * delta,
+        restockedAt: nowIso,
+        note: `เติมสต็อกด่วน (+${delta} ${target.unit})`,
+        recordedBy: currentStaffName || (currentRole === 'admin' ? 'Admin' : 'ພະນັກງານ'),
+        updatedAt: nowIso,
+      };
+      onSaveStockHistory([newRecord, ...stockHistory]);
+    }
   };
 
   const handleOpenRestockModal = (prod: Product) => {
+    const usePack = !!prod.hasMultiUnit;
+    const mult = prod.packMultiplier || 24;
+    const defaultCost = usePack
+      ? Number(prod.packCostPrice) || (Number(prod.costPrice) || 0) * mult
+      : Number(prod.costPrice) || 0;
     setRestockProduct(prod);
-    setRestockUnitType(prod.hasMultiUnit ? 'pack' : 'single');
-    setRestockAddAmount(prod.hasMultiUnit ? 1 : 20);
+    setRestockUnitType(usePack ? 'pack' : 'single');
+    setRestockAddAmount(usePack ? 1 : 20);
+    setRestockUnitCost(defaultCost);
+    setRestockDateTime(toLocalDateTimeInputValue());
+    setRestockNote('');
   };
 
   const handleConfirmRestock = (e?: React.FormEvent) => {
@@ -330,16 +429,139 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
       return;
     }
     const toAdd = entered * multiplier;
-    const oldStock = restockProduct.stock;
+    const oldStock = Number(restockProduct.stock) || 0;
     const newStock = Math.max(0, oldStock + toAdd);
     const updated = products.map((p) =>
       p.id === restockProduct.id ? { ...p, stock: newStock } : p
     );
     onSaveProducts(updated);
+
+    if (onSaveStockHistory) {
+      const nowIso = new Date().toISOString();
+      const parsedRestockDate = restockDateTime ? new Date(restockDateTime) : new Date();
+      const restockedAtIso = !Number.isNaN(parsedRestockDate.getTime())
+        ? parsedRestockDate.toISOString()
+        : nowIso;
+      const unitCost = Math.max(0, Number(restockUnitCost) || 0);
+      const unitLabel = isPack ? restockProduct.packUnit || 'ແພັກ' : restockProduct.unit;
+      const newRecord: StockRestockRecord = {
+        id: `restock-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        productId: restockProduct.id,
+        productName: restockProduct.name,
+        category: restockProduct.category,
+        unit: restockProduct.unit,
+        unitType: isPack ? 'pack' : 'single',
+        unitLabel,
+        packMultiplier: multiplier,
+        inputQty: entered,
+        addedQty: toAdd,
+        stockBefore: oldStock,
+        stockAfter: newStock,
+        unitCostPrice: unitCost,
+        totalCost: unitCost * entered,
+        restockedAt: restockedAtIso,
+        note: restockNote.trim() || undefined,
+        recordedBy: currentStaffName || (currentRole === 'admin' ? 'Admin' : 'ພະນັກງານ'),
+        updatedAt: nowIso,
+      };
+      onSaveStockHistory([newRecord, ...stockHistory]);
+    }
+
     setRestockProduct(null);
     setRestockAddAmount(20);
     setRestockUnitType('single');
+    setRestockUnitCost(0);
+    setRestockNote('');
   };
+
+  // Admin-Only Edit & Delete Restock History Handlers
+  const handleOpenEditHistory = (record: StockRestockRecord) => {
+    if (currentRole !== 'admin') return;
+    setEditingHistoryRecord(record);
+    setEditHistoryForm({
+      inputQty: Number(record.inputQty) || 1,
+      unitCostPrice: Number(record.unitCostPrice) || 0,
+      totalCost: Number(record.totalCost) || 0,
+      restockedAt: toLocalDateTimeInputValue(record.restockedAt),
+      note: record.note || '',
+    });
+  };
+
+  const handleSaveEditedHistory = (e?: React.FormEvent) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (currentRole !== 'admin' || !editingHistoryRecord || !onSaveStockHistory) return;
+    const nextQty = Math.max(1, Number(editHistoryForm.inputQty) || 1);
+    const nextUnitCost = Math.max(0, Number(editHistoryForm.unitCostPrice) || 0);
+    const nextTotalCost = Math.max(0, Number(editHistoryForm.totalCost) || 0);
+    const mult = editingHistoryRecord.packMultiplier || 1;
+    const nextAddedQty = nextQty * mult;
+    const parsedDate = editHistoryForm.restockedAt ? new Date(editHistoryForm.restockedAt) : new Date(editingHistoryRecord.restockedAt);
+    const nextRestockedAt = !Number.isNaN(parsedDate.getTime())
+      ? parsedDate.toISOString()
+      : editingHistoryRecord.restockedAt;
+    const nowIso = new Date().toISOString();
+
+    const updatedHistory = stockHistory.map((item) =>
+      item.id === editingHistoryRecord.id
+        ? {
+            ...item,
+            inputQty: nextQty,
+            addedQty: nextAddedQty,
+            stockAfter: Math.max(0, (Number(item.stockBefore) || 0) + nextAddedQty),
+            unitCostPrice: nextUnitCost,
+            totalCost: nextTotalCost,
+            restockedAt: nextRestockedAt,
+            note: editHistoryForm.note.trim() || undefined,
+            updatedAt: nowIso,
+          }
+        : item
+    );
+    onSaveStockHistory(updatedHistory);
+    setEditingHistoryRecord(null);
+  };
+
+  const handleDeleteHistoryRecord = (record: StockRestockRecord) => {
+    if (currentRole !== 'admin' || !onSaveStockHistory) return;
+    const confirmed = window.confirm(
+      `ยืนยันลบประวัติการเติมสต็อก "${record.productName}" (${formatRestockDateTime(record.restockedAt)}) จำนวน +${record.inputQty} ${record.unitLabel} ใช่หรือไม่?`
+    );
+    if (!confirmed) return;
+    onSaveStockHistory(stockHistory.filter((item) => item.id !== record.id));
+  };
+
+  const filteredStockHistory = [...stockHistory]
+    .filter((rec) => {
+      const q = historySearch.trim().toLowerCase();
+      const matchesQuery =
+        !q ||
+        (rec.productName || '').toLowerCase().includes(q) ||
+        (rec.note || '').toLowerCase().includes(q) ||
+        (rec.recordedBy || '').toLowerCase().includes(q);
+      const matchesProd =
+        historyProductFilter === 'all' || rec.productId === historyProductFilter;
+      const recDate = rec.restockedAt ? new Date(rec.restockedAt) : null;
+      let matchesFrom = true;
+      let matchesTo = true;
+      if (historyDateFrom && recDate && !Number.isNaN(recDate.getTime())) {
+        const fromD = new Date(`${historyDateFrom}T00:00:00`);
+        matchesFrom = recDate.getTime() >= fromD.getTime();
+      }
+      if (historyDateTo && recDate && !Number.isNaN(recDate.getTime())) {
+        const toD = new Date(`${historyDateTo}T23:59:59.999`);
+        matchesTo = recDate.getTime() <= toD.getTime();
+      }
+      return matchesQuery && matchesProd && matchesFrom && matchesTo;
+    })
+    .sort((a, b) => new Date(b.restockedAt || 0).getTime() - new Date(a.restockedAt || 0).getTime());
+
+  const filteredHistoryTotalCost = filteredStockHistory.reduce(
+    (sum, r) => sum + (Number(r.totalCost) || 0),
+    0
+  );
+  const filteredHistoryTotalAddedQty = filteredStockHistory.reduce(
+    (sum, r) => sum + (Number(r.addedQty) || 0),
+    0
+  );
 
   return (
     <div className="max-w-7xl mx-auto p-4 sm:p-6 space-y-6">
@@ -398,6 +620,30 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
             </div>
           )}
 
+          {/* Restock History Toggle Button */}
+          <button
+            type="button"
+            onClick={() => setActiveView(activeView === 'history' ? 'stock' : 'history')}
+            className={`px-3.5 py-2 rounded-2xl text-xs font-bold border transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeView === 'history'
+                ? 'bg-cyan-500 text-slate-950 border-cyan-400 shadow-md shadow-cyan-500/25'
+                : 'bg-cyan-950/70 hover:bg-cyan-900/80 border-cyan-500/40 text-cyan-200'
+            }`}
+            title="ดูประวัติการเติมสต็อกย้อนหลัง (วันที่ / จำนวน / ราคา)"
+          >
+            {activeView === 'history' ? (
+              <>
+                <ArrowLeft className="w-4 h-4" />
+                <span>กลับหน้ารายการสต็อก</span>
+              </>
+            ) : (
+              <>
+                <History className="w-4 h-4 text-cyan-400" />
+                <span>ประวัติเติมสต็อก ({stockHistory.length})</span>
+              </>
+            )}
+          </button>
+
           {/* Add product button */}
           <button
             onClick={handleOpenAddModal}
@@ -408,6 +654,223 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
           </button>
         </div>
       </div>
+
+      {activeView === 'history' ? (
+        /* Restock History View (ดูประวัติการเติมสต็อกย้อนหลัง: วันที่ / จำนวน / ราคา — แก้ไข/ลบเฉพาะ Admin) */
+        <div className="space-y-4">
+          {/* Summary Stats */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-lg">
+              <div className="text-xs text-slate-400 flex items-center gap-1.5">
+                <History className="w-4 h-4 text-cyan-400" />
+                <span>จำนวนครั้งที่เติมสต็อก (ตามตัวกรอง)</span>
+              </div>
+              <div className="text-2xl font-black text-white font-mono mt-1">
+                {filteredStockHistory.length.toLocaleString()} <span className="text-xs text-slate-400 font-normal">ครั้ง</span>
+              </div>
+            </div>
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-lg">
+              <div className="text-xs text-slate-400 flex items-center gap-1.5">
+                <PackagePlus className="w-4 h-4 text-emerald-400" />
+                <span>จำนวนสินค้ารับเข้ารวม</span>
+              </div>
+              <div className="text-2xl font-black text-emerald-400 font-mono mt-1">
+                +{filteredHistoryTotalAddedQty.toLocaleString()} <span className="text-xs text-slate-400 font-normal">หน่วยย่อย</span>
+              </div>
+            </div>
+            <div className="bg-slate-900 border border-amber-500/30 rounded-2xl p-4 shadow-lg">
+              <div className="text-xs text-amber-300/90 flex items-center gap-1.5">
+                <Calendar className="w-4 h-4 text-amber-400" />
+                <span>ยอดเงินซื้อสต็อกรวมทั้งหมด</span>
+              </div>
+              <div className="text-2xl font-black text-amber-400 font-mono mt-1">
+                {formatCurrency(filteredHistoryTotalCost, settings.currencySymbol)}
+              </div>
+            </div>
+          </div>
+
+          {/* History Filter Bar */}
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-4 shadow-lg space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-sm font-black text-white flex items-center gap-2">
+                <History className="w-4 h-4 text-cyan-400" />
+                <span>ประวัติการเติมสต็อกย้อนหลัง (Stock-In History)</span>
+              </div>
+              {currentRole !== 'admin' && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-800 border border-slate-700 text-[11px] text-slate-300 font-semibold">
+                  <Lock className="w-3.5 h-3.5 text-amber-400" />
+                  <span>ดูย้อนหลังได้เท่านั้น • แก้ไข/ลบสงวนสิทธิ์เฉพาะ Admin</span>
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+              <div className="relative lg:col-span-2">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  value={historySearch}
+                  onChange={(e) => setHistorySearch(e.target.value)}
+                  placeholder="ค้นหาชื่อสินค้า เช่น เบียร์, หมายเหตุ, ผู้บันทึก..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+
+              <select
+                value={historyProductFilter}
+                onChange={(e) => setHistoryProductFilter(e.target.value)}
+                className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+              >
+                <option value="all">สินค้าทั้งหมด</option>
+                {products.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+
+              <input
+                type="date"
+                value={historyDateFrom}
+                onChange={(e) => setHistoryDateFrom(e.target.value)}
+                title="ตั้งแต่วันที่"
+                className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+              />
+
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="date"
+                  value={historyDateTo}
+                  onChange={(e) => setHistoryDateTo(e.target.value)}
+                  title="ถึงวันที่"
+                  className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+                />
+                {(historySearch || historyProductFilter !== 'all' || historyDateFrom || historyDateTo) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHistorySearch('');
+                      setHistoryProductFilter('all');
+                      setHistoryDateFrom('');
+                      setHistoryDateTo('');
+                    }}
+                    className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs cursor-pointer"
+                    title="ล้างตัวกรอง"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* History Table */}
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-xl">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[780px]">
+                <thead>
+                  <tr className="bg-slate-950/90 border-b border-slate-800 text-[11px] uppercase tracking-wider text-slate-400">
+                    <th className="py-3.5 px-4 font-bold">วันที่ / เวลาเติม</th>
+                    <th className="py-3.5 px-4 font-bold">สินค้า</th>
+                    <th className="py-3.5 px-4 font-bold text-center">จำนวนที่เติม</th>
+                    <th className="py-3.5 px-4 font-bold text-right">ราคาทุน/หน่วย</th>
+                    <th className="py-3.5 px-4 font-bold text-right">ราคารวมทั้งหมด</th>
+                    <th className="py-3.5 px-4 font-bold">หมายเหตุ / ผู้บันทึก</th>
+                    {currentRole === 'admin' && (
+                      <th className="py-3.5 px-4 font-bold text-center">จัดการ (Admin)</th>
+                    )}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/70 text-xs">
+                  {filteredStockHistory.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={currentRole === 'admin' ? 7 : 6}
+                        className="py-12 text-center text-slate-500"
+                      >
+                        <History className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                        <p className="font-semibold text-slate-400">ยังไม่มีประวัติการเติมสต็อก</p>
+                        <p className="text-[11px] text-slate-500 mt-1">
+                          เมื่อกดปุ่ม "+ ຕື່ມສະຕັອກ" หรือปุ่มเติมด่วน ระบบจะบันทึกวันที่ จำนวน และราคาทุนให้อัตโนมัติ
+                        </p>
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredStockHistory.map((rec) => (
+                      <tr key={rec.id} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="py-3 px-4 font-mono text-cyan-300 whitespace-nowrap">
+                          {formatRestockDateTime(rec.restockedAt)}
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="font-bold text-white">{rec.productName}</div>
+                          <div className="text-[10px] text-slate-400">
+                            {categories.find((c) => c.id === rec.category)?.label || rec.category}
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <div className="inline-flex flex-col items-center">
+                            <span className="px-2 py-0.5 rounded-lg bg-emerald-950/80 border border-emerald-500/35 text-emerald-300 font-mono font-bold">
+                              +{rec.inputQty.toLocaleString()} {rec.unitLabel}
+                              {rec.unitType === 'pack' && rec.packMultiplier > 1
+                                ? ` (${rec.addedQty.toLocaleString()} ${rec.unit})`
+                                : ''}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-mono mt-0.5">
+                              สต็อก: {rec.stockBefore} → {rec.stockAfter} {rec.unit}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono text-slate-200 whitespace-nowrap">
+                          {formatCurrency(Number(rec.unitCostPrice) || 0, settings.currencySymbol)}
+                          <span className="text-[10px] text-slate-400 block">/{rec.unitLabel}</span>
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono font-black text-amber-400 whitespace-nowrap">
+                          {formatCurrency(Number(rec.totalCost) || 0, settings.currencySymbol)}
+                        </td>
+                        <td className="py-3 px-4">
+                          {rec.note ? (
+                            <div className="text-slate-200 text-xs">{rec.note}</div>
+                          ) : (
+                            <span className="text-slate-500 text-[11px]">-</span>
+                          )}
+                          {rec.recordedBy && (
+                            <div className="text-[10px] text-slate-400 mt-0.5">
+                              โดย: {rec.recordedBy}
+                            </div>
+                          )}
+                        </td>
+                        {currentRole === 'admin' && (
+                          <td className="py-3 px-4 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditHistory(rec)}
+                                className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-amber-300 border border-slate-700 cursor-pointer"
+                                title="Admin แก้ไขบันทึกการเติมสต็อก"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteHistoryRecord(rec)}
+                                className="p-1.5 rounded-xl bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 border border-slate-700 hover:border-rose-700 cursor-pointer"
+                                title="Admin ลบบันทึกการเติมสต็อก"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <>
 
       {/* Filter and Search Bar */}
       <div className="bg-slate-900 border border-slate-800 rounded-3xl p-4 shadow-lg flex flex-col md:flex-row items-center justify-between gap-3">
@@ -631,9 +1094,21 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
                         )}
                       </td>
 
-                      {/* Action edit/delete */}
+                      {/* Action history/edit/delete */}
                       <td className="py-3 px-4 text-center">
                         <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setHistoryProductFilter(prod.id);
+                              setHistorySearch('');
+                              setActiveView('history');
+                            }}
+                            className="min-w-[36px] min-h-[36px] p-2 sm:p-1.5 rounded-xl bg-slate-800 hover:bg-cyan-950 active:scale-95 text-cyan-400 hover:text-cyan-300 transition-all cursor-pointer touch-manipulation flex items-center justify-center shadow-sm"
+                            title={`ดูประวัติการเติมสต็อกของ "${prod.name}"`}
+                          >
+                            <History className="w-4 h-4" />
+                          </button>
                           <button
                             type="button"
                             onClick={() => handleOpenEditModal(prod)}
@@ -662,6 +1137,8 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
           </table>
         </div>
       </div>
+        </>
+      )}
 
       {/* Modal: Add or Edit Product (Includes Image Upload & URL) */}
       {(isAddingNew || editingProduct) && (
@@ -1083,7 +1560,7 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
             {/* Modal Form */}
             <form
               onSubmit={handleConfirmRestock}
-              className="p-5 sm:p-6 space-y-4"
+              className="p-5 sm:p-6 space-y-4 max-h-[78dvh] overflow-y-auto"
               autoComplete="off"
             >
               {/* Target Product Badge */}
@@ -1116,6 +1593,7 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
                     onClick={() => {
                       setRestockUnitType('single');
                       setRestockAddAmount(20);
+                      setRestockUnitCost(Number(restockProduct.costPrice) || 0);
                     }}
                     className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer touch-manipulation ${
                       restockUnitType === 'single'
@@ -1128,8 +1606,12 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
                   <button
                     type="button"
                     onClick={() => {
+                      const mult = restockProduct.packMultiplier || 24;
                       setRestockUnitType('pack');
                       setRestockAddAmount(1);
+                      setRestockUnitCost(
+                        Number(restockProduct.packCostPrice) || (Number(restockProduct.costPrice) || 0) * mult
+                      );
                     }}
                     className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer touch-manipulation ${
                       restockUnitType === 'pack'
@@ -1227,12 +1709,55 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
                 </div>
               </div>
 
+              {/* Cost Price, Date & Note for Restock History Log */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                    ราคาซื้อ/ต้นทุนต่อ 1 {restockUnitType === 'pack' ? (restockProduct.packUnit || 'ແພັກ') : restockProduct.unit} ({settings.currencySymbol}):
+                  </label>
+                  <FormattedNumberInput
+                    value={restockUnitCost}
+                    onChange={(val) => setRestockUnitCost(Math.max(0, val))}
+                    placeholder="0"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm font-mono font-bold text-amber-300 focus:outline-none focus:border-amber-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-300 mb-1 flex items-center gap-1">
+                    <Calendar className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>วันที่ / เวลาที่ลงสต็อก:</span>
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={restockDateTime}
+                    onChange={(e) => setRestockDateTime(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-cyan-400"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-300 mb-1 flex items-center gap-1">
+                  <FileText className="w-3.5 h-3.5 text-slate-400" />
+                  <span>หมายเหตุ / ร้านที่สั่งซื้อ (ไม่บังคับ):</span>
+                </label>
+                <input
+                  type="text"
+                  value={restockNote}
+                  onChange={(e) => setRestockNote(e.target.value)}
+                  placeholder="เช่น ร้านส่งเบียร์ / ล็อตวันที่..."
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400"
+                />
+              </div>
+
               {/* Live Calculation Preview Card */}
               {(() => {
                 const isPack = restockUnitType === 'pack' && !!restockProduct.hasMultiUnit;
                 const multiplier = isPack ? (restockProduct.packMultiplier || 24) : 1;
-                const baseQtyToAdd = (Number(restockAddAmount) || 0) * multiplier;
+                const enteredQty = Number(restockAddAmount) || 0;
+                const baseQtyToAdd = enteredQty * multiplier;
                 const newTotalBase = Math.max(0, restockProduct.stock + baseQtyToAdd);
+                const totalRestockCost = Math.max(0, Number(restockUnitCost) || 0) * enteredQty;
                 const packSummary = calculateAvailablePacksAndSingles(
                   newTotalBase,
                   restockProduct.packMultiplier || 24,
@@ -1244,7 +1769,7 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
                   <div className="p-4 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 space-y-2">
                     <div className="text-[11px] font-bold text-emerald-400 flex items-center gap-1.5">
                       <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>ສະຫຼຸບການບວກສະຕັອກ (Live Summary):</span>
+                      <span>ສະຫຼຸບການບວກສະຕັອກ &amp; ບັນທຶກປະຫວັດ (Live Summary):</span>
                     </div>
                     <div className="flex items-center justify-between text-xs text-slate-300 pt-1 border-t border-emerald-500/20 font-mono">
                       <span>ສະຕັອກເດີມ:</span>
@@ -1255,8 +1780,14 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
                     <div className="flex items-center justify-between text-xs text-emerald-400 font-mono">
                       <span>+ ບວກເພີ່ມເຂົ້າ:</span>
                       <span className="font-bold text-emerald-400">
-                        +{Number(restockAddAmount) || 0} {isPack ? (restockProduct.packUnit || 'ແພັກ') : restockProduct.unit}
+                        +{enteredQty} {isPack ? (restockProduct.packUnit || 'ແພັກ') : restockProduct.unit}
                         {isPack && ` (${baseQtyToAdd} ${restockProduct.unit})`}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs text-amber-300 font-mono">
+                      <span>ราคารวมที่ซื้อเข้าสต็อก:</span>
+                      <span className="font-black text-amber-300">
+                        {formatCurrency(totalRestockCost, settings.currencySymbol)}
                       </span>
                     </div>
                     <div className="flex items-center justify-between text-sm text-white pt-2 border-t border-emerald-500/30 font-mono">
@@ -1295,6 +1826,134 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
                   <span>
                     ຢືນຢັນບວກສະຕັອກ (+{Number(restockAddAmount) || 0} {restockUnitType === 'pack' ? (restockProduct.packUnit || 'ແພັກ') : restockProduct.unit})
                   </span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Admin-Only Modal: Edit Restock History Record */}
+      {currentRole === 'admin' && editingHistoryRecord && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-amber-500/40 rounded-3xl w-full max-w-md shadow-2xl text-white my-auto overflow-hidden">
+            <div className="px-5 py-4 bg-gradient-to-r from-amber-950/80 via-slate-900 to-slate-900 border-b border-amber-500/30 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-300">
+                  <Edit className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-white">แก้ไขประวัติการเติมสต็อก (Admin)</h3>
+                  <p className="text-[11px] text-amber-200/80 truncate max-w-[240px]">
+                    {editingHistoryRecord.productName}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingHistoryRecord(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditedHistory} className="p-5 space-y-3.5">
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">
+                  วันที่และเวลาที่เติมสต็อก:
+                </label>
+                <input
+                  type="datetime-local"
+                  value={editHistoryForm.restockedAt}
+                  onChange={(e) =>
+                    setEditHistoryForm((prev) => ({ ...prev, restockedAt: e.target.value }))
+                  }
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-amber-400"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">
+                    จำนวนที่เติม ({editingHistoryRecord.unitLabel}):
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={editHistoryForm.inputQty || ''}
+                    onChange={(e) => {
+                      const nextQty = Math.max(0, parseInt(e.target.value) || 0);
+                      setEditHistoryForm((prev) => ({
+                        ...prev,
+                        inputQty: nextQty,
+                        totalCost: nextQty * (Number(prev.unitCostPrice) || 0),
+                      }));
+                    }}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm font-mono font-bold text-emerald-300 focus:outline-none focus:border-emerald-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">
+                    ราคาทุน/{editingHistoryRecord.unitLabel} ({settings.currencySymbol}):
+                  </label>
+                  <FormattedNumberInput
+                    value={editHistoryForm.unitCostPrice}
+                    onChange={(val) => {
+                      const safe = Math.max(0, val);
+                      setEditHistoryForm((prev) => ({
+                        ...prev,
+                        unitCostPrice: safe,
+                        totalCost: (Number(prev.inputQty) || 0) * safe,
+                      }));
+                    }}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm font-mono font-bold text-amber-300 focus:outline-none focus:border-amber-400"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">
+                  ราคารวมทั้งหมด ({settings.currencySymbol}):
+                </label>
+                <FormattedNumberInput
+                  value={editHistoryForm.totalCost}
+                  onChange={(val) =>
+                    setEditHistoryForm((prev) => ({ ...prev, totalCost: Math.max(0, val) }))
+                  }
+                  className="w-full bg-slate-950 border border-amber-500/40 rounded-xl px-3 py-2 text-base font-mono font-black text-amber-400 focus:outline-none focus:border-amber-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">
+                  หมายเหตุ:
+                </label>
+                <input
+                  type="text"
+                  value={editHistoryForm.note}
+                  onChange={(e) =>
+                    setEditHistoryForm((prev) => ({ ...prev, note: e.target.value }))
+                  }
+                  placeholder="หมายเหตุเพิ่มเติม..."
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setEditingHistoryRecord(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black cursor-pointer"
+                >
+                  บันทึกการแก้ไข
                 </button>
               </div>
             </form>

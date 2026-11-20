@@ -1,4 +1,4 @@
-import { Product, Room, RoomPackage, StaffMember, AppSettings, BillRecord, DebtRecord } from '../types';
+import { Product, Room, RoomPackage, StaffMember, AppSettings, BillRecord, DebtRecord, StockRestockRecord } from '../types';
 import { INITIAL_SETTINGS } from './initialData';
 import { normalizeImageUrl } from './imageUtils';
 
@@ -12,6 +12,7 @@ const STORAGE_KEYS = {
   DEBTS: '689ktv_debts',
   ACTIVE_USER: '689ktv_active_user',
   LAST_SYNCED_META: '689ktv_last_synced_meta',
+  STOCK_HISTORY: '689ktv_stock_history',
 };
 
 export interface LastSyncedMeta {
@@ -303,6 +304,22 @@ export const deleteStoredDebt = (debtId: string) => {
   const existing = getStoredDebts();
   const updated = existing.filter((d) => d.id !== debtId);
   saveStoredDebts(updated);
+};
+
+export const getStoredStockHistory = (): StockRestockRecord[] => {
+  const data = localStorage.getItem(STORAGE_KEYS.STOCK_HISTORY);
+  if (!data) return [];
+  try {
+    const parsed = JSON.parse(data);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
+export const saveStoredStockHistory = (records: StockRestockRecord[]) => {
+  localStorage.setItem(STORAGE_KEYS.STOCK_HISTORY, JSON.stringify(records));
+  window.dispatchEvent(new Event('689ktv_stock_history_updated'));
 };
 
 export const formatCurrency = (amount: number, symbol: string = '₭'): string => {
