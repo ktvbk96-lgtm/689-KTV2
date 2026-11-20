@@ -12,6 +12,8 @@ export default async function handler(req: any, res: any) {
     const info = await readStoreVersion();
     return res.status(200).json({
       status: 'ok',
+      mode: info.mode,
+      hasDatabase: info.hasDatabase,
       version: info.version,
       lastUpdated: info.lastUpdated,
       time: new Date().toISOString(),

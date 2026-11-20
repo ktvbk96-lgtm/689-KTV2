@@ -17,8 +17,14 @@ export default async function handler(req: any, res: any) {
   try {
     const info = await readStoreVersion();
     return res.status(200).json({
+      mode: info.mode,
+      hasDatabase: info.hasDatabase,
       version: info.version,
       lastUpdated: info.lastUpdated,
+      lastUpdatedByDevice: info.lastUpdatedByDevice || '',
+      lastUpdatedDeviceType: info.lastUpdatedDeviceType,
+      lastSenderId: info.lastSenderId || '',
+      lastAction: info.lastAction || '',
     });
   } catch (err: any) {
     console.error('GET /api/sync/version error:', err);

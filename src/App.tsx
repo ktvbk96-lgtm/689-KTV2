@@ -32,15 +32,9 @@ import {
   updateStoredBills,
   getStoredDebts,
   saveStoredDebts,
-  purgeMockLocalStorage,
+  getLastSyncedMeta,
+  LastSyncedMeta,
 } from './lib/storage';
-import {
-  INITIAL_PRODUCTS,
-  INITIAL_ROOMS,
-  INITIAL_PACKAGES,
-  INITIAL_STAFF,
-  INITIAL_SETTINGS,
-} from './lib/initialData';
 import { getBluetoothStatus, tryAutoReconnectBluetooth } from './lib/bluetoothPrinter';
 import { getAccessToken, initAuth } from './lib/firebase';
 import { appendBillToSheet, syncInventoryToSheet } from './lib/googleSheets';
@@ -49,18 +43,41 @@ import {
   initMultiDeviceSync,
   pushMultiDeviceUpdate,
   fetchLatestServerSnapshot,
+  markCloudSnapshotApplied,
+  getDeviceLabel,
+  getDeviceType,
+  CloudUpdateNotice,
   SyncAction,
   SyncPayload,
   StockDeductionItem,
-  getDeviceId,
 } from './lib/realtimeSync';
-import { listenToFirebaseStore, pushToFirebaseStore } from './lib/firebaseSync';
 import { deductMultiUnitStockFromCatalog } from './lib/multiUnitInventory';
-import { generateNextBillNumber, calculateRoomSessionFee } from './lib/roomPricing';
-import { RefreshCw, CheckCircle2, AlertCircle, Smartphone, Monitor, Globe, Zap } from 'lucide-react';
+import {
+  generateNextBillNumber,
+  calculateRoomSessionFee,
+  calculateOpenTimeExtensionsBreakdown,
+} from './lib/roomPricing';
+import { getEffectivePermissions } from './lib/permissions';
+import {
+  RefreshCw,
+  CheckCircle2,
+  AlertCircle,
+  Zap,
+  CloudUpload,
+  CloudDownload,
+  Clock,
+  Database,
+  Lock,
+} from 'lucide-react';
 
 import { Navbar } from './components/Navbar';
 import { PinAuthModal } from './components/PinAuthModal';
+import { AdminOverrideModal } from './components/AdminOverrideModal';
+import {
+  CloudUpdateConfirmModal,
+  PushCloudConfirmModal,
+  DeviceTypeIcon,
+} from './components/CloudSyncModal';
 import { PosSales } from './components/PosSales';
 import { RoomManagement } from './components/RoomManagement';
 import { InventoryManagement } from './components/InventoryManagement';
@@ -86,6 +103,8 @@ function normalizeAvailableRoom(room: Room): Room {
     openedAt: undefined,
     targetEndTime: undefined,
     bookedHours: 0,
+    baseBookedHours: undefined,
+    extensions: [],
     openedByStaffId: undefined,
     openedByStaffName: undefined,
     packageId: undefined,
@@ -201,13 +220,17 @@ export default function App() {
   // Active Navigation Tab
   const [activeTab, setActiveTab] = useState<'pos' | 'rooms' | 'stock' | 'debts' | 'reports' | 'settings'>('pos');
 
-  // Scrub any leftover Local Test Mode mock bills/debts before hydrating from real Server
-  useEffect(() => {
-    purgeMockLocalStorage();
-  }, []);
-
-  // Application Data States (Initialize empty — MUST fetch real products, stock & bills from Server first!)
+  // Application Data States (Initialize empty — NEVER seed mock data or clear existing localStorage on startup)
   const [isInitialServerLoading, setIsInitialServerLoading] = useState<boolean>(true);
+  const [isLocalPreviewMode, setIsLocalPreviewMode] = useState<boolean>(false);
+  const [isUploadingCloud, setIsUploadingCloud] = useState<boolean>(false);
+  const [pendingCloudUpdate, setPendingCloudUpdate] = useState<CloudUpdateNotice | null>(null);
+  const [isCloudUpdateModalOpen, setIsCloudUpdateModalOpen] = useState<boolean>(false);
+  const [isPushConfirmOpen, setIsPushConfirmOpen] = useState<boolean>(false);
+  const [lastCloudSyncMeta, setLastCloudSyncMeta] = useState<LastSyncedMeta | null>(() => getLastSyncedMeta());
+  const deferredCloudVersionRef = useRef<number>(0);
+  const currentDeviceLabel = getDeviceLabel();
+  const currentDeviceType = getDeviceType();
   const [products, setProducts] = useState<Product[]>([]);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [packages, setPackages] = useState<RoomPackage[]>([]);
@@ -215,6 +238,31 @@ export default function App() {
   const [settings, setSettings] = useState<AppSettings>(getStoredSettings());
   const [bills, setBills] = useState<BillRecord[]>([]);
   const [debts, setDebts] = useState<DebtRecord[]>([]);
+
+  // Granular Effective Staff Permissions (Admin ALWAYS retains all 8 permissions)
+  const effectivePermissions = getEffectivePermissions(currentRole, currentStaff);
+
+  // Admin Override PIN Modal (Temporary approval for unauthorized staff actions)
+  const [adminOverrideModal, setAdminOverrideModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    description: string;
+    onApproved: (() => void) | null;
+  }>({
+    isOpen: false,
+    title: '',
+    description: '',
+    onApproved: null,
+  });
+
+  const requestAdminOverride = (title: string, description: string, onApproved: () => void) => {
+    setAdminOverrideModal({
+      isOpen: true,
+      title,
+      description,
+      onApproved,
+    });
+  };
 
   // Modals
   const [activeBillingRecord, setActiveBillingRecord] = useState<BillRecord | null>(null);
@@ -249,9 +297,10 @@ export default function App() {
     | null
   >(null);
 
-  // Google Apps Script Real-time Sync & Multi-Device States
+  // Real-time Sync & Multi-Device States
   const [syncStatus, setSyncStatus] = useState<'idle' | 'loading' | 'success' | 'error' | 'syncing'>('idle');
   const [syncMessage, setSyncMessage] = useState<string>('');
+  const isLocalPreviewModeRef = useRef<boolean>(false);
 
   // Refs to track current state for race-condition-free background sync
   const productsRef = useRef<Product[]>(products);
@@ -291,6 +340,58 @@ export default function App() {
   useEffect(() => {
     billsRef.current = bills;
   }, [bills]);
+
+  // Keep logged-in staff member's granular permissions synced live when staffList updates
+  useEffect(() => {
+    if (!currentStaff) return;
+    const fresh = staffList.find((s) => s.id === currentStaff.id);
+    if (fresh && JSON.stringify(fresh) !== JSON.stringify(currentStaff)) {
+      setCurrentStaff(fresh);
+    }
+  }, [staffList, currentStaff]);
+
+  const canAccessTab = (
+    tab: 'pos' | 'rooms' | 'stock' | 'debts' | 'reports' | 'settings',
+    perms = effectivePermissions
+  ): boolean => {
+    if (currentRole === 'admin') return true;
+    switch (tab) {
+      case 'pos':
+        return !!perms.posSales;
+      case 'rooms':
+        return !!perms.roomManagement;
+      case 'stock':
+        return !!perms.manageStock;
+      case 'debts':
+        return !!perms.posSales || !!perms.viewReports;
+      case 'reports':
+        return !!perms.viewReports;
+      case 'settings':
+        return !!perms.manageStaff;
+      default:
+        return false;
+    }
+  };
+
+  const getFirstAllowedTab = (perms = effectivePermissions): 'pos' | 'rooms' | 'stock' | 'debts' | 'reports' | 'settings' => {
+    const order: Array<'pos' | 'rooms' | 'stock' | 'debts' | 'reports' | 'settings'> = [
+      'pos',
+      'rooms',
+      'stock',
+      'debts',
+      'reports',
+      'settings',
+    ];
+    return order.find((t) => canAccessTab(t, perms)) || 'pos';
+  };
+
+  // Auto-redirect if activeTab becomes disallowed after login or live permission change
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    if (!canAccessTab(activeTab, effectivePermissions)) {
+      setActiveTab(getFirstAllowedTab(effectivePermissions));
+    }
+  }, [isAuthenticated, activeTab, currentRole, currentStaff, staffList]);
 
   // Apply authoritative full snapshot or granular remote update to local state & localStorage
   const applyRemoteSyncData = (
@@ -529,18 +630,107 @@ export default function App() {
     }
   };
 
-  // Set up multi-device real-time sync across iOS, Android, and Windows PC (Read-First GET /api/sync + 3.5s Polling + BroadcastChannel)
+  // Set up multi-device real-time sync (Neon Postgres via /api/sync; strictly localStorage-only when DATABASE_URL is absent in Preview)
   useEffect(() => {
+    const hydrateFromLocalStorageOnly = () => {
+      const cachedProducts = getStoredProducts();
+      const cachedRooms = getStoredRooms();
+      const cachedPackages = getStoredPackages();
+      const cachedStaff = getStoredStaff();
+      const cachedBills = getStoredBills();
+      const cachedDebts = getStoredDebts();
+      if (cachedProducts.length > 0) {
+        setProducts(cachedProducts);
+        productsRef.current = cachedProducts;
+      }
+      if (cachedRooms.length > 0) {
+        setRooms(cachedRooms);
+        roomsRef.current = cachedRooms;
+      }
+      if (cachedPackages.length > 0) {
+        setPackages(cachedPackages);
+        packagesRef.current = cachedPackages;
+      }
+      if (cachedStaff.length > 0) {
+        setStaffList(cachedStaff);
+        staffRef.current = cachedStaff;
+      }
+      if (cachedBills.length > 0) {
+        setBills(cachedBills);
+        billsRef.current = cachedBills;
+      }
+      if (cachedDebts.length > 0) {
+        setDebts(cachedDebts);
+        debtsRef.current = cachedDebts;
+      }
+    };
+
     const cleanup = initMultiDeviceSync({
+      hasLocalData: () => {
+        if (
+          productsRef.current.length > 0 ||
+          roomsRef.current.length > 0 ||
+          packagesRef.current.length > 0 ||
+          billsRef.current.length > 0 ||
+          debtsRef.current.length > 0
+        ) {
+          return true;
+        }
+        return (
+          getStoredProducts().length > 0 ||
+          getStoredRooms().length > 0 ||
+          getStoredPackages().length > 0 ||
+          getStoredBills().length > 0 ||
+          getStoredDebts().length > 0
+        );
+      },
       onDataReceived: (remoteData, action, meta) => {
         serverOfflineRef.current = false;
+        isLocalPreviewModeRef.current = false;
+        setIsLocalPreviewMode(false);
         applyRemoteSyncData(remoteData, action, meta);
+        if (meta?.lastUpdated || remoteData.lastUpdated) {
+          setLastCloudSyncMeta({
+            version: meta?.version ?? 0,
+            lastUpdated: meta?.lastUpdated || remoteData.lastUpdated || '',
+            lastUpdatedByDevice: meta?.lastUpdatedByDevice || remoteData.lastUpdatedByDevice,
+            lastUpdatedDeviceType: meta?.lastUpdatedDeviceType || remoteData.lastUpdatedDeviceType,
+            lastAction: meta?.lastAction || remoteData.lastAction,
+          });
+        }
+      },
+      onCloudUpdateAvailable: (notice) => {
+        serverOfflineRef.current = false;
+        isLocalPreviewModeRef.current = false;
+        setIsLocalPreviewMode(false);
+        setIsInitialServerLoading(false);
+        // Preserve existing local data on screen until user confirms Cloud update
+        if (
+          productsRef.current.length === 0 &&
+          roomsRef.current.length === 0 &&
+          billsRef.current.length === 0
+        ) {
+          hydrateFromLocalStorageOnly();
+        }
+        setPendingCloudUpdate(notice);
+        if (notice.version > deferredCloudVersionRef.current) {
+          setIsCloudUpdateModalOpen(true);
+        }
+      },
+      onLocalPreviewDetected: () => {
+        // Preview without DATABASE_URL: strictly localStorage only, zero external DB access
+        isLocalPreviewModeRef.current = true;
+        setIsLocalPreviewMode(true);
+        setIsInitialServerLoading(false);
+        setSyncStatus('idle');
+        setSyncMessage('Preview Mode: ທຳງານສະເພາະໃນ LocalStorage ຂອງເຄື່ອງນີ້ (ບໍ່ເຊື່ອມຕໍ່ຖານຂໍ້ມູນຈິງ)');
+        hydrateFromLocalStorageOnly();
       },
       onStatusChange: (status, message) => {
         if (status === 'connected') {
           serverOfflineRef.current = false;
           setSyncStatus('success');
-          setSyncMessage(message || 'Real-time: ພ້ອມຊິ້ງຫຼາຍເຄື່ອງ (PC & ມືຖື)');
+          setSyncMessage(message || 'Neon Postgres: เชื่อมต่อ Cloud เรียบร้อยแล้ว');
           setTimeout(() => setSyncStatus('idle'), 2500);
         } else if (status === 'syncing') {
           setSyncStatus('loading');
@@ -549,19 +739,9 @@ export default function App() {
           serverOfflineRef.current = true;
           setSyncStatus('error');
           if (message) setSyncMessage(message);
-          // Only if Server is genuinely unreachable on boot, fall back cleanly to non-mock local cache
           if (!isServerHydratedRef.current) {
             setIsInitialServerLoading(false);
-            const cachedProducts = getStoredProducts();
-            const cachedRooms = getStoredRooms();
-            const cachedPackages = getStoredPackages();
-            const cachedBills = getStoredBills();
-            const cachedDebts = getStoredDebts();
-            if (cachedProducts.length > 0) setProducts(cachedProducts);
-            if (cachedRooms.length > 0) setRooms(cachedRooms);
-            if (cachedPackages.length > 0) setPackages(cachedPackages);
-            if (cachedBills.length > 0) setBills(cachedBills);
-            if (cachedDebts.length > 0) setDebts(cachedDebts);
+            hydrateFromLocalStorageOnly();
           }
         } else if (status === 'error') {
           setSyncStatus('error');
@@ -571,56 +751,55 @@ export default function App() {
       },
     });
 
-    // Safety fallback in case initial fetch takes too long
     const bootFallbackTimer = setTimeout(() => {
       setIsInitialServerLoading(false);
     }, 5000);
 
-    // 2. Real-time Firebase Firestore Cloud Database Listener (Project: ktv-e97cb)
-    const unsubFirebase = listenToFirebaseStore((remoteData) => {
-      // Ignore if this update was pushed by this exact device
-      if (remoteData.lastSenderId && remoteData.lastSenderId === getDeviceId()) {
-        return;
-      }
-
-      // Wait until /api/sync hydrates first unless /api/sync is genuinely offline
-      if (!isServerHydratedRef.current && !serverOfflineRef.current) {
-        return;
-      }
-
-      const remoteTime = remoteData.lastUpdated ? new Date(remoteData.lastUpdated).getTime() : 0;
-      if (
-        isServerHydratedRef.current &&
-        (remoteTime === 0 ||
-          remoteTime <= Math.max(lastLocalActionTimeRef.current, lastServerUpdatedMsRef.current))
-      ) {
-        return;
-      }
-
-      applyRemoteSyncData(
-        {
-          rooms: remoteData.rooms ?? remoteData.saveRooms?.rooms,
-          products: remoteData.products ?? remoteData.saveProducts?.products,
-          packages: remoteData.packages ?? remoteData.savePackages?.packages,
-          staff: remoteData.staff ?? remoteData.saveStaff?.staff,
-          debts: remoteData.debts ?? remoteData.saveDebts?.debts,
-          bills: remoteData.bills ?? remoteData.saveBills?.bills,
-          bill: remoteData.bill ?? remoteData.saveBill?.bill,
-          settings: remoteData.settings ?? remoteData.saveSettings?.settings,
-          lastUpdated: remoteData.lastUpdated,
-        },
-        'syncAll',
-        { isInitialSync: false, isFullSnapshot: true }
-      );
-      showToast('🔥 ອັບເດດ Cloud Real-time (Firebase ktv-e97cb) ສຳເລັດແລ້ວ!');
-    });
-
     return () => {
       clearTimeout(bootFallbackTimer);
       cleanup();
-      unsubFirebase();
     };
   }, []);
+
+  // User confirmed "อัปเดตเป็นข้อมูลล่าสุด" from Microsoft/WPS-style Cloud Update Modal or Banner
+  const handleAcceptCloudUpdate = () => {
+    if (!pendingCloudUpdate) return;
+    const notice = pendingCloudUpdate;
+    applyRemoteSyncData(notice.data, 'syncAll', {
+      isInitialSync: true,
+      isFullSnapshot: true,
+      version: notice.version,
+    });
+    markCloudSnapshotApplied({
+      version: notice.version,
+      lastUpdated: notice.lastUpdated,
+      lastUpdatedByDevice: notice.lastUpdatedByDevice,
+      lastUpdatedDeviceType: notice.lastUpdatedDeviceType,
+      lastAction: notice.lastAction,
+    });
+    setLastCloudSyncMeta({
+      version: notice.version,
+      lastUpdated: notice.lastUpdated,
+      lastUpdatedByDevice: notice.lastUpdatedByDevice,
+      lastUpdatedDeviceType: notice.lastUpdatedDeviceType,
+      lastAction: notice.lastAction,
+    });
+    deferredCloudVersionRef.current = notice.version;
+    setPendingCloudUpdate(null);
+    setIsCloudUpdateModalOpen(false);
+    setSyncStatus('success');
+    setSyncMessage('อัปเดตเป็นข้อมูลล่าสุดจาก Cloud เรียบร้อยแล้ว');
+    showToast(`✅ อัปเดตเป็นข้อมูลล่าสุดจาก ${notice.lastUpdatedByDevice} เรียบร้อยแล้ว!`);
+  };
+
+  // User chose "ดูไว้ก่อน / ยังไม่อัปเดต" — dismiss modal and keep top reminder banner
+  const handleDeferCloudUpdate = () => {
+    if (pendingCloudUpdate) {
+      deferredCloudVersionRef.current = pendingCloudUpdate.version;
+    }
+    setIsCloudUpdateModalOpen(false);
+    showToast('ℹ️ ยังคงแสดงข้อมูลเดิมในเครื่อง สามารถกดอัปเดตจากแถบด้านบนได้ทุกเมื่อ');
+  };
 
   // Listen for Bluetooth connection events and try auto-reconnecting on startup
   useEffect(() => {
@@ -661,6 +840,12 @@ export default function App() {
   ): Promise<boolean> => {
     const timestamp = new Date().toISOString();
     lastLocalActionTimeRef.current = Date.now();
+
+    // Preview without DATABASE_URL: strictly browser localStorage only — NEVER touch external DB/API
+    if (isLocalPreviewModeRef.current) {
+      return false;
+    }
+
     isPushingRef.current = true;
 
     const granularPayload: SyncPayload = {
@@ -671,11 +856,27 @@ export default function App() {
     let serverAuthoritativeData: SyncPayload | undefined;
     let pushOk = false;
 
-    // 1. Instantly push granular delta to Vercel Serverless API (/api/sync)
+    // 1. Push granular delta to Neon Postgres Serverless API (/api/sync)
     try {
       const result = await pushMultiDeviceUpdate(action, granularPayload);
+      if (result.mode === 'local_preview') {
+        isLocalPreviewModeRef.current = true;
+        setIsLocalPreviewMode(true);
+        isPushingRef.current = false;
+        return false;
+      }
       pushOk = result.success;
       serverAuthoritativeData = result.data;
+
+      if (result.success && result.lastUpdated) {
+        setLastCloudSyncMeta({
+          version: result.version ?? 0,
+          lastUpdated: result.lastUpdated,
+          lastUpdatedByDevice: result.lastUpdatedByDevice || currentDeviceLabel,
+          lastUpdatedDeviceType: result.lastUpdatedDeviceType || currentDeviceType,
+          lastAction: action,
+        });
+      }
 
       if (result.data && result.rejectedStale) {
         applyRemoteSyncData(result.data, 'syncAll', {
@@ -695,38 +896,7 @@ export default function App() {
       console.warn('Multi-device server push note:', e);
     }
 
-    // 2. Sync authoritative merged state to Firebase Firestore Cloud (ktv-e97cb)
-    // Never push unhydrated local client arrays if /api/sync hasn't loaded yet
-    if (serverAuthoritativeData || isServerHydratedRef.current) {
-      try {
-        const deviceId = getDeviceId();
-        const cloudState = serverAuthoritativeData || {
-          bills: billsRef.current,
-          debts: debtsRef.current,
-          products: productsRef.current,
-          rooms: roomsRef.current,
-          packages: packagesRef.current,
-          staff: staffRef.current,
-          settings,
-        };
-        await pushToFirebaseStore({
-          lastSenderId: deviceId,
-          lastAction: action,
-          lastUpdated: serverAuthoritativeData?.lastUpdated || timestamp,
-          bills: cloudState.bills ?? billsRef.current,
-          debts: cloudState.debts ?? debtsRef.current,
-          products: cloudState.products ?? productsRef.current,
-          rooms: cloudState.rooms ?? roomsRef.current,
-          packages: cloudState.packages ?? packagesRef.current,
-          staff: cloudState.staff ?? staffRef.current,
-          settings: cloudState.settings ?? settings,
-        });
-      } catch (e) {
-        console.warn('Firebase push note:', e);
-      }
-    }
-
-    // 3. Forward to Google Sheets Web App if configured
+    // 2. Forward to Google Sheets Web App only if explicitly configured
     if (!settings.gasWebAppUrl || isPlaceholderGasUrl(settings.gasWebAppUrl) || settings.realtimeSyncEnabled === false) {
       setTimeout(() => {
         isPushingRef.current = false;
@@ -957,11 +1127,129 @@ export default function App() {
     return { updatedProducts, stockDeductions };
   };
 
+  // Upload local device stock/rooms/staff/bills into Neon Postgres Cloud (Non-Destructive Merge, NEVER empty overwrite)
+  const handleUploadLocalToCloud = async () => {
+    if (isLocalPreviewModeRef.current) {
+      showToast('ℹ️ ໜ້າ Preview ຍັງບໍ່ໄດ້ຕັ້ງຄ່າ DATABASE_URL (ທຳງານສະເພາະໃນ LocalStorage ຂອງເຄື່ອງນີ້)');
+      return;
+    }
+
+    const localProducts = productsRef.current.length > 0 ? productsRef.current : getStoredProducts();
+    const localRooms = roomsRef.current.length > 0 ? roomsRef.current : getStoredRooms();
+    const localPackages = packagesRef.current.length > 0 ? packagesRef.current : getStoredPackages();
+    const localStaff = staffRef.current.length > 0 ? staffRef.current : getStoredStaff();
+    const localBills = billsRef.current.length > 0 ? billsRef.current : getStoredBills();
+    const localDebts = debtsRef.current.length > 0 ? debtsRef.current : getStoredDebts();
+
+    const totalItems =
+      localProducts.length +
+      localRooms.length +
+      localPackages.length +
+      localStaff.length +
+      localBills.length +
+      localDebts.length;
+
+    if (totalItems === 0) {
+      showToast('⚠️ ບໍ່ມີຂໍ້ມູນໃນເຄື່ອງນີ້ສຳລັບອັບໂຫຼດຂຶ້ນ Cloud (ປ້ອງກັນການຂຽນທັບຂໍ້ມູນວ່າງ)');
+      return;
+    }
+
+    setIsUploadingCloud(true);
+    setSyncStatus('syncing');
+    setSyncMessage('ກຳລັງອັບໂຫຼດຂໍ້ມູນຈາກເຄື່ອງນີ້ຂຶ້ນ Neon Postgres Cloud...');
+
+    try {
+      const payload: SyncPayload = {
+        ...(localProducts.length > 0 ? { products: localProducts } : {}),
+        ...(localRooms.length > 0 ? { rooms: localRooms } : {}),
+        ...(localPackages.length > 0 ? { packages: localPackages } : {}),
+        ...(localStaff.length > 0 ? { staff: localStaff } : {}),
+        ...(localBills.length > 0 ? { bills: localBills } : {}),
+        ...(localDebts.length > 0 ? { debts: localDebts } : {}),
+        settings,
+        lastUpdated: new Date().toISOString(),
+      };
+
+      const res = await pushMultiDeviceUpdate('uploadLocalToCloud', payload);
+      if (res.mode === 'local_preview') {
+        isLocalPreviewModeRef.current = true;
+        setIsLocalPreviewMode(true);
+        showToast('ℹ️ ຍັງບໍ່ໄດ້ຕັ້ງຄ່າ DATABASE_URL ໃນ Server ນີ້');
+        return;
+      }
+
+      if (res.success && res.data) {
+        applyRemoteSyncData(res.data, 'syncAll', {
+          isInitialSync: true,
+          isFullSnapshot: true,
+          version: res.version,
+        });
+        if (res.lastUpdated) {
+          setLastCloudSyncMeta({
+            version: res.version ?? 0,
+            lastUpdated: res.lastUpdated,
+            lastUpdatedByDevice: res.lastUpdatedByDevice || currentDeviceLabel,
+            lastUpdatedDeviceType: res.lastUpdatedDeviceType || currentDeviceType,
+            lastAction: 'uploadLocalToCloud',
+          });
+        }
+        setPendingCloudUpdate(null);
+        setIsCloudUpdateModalOpen(false);
+        setSyncStatus('success');
+        setSyncMessage('ส่งข้อมูลจากเครื่องนี้ขึ้น Neon Postgres Cloud เรียบร้อยแล้ว!');
+        showToast(
+          `☁️ ส่งข้อมูลขึ้น Cloud สำเร็จ! (สินค้า ${res.data.products?.length ?? 0}, ห้อง ${res.data.rooms?.length ?? 0}, พนักงาน ${res.data.staff?.length ?? 0}, บิล ${res.data.bills?.length ?? 0})`
+        );
+      } else {
+        setSyncStatus('error');
+        showToast('⚠️ ส่งข้อมูลขึ้น Cloud ไม่สำเร็จ — กรุณาตรวจสอบ DATABASE_URL');
+      }
+    } catch (err) {
+      console.error('Upload local to cloud failed:', err);
+      setSyncStatus('error');
+      showToast('⚠️ ไม่สามารถส่งข้อมูลขึ้น Cloud ได้');
+    } finally {
+      setIsUploadingCloud(false);
+      setIsPushConfirmOpen(false);
+    }
+  };
+
   // Handle PIN Login Success
   const handlePinSuccess = (role: Role, staffMember?: StaffMember) => {
     setIsAuthenticated(true);
     setCurrentRole(role);
     setCurrentStaff(staffMember);
+    const nextPerms = getEffectivePermissions(role, staffMember);
+    if (role !== 'admin') {
+      const order: Array<'pos' | 'rooms' | 'stock' | 'debts' | 'reports' | 'settings'> = [
+        'pos',
+        'rooms',
+        'stock',
+        'debts',
+        'reports',
+        'settings',
+      ];
+      const allowed = (tab: typeof activeTab) => {
+        switch (tab) {
+          case 'pos':
+            return !!nextPerms.posSales;
+          case 'rooms':
+            return !!nextPerms.roomManagement;
+          case 'stock':
+            return !!nextPerms.manageStock;
+          case 'debts':
+            return !!nextPerms.posSales || !!nextPerms.viewReports;
+          case 'reports':
+            return !!nextPerms.viewReports;
+          case 'settings':
+            return !!nextPerms.manageStaff;
+        }
+      };
+      if (!allowed(activeTab)) {
+        const firstAllowed = order.find(allowed) || 'pos';
+        setActiveTab(firstAllowed);
+      }
+    }
     showToast(`ຍິນດີຕ້ອນຮັບ ${staffMember?.name || (role === 'admin' ? 'Admin' : 'ພະນັກງານ')} ເຂົ້າສູ່ 689 KTV!`);
   };
 
@@ -1132,9 +1420,28 @@ export default function App() {
             effectiveDuration
           );
     const balanceRoomCharge = room.isPaid ? 0 : actualRoomCharge;
-    const itemsTotal = room.orders.reduce((sum, o) => sum + o.price * o.quantity, 0);
-    const subtotal = balanceRoomCharge + itemsTotal;
     const dateNow = new Date();
+    const openExtBreakdown = calculateOpenTimeExtensionsBreakdown(
+      room,
+      settings.defaultHourlyRate || 100000,
+      dateNow.getTime()
+    );
+    const openExtBillItems = openExtBreakdown.entries
+      .filter((e) => !e.isPaid && e.charge > 0)
+      .map((entry) => ({
+        productId: `room-ext-${entry.id}`,
+        productName: `${entry.label} (${Math.floor(entry.durationMinutes / 60)} ຊມ ${entry.durationMinutes % 60} ນາທີ)`,
+        unit: 'ຄັ້ງ',
+        quantity: 1,
+        multiplier: 1,
+        price: entry.charge,
+        total: entry.charge,
+        costPrice: 0,
+      }));
+    const itemsTotal =
+      room.orders.reduce((sum, o) => sum + o.price * o.quantity, 0) +
+      openExtBreakdown.totalUnpaidCharge;
+    const subtotal = balanceRoomCharge + itemsTotal;
     const billNumber = generateNextBillNumber(billsRef.current, dateNow);
 
     const formattedStart =
@@ -1173,24 +1480,27 @@ export default function App() {
       pricingType: room.pricingType,
       roomCharge: actualRoomCharge,
       isRoomChargePaid: !!room.isPaid,
-      items: room.orders.map((o) => {
-        const isPack = o.selectedUnitType === 'pack' && !!o.product.hasMultiUnit;
-        const multiplier = o.multiplier || (isPack ? (o.product.packMultiplier || 24) : 1);
-        const unitLabel = o.unitLabel || (isPack ? (o.product.packUnit || 'ແພັກ') : o.product.unit);
-        return {
-          productId: o.product.id,
-          productName: isPack ? `${o.product.name} (${unitLabel} x${multiplier})` : o.product.name,
-          unit: unitLabel,
-          quantity: o.quantity,
-          multiplier,
-          selectedUnitType: o.selectedUnitType,
-          price: o.price,
-          total: o.price * o.quantity,
-          sellerId: o.sellerId,
-          sellerName: o.sellerName,
-          costPrice: isPack ? (o.product.packCostPrice || o.product.costPrice * multiplier) : o.product.costPrice,
-        };
-      }),
+      items: [
+        ...room.orders.map((o) => {
+          const isPack = o.selectedUnitType === 'pack' && !!o.product.hasMultiUnit;
+          const multiplier = o.multiplier || (isPack ? (o.product.packMultiplier || 24) : 1);
+          const unitLabel = o.unitLabel || (isPack ? (o.product.packUnit || 'ແພັກ') : o.product.unit);
+          return {
+            productId: o.product.id,
+            productName: isPack ? `${o.product.name} (${unitLabel} x${multiplier})` : o.product.name,
+            unit: unitLabel,
+            quantity: o.quantity,
+            multiplier,
+            selectedUnitType: o.selectedUnitType,
+            price: o.price,
+            total: o.price * o.quantity,
+            sellerId: o.sellerId,
+            sellerName: o.sellerName,
+            costPrice: isPack ? (o.product.packCostPrice || o.product.costPrice * multiplier) : o.product.costPrice,
+          };
+        }),
+        ...openExtBillItems,
+      ],
       subtotal,
       discount: 0,
       tax: 0,
@@ -1341,6 +1651,8 @@ export default function App() {
         openedAt: undefined,
         targetEndTime: undefined,
         bookedHours: 0,
+        baseBookedHours: undefined,
+        extensions: [],
         openedByStaffId: undefined,
         openedByStaffName: undefined,
         packageId: undefined,
@@ -1523,9 +1835,17 @@ export default function App() {
       {/* Main Top Navigation */}
       <Navbar
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={(tab) => {
+          if (!canAccessTab(tab, effectivePermissions)) {
+            showToast('🔒 ທ່ານບໍ່ມີສິດເຂົ້າເຖິງເມນູນີ້ — ກະລຸນາຕິດຕໍ່ Admin/Owner');
+            return;
+          }
+          setActiveTab(tab);
+        }}
         currentRole={currentRole}
         currentUser={currentStaff}
+        permissions={effectivePermissions}
+        onAccessDenied={(msg) => showToast(msg)}
         onLockScreen={() => setIsAuthenticated(false)}
         onOpenSheetsModal={() => setShowSheetsModal(true)}
         onOpenBluetoothModal={() => setShowBluetoothModal(true)}
@@ -1541,10 +1861,12 @@ export default function App() {
         pendingDebtsCount={debts.filter((d) => d.status !== 'paid' && d.remainingAmount > 0).length}
       />
 
-      {/* Real-Time Multi-Device Sync Status Bar */}
+      {/* Real-Time Multi-Device Cloud Sync Status Bar (Neon Postgres / Preview LocalStorage) */}
       <div className="bg-slate-900/90 border-b border-emerald-500/30 px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-xs backdrop-blur-md shadow-sm">
-        <div className="flex items-center gap-2">
-          {syncStatus === 'error' ? (
+        <div className="flex flex-wrap items-center gap-2">
+          {isLocalPreviewMode ? (
+            <Database className="w-4 h-4 text-amber-400 shrink-0" />
+          ) : syncStatus === 'error' ? (
             <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
           ) : syncStatus === 'loading' || syncStatus === 'syncing' ? (
             <RefreshCw className="w-4 h-4 text-cyan-400 animate-spin shrink-0" />
@@ -1552,23 +1874,92 @@ export default function App() {
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
           )}
           <span className="text-slate-100 font-semibold">
-            {syncMessage || '⚡ ຊິ້ງຂໍ້ມູນ Server ຫຼາຍອຸປະກອນ Real-time (Fetch-First + Granular Merge)'}
+            {syncMessage ||
+              (isLocalPreviewMode
+                ? 'Preview Mode: ทำงานเฉพาะใน LocalStorage เครื่องนี้ (ไม่แตะฐานข้อมูลจริง)'
+                : '⚡ Neon Postgres Cloud Sync (แจ้งเตือนยืนยันอัปเดตเมื่ออีกเครื่องแก้ไข)')}
           </span>
-          <div className="hidden sm:flex items-center gap-1.5 ml-2 pl-2 border-l border-slate-700 text-[10px] text-emerald-300">
-            <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 font-bold border border-emerald-500/30">
-              <Zap className="w-3 h-3" />
-              <span>Real-time Sync 3.5s</span>
-            </span>
+          <div className="hidden md:flex items-center gap-1.5 ml-1 pl-2 border-l border-slate-700 text-[10px]">
+            {isLocalPreviewMode ? (
+              <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 font-bold border border-amber-500/30">
+                <Database className="w-3 h-3" />
+                <span>Local Preview Only</span>
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 font-bold border border-emerald-500/30">
+                <Zap className="w-3 h-3" />
+                <span>Neon Cloud</span>
+              </span>
+            )}
             <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800/90 text-slate-300 font-semibold border border-slate-700">
-              <Monitor className="w-3 h-3" />
-              <Smartphone className="w-3 h-3" />
-              <span>PC &amp; Mobile</span>
+              <DeviceTypeIcon type={currentDeviceType} className="w-3 h-3 text-cyan-400" />
+              <span>เครื่องนี้: {currentDeviceLabel}</span>
             </span>
+            {!isLocalPreviewMode && lastCloudSyncMeta?.lastUpdated && (
+              <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800/70 text-slate-300 font-medium border border-slate-700/80">
+                <Clock className="w-3 h-3 text-amber-400" />
+                <span>
+                  อัปเดตล่าสุด:{' '}
+                  {new Date(lastCloudSyncMeta.lastUpdated).toLocaleTimeString('th-TH', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: false,
+                  })}
+                  {lastCloudSyncMeta.lastUpdatedByDevice
+                    ? ` (${lastCloudSyncMeta.lastUpdatedByDevice})`
+                    : ''}
+                </span>
+              </span>
+            )}
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          {settings.gasWebAppUrl && !isPlaceholderGasUrl(settings.gasWebAppUrl) && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {!isLocalPreviewMode && (
+            <button
+              type="button"
+              onClick={async () => {
+                const res = await fetchLatestServerSnapshot(true);
+                if (res.ok && res.mode === 'neon_postgres') {
+                  setPendingCloudUpdate(null);
+                  setIsCloudUpdateModalOpen(false);
+                  if (res.lastUpdated) {
+                    setLastCloudSyncMeta({
+                      version: res.version ?? 0,
+                      lastUpdated: res.lastUpdated,
+                      lastUpdatedByDevice: res.lastUpdatedByDevice,
+                      lastUpdatedDeviceType: res.lastUpdatedDeviceType,
+                    });
+                  }
+                  showToast('✅ ดึงข้อมูลล่าสุดจาก Cloud เรียบร้อยแล้ว!');
+                } else if (res.mode === 'local_preview') {
+                  showToast('ℹ️ หน้า Preview ยังไม่ได้ตั้งค่า DATABASE_URL (ทำงานเฉพาะ LocalStorage)');
+                } else {
+                  showToast('⚠️ ไม่สามารถเชื่อมต่อ Cloud Server ได้ชั่วคราว');
+                }
+              }}
+              disabled={syncStatus === 'loading' || syncStatus === 'syncing'}
+              title="ดึงข้อมูลล่าสุดจาก Neon Postgres Cloud ลงมาแสดงบนเครื่องนี้ทันที"
+              className="px-2.5 py-1 rounded-xl bg-emerald-600/25 hover:bg-emerald-600/40 text-emerald-100 hover:text-white text-[11px] font-bold flex items-center gap-1.5 border border-emerald-500/45 transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <CloudDownload className={`w-3.5 h-3.5 ${syncStatus === 'loading' || syncStatus === 'syncing' ? 'animate-pulse' : ''}`} />
+              <span>ดึงข้อมูลล่าสุดจาก Cloud</span>
+            </button>
+          )}
+          {!isLocalPreviewMode && (
+            <button
+              type="button"
+              onClick={() => setIsPushConfirmOpen(true)}
+              disabled={isUploadingCloud || syncStatus === 'loading' || syncStatus === 'syncing'}
+              title="ส่งข้อมูลสต็อก ห้อง พนักงาน และบิลจากเครื่องนี้ขึ้น Neon Postgres Cloud (Merge แบบปลอดภัย)"
+              className="px-2.5 py-1 rounded-xl bg-amber-600/25 hover:bg-amber-600/40 text-amber-100 hover:text-white text-[11px] font-bold flex items-center gap-1.5 border border-amber-500/45 transition-colors cursor-pointer disabled:opacity-50"
+            >
+              <CloudUpload className={`w-3.5 h-3.5 ${isUploadingCloud ? 'animate-bounce' : ''}`} />
+              <span>{isUploadingCloud ? 'กำลังส่งข้อมูล...' : 'ส่งข้อมูลเครื่องนี้ขึ้น Cloud'}</span>
+            </button>
+          )}
+          {!isLocalPreviewMode && settings.gasWebAppUrl && !isPlaceholderGasUrl(settings.gasWebAppUrl) && (
             <button
               onClick={() => fetchFromGas(true, false)}
               disabled={syncStatus === 'loading' || syncStatus === 'syncing'}
@@ -1579,34 +1970,47 @@ export default function App() {
               <span>ດຶງ Sheets</span>
             </button>
           )}
-          <button
-            onClick={async () => {
-              const ok = await fetchLatestServerSnapshot(true);
-              if (ok) {
-                showToast('✅ ດຶງຂໍ້ມູນລ່າສຸດຈາກ Server ສຳເລັດແລ້ວ!');
-              } else {
-                showToast('⚠️ ບໍ່ສາມາດເຊື່ອມຕໍ່ Server ໄດ້ຊົ່ວຄາວ');
-              }
-            }}
-            disabled={syncStatus === 'loading' || syncStatus === 'syncing'}
-            title="ດຶງຂໍ້ມູນລ່າສຸດຈາກ Server"
-            className="px-2.5 py-1 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/35 text-emerald-200 hover:text-white text-[11px] font-semibold flex items-center gap-1.5 border border-emerald-500/40 transition-colors cursor-pointer disabled:opacity-50"
-          >
-            <RefreshCw className={`w-3 h-3 ${syncStatus === 'loading' || syncStatus === 'syncing' ? 'animate-spin' : ''}`} />
-            <span>ດຶງຂໍ້ມູນລ່າສຸດ (Sync Server)</span>
-          </button>
         </div>
       </div>
 
-      {/* Initial Server Hydration Banner (prevents showing stale/empty state before Server loads) */}
-      {isInitialServerLoading && (
-        <div className="bg-cyan-950/80 border-b border-cyan-500/40 px-4 py-2.5 flex items-center justify-center gap-2 text-xs text-cyan-200 font-bold">
-          <RefreshCw className="w-4 h-4 text-cyan-400 animate-spin" />
-          <span>ກຳລັງດຶງຂໍ້ມູນສິນຄ້າ, ສະຕັອກ ແລະ ບິນທັງໝົດຈາກ Server ຈິງລົງມາສະແດງ...</span>
+      {/* Deferred Cloud Update Reminder Banner (Microsoft / WPS Style) */}
+      {!isLocalPreviewMode && pendingCloudUpdate && !isCloudUpdateModalOpen && (
+        <div className="bg-gradient-to-r from-cyan-950/95 via-slate-900 to-emerald-950/90 border-b border-cyan-400/50 px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs shadow-lg">
+          <div className="flex items-center gap-2.5 text-cyan-100 font-semibold">
+            <CloudDownload className="w-4 h-4 text-cyan-300 shrink-0 animate-bounce" />
+            <span>
+              พบข้อมูลอัปเดตล่าสุดจากอีกเครื่อง ({pendingCloudUpdate.lastUpdatedByDevice}) • ต้องการอัปเดตเป็นข้อมูลล่าสุดไหม?
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setIsCloudUpdateModalOpen(true)}
+              className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 text-[11px] font-semibold cursor-pointer"
+            >
+              ดูรายละเอียด
+            </button>
+            <button
+              type="button"
+              onClick={handleAcceptCloudUpdate}
+              className="px-3.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold flex items-center gap-1.5 shadow cursor-pointer"
+            >
+              <RefreshCw className="w-3 h-3" />
+              <span>อัปเดตเป็นข้อมูลล่าสุด</span>
+            </button>
+          </div>
         </div>
       )}
 
-      {/* Toast Notification Banner (Centered on Mobile & Tablet, Bottom-Right on Desktop) */}
+      {/* Initial Server Hydration Banner */}
+      {isInitialServerLoading && (
+        <div className="bg-cyan-950/80 border-b border-cyan-500/40 px-4 py-2.5 flex items-center justify-center gap-2 text-xs text-cyan-200 font-bold">
+          <RefreshCw className="w-4 h-4 text-cyan-400 animate-spin" />
+          <span>ກຳລັງດຶງຂໍ້ມູນສິນຄ້າ, ສະຕັອກ ແລະ ບິນທັງໝົດຈາກ Neon Postgres...</span>
+        </div>
+      )}
+
+      {/* Toast Notification Banner */}
       {toastMessage && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 sm:left-auto sm:right-6 sm:translate-x-0 z-50 bg-gradient-to-r from-rose-600 via-amber-600 to-emerald-600 text-white px-5 py-3 rounded-2xl shadow-2xl border border-white/20 text-xs sm:text-sm font-bold flex items-center gap-2.5 max-w-[92vw] text-center pointer-events-none transition-all animate-bounce">
           <span className="text-base">✨</span>
@@ -1616,19 +2020,22 @@ export default function App() {
 
       {/* Main Workspace Body */}
       <main className="flex-1 pb-16">
-        {activeTab === 'pos' && (
+        {activeTab === 'pos' && canAccessTab('pos', effectivePermissions) && (
           <PosSales
             products={products}
             staffList={staffList}
             activeRooms={rooms}
             settings={settings}
+            currentRole={currentRole}
             currentStaff={currentStaff}
+            permissions={effectivePermissions}
+            onRequestAdminOverride={requestAdminOverride}
             onCheckoutPosSale={handleCheckoutPosSale}
             onTransferToRoom={handleTransferToRoom}
           />
         )}
 
-        {activeTab === 'rooms' && (
+        {activeTab === 'rooms' && canAccessTab('rooms', effectivePermissions) && (
           <RoomManagement
             rooms={rooms}
             packages={packages}
@@ -1637,6 +2044,8 @@ export default function App() {
             settings={settings}
             currentStaff={currentStaff}
             currentRole={currentRole}
+            permissions={effectivePermissions}
+            onRequestAdminOverride={requestAdminOverride}
             onUpdateRooms={async (updated) => {
               const nowIso = new Date().toISOString();
               const prevRooms = roomsRef.current;
@@ -1670,21 +2079,18 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'stock' && (
+        {activeTab === 'stock' && canAccessTab('stock', effectivePermissions) && (
           <InventoryManagement
             products={products}
             currentRole={currentRole}
+            permissions={effectivePermissions}
+            onRequestAdminOverride={requestAdminOverride}
             settings={settings}
             onSaveProducts={async (updated) => {
               const nowIso = new Date().toISOString();
               const prevProducts = productsRef.current;
               if (updated.length === 0 && prevProducts.length > 0) {
-                setProducts([]);
-                productsRef.current = [];
-                saveStoredProducts([]);
-                lastLocalActionTimeRef.current = Date.now();
-                await triggerGasSync('saveProducts', { clearProducts: true });
-                showToast('✅ ບັນທຶກ ແລະ ອັບເດດສະຕັອກສິນຄ້າສຳເລັດແລ້ວ!');
+                showToast('⚠️ ລະບົບປ້ອງກັນບໍ່ໃຫ້ລ້າງສິນຄ້າທັງໝົດພ້ອມກັນ (ປ້ອງກັນຂໍ້ມູນຫາຍ)');
                 return;
               }
               const changedProducts: Product[] = [];
@@ -1716,7 +2122,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'debts' && (
+        {activeTab === 'debts' && canAccessTab('debts', effectivePermissions) && (
           <DebtManagement
             debts={debts}
             rooms={rooms}
@@ -1728,12 +2134,7 @@ export default function App() {
               const nowIso = new Date().toISOString();
               const prevDebts = debtsRef.current;
               if (updated.length === 0 && prevDebts.length > 0) {
-                setDebts([]);
-                debtsRef.current = [];
-                saveStoredDebts([]);
-                lastLocalActionTimeRef.current = Date.now();
-                await triggerGasSync('saveDebts', { clearAllDebts: true });
-                showToast('ອັບເດດຂໍ້ມູນຍອດຄ້າງຊຳລະສຳເລັດແລ້ວ!');
+                showToast('⚠️ ລະບົບປ້ອງກັນບໍ່ໃຫ້ລ້າງຂໍ້ມູນໜີ້ທັງໝົດພ້ອມກັນ');
                 return;
               }
               const changedDebts: DebtRecord[] = [];
@@ -1766,7 +2167,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'reports' && (
+        {activeTab === 'reports' && canAccessTab('reports', effectivePermissions) && (
           <SalesSummary
             bills={bills}
             products={products}
@@ -1774,11 +2175,13 @@ export default function App() {
             rooms={rooms}
             packages={packages}
             currentRole={currentRole}
+            permissions={effectivePermissions}
+            onRequestAdminOverride={requestAdminOverride}
             onSyncAllToSheets={handleBulkSyncAllToSheets}
             isSyncingSheets={isSyncingAllSheets}
             onDeleteBill={async (billId) => {
               if (currentRole !== 'admin') {
-                showToast('⚠️ ພະນັກງານບໍ່ມີສິດລຶບຂໍ້ມູນ! ສະເພາະ Admin ເທົ່ານັ້ນ');
+                showToast('⚠️ ພະນັກງານບໍ່ມີສິດລຶບຂໍ້ມູນບິນ! ສະເພາະ Admin ເທົ່ານັ້ນ');
                 return;
               }
               const target = billsRef.current.find((b) => b.id === billId);
@@ -1796,7 +2199,7 @@ export default function App() {
             }}
             onDeleteBills={async (billIds) => {
               if (currentRole !== 'admin') {
-                showToast('⚠️ ພະນັກງານບໍ່ມີສິດລຶບຂໍ້ມູນ! ສະເພາະ Admin ເທົ່ານັ້ນ');
+                showToast('⚠️ ພະນັກງານບໍ່ມີສິດລຶບຂໍ້ມູນຫຼາຍບິນ! ສະເພາະ Admin ເທົ່ານັ້ນ');
                 return;
               }
               const idSet = new Set(billIds);
@@ -1816,18 +2219,6 @@ export default function App() {
               await triggerGasSync('deleteBills', { deletedBillIds: removedIds.length ? removedIds : billIds });
               showToast(`ລຶບຂໍ້ມູນ ${billIds.length} ໃບບິນສຳເລັດແລ້ວ!`);
             }}
-            onClearAllBills={async () => {
-              if (currentRole !== 'admin') {
-                showToast('⚠️ ພະນັກງານບໍ່ມີສິດລຶບຂໍ້ມູນ! ສະເພາະ Admin ເທົ່ານັ້ນ');
-                return;
-              }
-              setBills([]);
-              billsRef.current = [];
-              updateStoredBills([]);
-              lastLocalActionTimeRef.current = Date.now();
-              await triggerGasSync('clearAllBills', { clearAllBills: true });
-              showToast('ລ້າງປະຫວັດບິນທັງໝົດສຳເລັດແລ້ວ!');
-            }}
             onReprintBill={(bill) => {
               pendingCheckoutRef.current = null;
               setIsDraftBilling(false);
@@ -1838,7 +2229,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'settings' && (
+        {activeTab === 'settings' && canAccessTab('settings', effectivePermissions) && (
           <SettingsModal
             settings={settings}
             staffList={staffList}
@@ -1907,11 +2298,7 @@ export default function App() {
               const nowIso = new Date().toISOString();
               const prevProducts = productsRef.current;
               if (newProducts.length === 0 && prevProducts.length > 0) {
-                setProducts([]);
-                productsRef.current = [];
-                saveStoredProducts([]);
-                lastLocalActionTimeRef.current = Date.now();
-                await triggerGasSync('saveProducts', { clearProducts: true });
+                showToast('⚠️ ລະບົບປ້ອງກັນບໍ່ໃຫ້ລ້າງສິນຄ້າທັງໝົດພ້ອມກັນ');
                 return;
               }
               const changedProducts: Product[] = [];
@@ -1943,11 +2330,7 @@ export default function App() {
               const nowIso = new Date().toISOString();
               const prevBills = billsRef.current;
               if (newBills.length === 0 && prevBills.length > 0) {
-                setBills([]);
-                billsRef.current = [];
-                updateStoredBills([]);
-                lastLocalActionTimeRef.current = Date.now();
-                await triggerGasSync('clearAllBills', { clearAllBills: true });
+                showToast('⚠️ ລະບົບປ້ອງກັນບໍ່ໃຫ້ລ້າງປະຫວັດບິນທັງໝົດພ້ອມກັນ');
                 return;
               }
               const changedBills: BillRecord[] = [];
@@ -1979,11 +2362,7 @@ export default function App() {
               const nowIso = new Date().toISOString();
               const prevDebts = debtsRef.current;
               if (newDebts.length === 0 && prevDebts.length > 0) {
-                setDebts([]);
-                debtsRef.current = [];
-                saveStoredDebts([]);
-                lastLocalActionTimeRef.current = Date.now();
-                await triggerGasSync('saveDebts', { clearAllDebts: true });
+                showToast('⚠️ ລະບົບປ້ອງກັນບໍ່ໃຫ້ລ້າງຂໍ້ມູນໜີ້ທັງໝົດພ້ອມກັນ');
                 return;
               }
               const changedDebts: DebtRecord[] = [];
@@ -2011,38 +2390,6 @@ export default function App() {
                 });
               }
             }}
-            onMasterReset={() => {
-              setProducts(INITIAL_PRODUCTS);
-              productsRef.current = INITIAL_PRODUCTS;
-              saveStoredProducts(INITIAL_PRODUCTS);
-              setRooms(INITIAL_ROOMS);
-              roomsRef.current = INITIAL_ROOMS;
-              saveStoredRooms(INITIAL_ROOMS);
-              setPackages(INITIAL_PACKAGES);
-              packagesRef.current = INITIAL_PACKAGES;
-              saveStoredPackages(INITIAL_PACKAGES);
-              setStaffList(INITIAL_STAFF);
-              staffRef.current = INITIAL_STAFF;
-              saveStoredStaff(INITIAL_STAFF);
-              setBills([]);
-              billsRef.current = [];
-              updateStoredBills([]);
-              setDebts([]);
-              debtsRef.current = [];
-              saveStoredDebts([]);
-              setSettings(INITIAL_SETTINGS);
-              saveStoredSettings(INITIAL_SETTINGS);
-              triggerGasSync('resetAll', {
-                products: INITIAL_PRODUCTS,
-                rooms: INITIAL_ROOMS,
-                packages: INITIAL_PACKAGES,
-                staff: INITIAL_STAFF,
-                bills: [],
-                debts: [],
-                settings: INITIAL_SETTINGS,
-              });
-              showToast('💥 ລ້າງລະບົບ ແລະ ຄືນຄ່າເລີ່ມຕົ້ນທຸກຟັງຊັນສຳເລັດແລ້ວ!');
-            }}
             bluetoothConnected={bluetoothConnected}
             onRefreshBluetoothStatus={() => {
               const status = getBluetoothStatus();
@@ -2050,13 +2397,47 @@ export default function App() {
             }}
           />
         )}
+
+        {/* Access Locked Fallback View */}
+        {!canAccessTab(activeTab, effectivePermissions) && (
+          <div className="max-w-md mx-auto mt-16 p-6 rounded-3xl bg-slate-900 border border-slate-800 text-center space-y-3">
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-500/15 border border-amber-500/40 flex items-center justify-center text-amber-400">
+              <Lock className="w-7 h-7" />
+            </div>
+            <h3 className="text-base font-black text-slate-100">ບໍ່ມີສິດເຂົ້າເຖິງໜ້ານີ້</h3>
+            <p className="text-xs text-slate-400">
+              ບັນຊີຂອງທ່ານບໍ່ໄດ້ຮັບສິດເຂົ້າເຖິງເມນູນີ້ ກະລຸນາຕິດຕໍ່ Admin/Owner ເພື່ອເປີດສິດໃນໜ້າຕັ້ງຄ່າພະນັກງານ
+            </p>
+          </div>
+        )}
       </main>
+
+      {/* Admin Override PIN Approval Modal */}
+      <AdminOverrideModal
+        isOpen={adminOverrideModal.isOpen}
+        actionTitle={adminOverrideModal.title}
+        actionDescription={adminOverrideModal.description}
+        settings={settings}
+        staffList={staffList}
+        onCancel={() =>
+          setAdminOverrideModal({ isOpen: false, title: '', description: '', onApproved: null })
+        }
+        onApprove={(approverName: string) => {
+          const cb = adminOverrideModal.onApproved;
+          setAdminOverrideModal({ isOpen: false, title: '', description: '', onApproved: null });
+          showToast(`✅ ອະນຸມັດໂດຍ ${approverName} (Admin Override)`);
+          cb?.();
+        }}
+      />
 
       {/* Billing & Thermal Receipt Modal */}
       {activeBillingRecord && (
         <BillingModal
           bill={activeBillingRecord}
           settings={settings}
+          currentRole={currentRole}
+          permissions={effectivePermissions}
+          onRequestAdminOverride={requestAdminOverride}
           isDraftBill={isDraftBilling}
           onClose={() => {
             if (isDraftBilling) {
@@ -2134,6 +2515,31 @@ export default function App() {
           }}
         />
       )}
+
+      {/* Cloud Update Confirmation Modal (Microsoft / WPS Style) */}
+      <CloudUpdateConfirmModal
+        isOpen={isAuthenticated && isCloudUpdateModalOpen && !!pendingCloudUpdate}
+        notice={pendingCloudUpdate}
+        onConfirmUpdate={handleAcceptCloudUpdate}
+        onDefer={handleDeferCloudUpdate}
+      />
+
+      {/* Push Local Data to Cloud Safety Confirmation Modal */}
+      <PushCloudConfirmModal
+        isOpen={isPushConfirmOpen}
+        isUploading={isUploadingCloud}
+        counts={{
+          products: products.length > 0 ? products.length : getStoredProducts().length,
+          rooms: rooms.length > 0 ? rooms.length : getStoredRooms().length,
+          packages: packages.length > 0 ? packages.length : getStoredPackages().length,
+          staff: staffList.length > 0 ? staffList.length : getStoredStaff().length,
+          bills: bills.length > 0 ? bills.length : getStoredBills().length,
+          debts: debts.length > 0 ? debts.length : getStoredDebts().length,
+        }}
+        deviceLabel={currentDeviceLabel}
+        onConfirmPush={handleUploadLocalToCloud}
+        onClose={() => setIsPushConfirmOpen(false)}
+      />
 
     </div>
   );

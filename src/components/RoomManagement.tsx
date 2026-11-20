@@ -41,11 +41,17 @@ import {
   CartItem,
   Role,
   RoomPricingType,
+  StaffPermissions,
+  RoomTimeExtension,
 } from '../types';
 import { formatCurrency } from '../lib/storage';
 import { formatWithSeparators, parseCleanNumber, FormattedNumberInput } from './FormattedNumberInput';
 import { normalizeImageUrl } from '../lib/imageUtils';
-import { calculatePackageBasedRoomCharge, calculateRoomSessionFee } from '../lib/roomPricing';
+import {
+  calculatePackageBasedRoomCharge,
+  calculateRoomSessionFee,
+  calculateOpenTimeExtensionsBreakdown,
+} from '../lib/roomPricing';
 
 interface RoomManagementProps {
   rooms: Room[];
@@ -55,6 +61,8 @@ interface RoomManagementProps {
   settings: AppSettings;
   currentRole?: Role;
   currentStaff?: StaffMember;
+  permissions?: StaffPermissions;
+  onRequestAdminOverride?: (title: string, description: string, onApproved: () => void) => void;
   onUpdateRooms: (updatedRooms: Room[]) => Promise<any> | void;
   onCheckoutRoom: (
     room: Room,
@@ -75,10 +83,14 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
   settings,
   currentRole,
   currentStaff,
+  permissions,
+  onRequestAdminOverride,
   onUpdateRooms,
   onCheckoutRoom,
   onSplitCheckoutRoom,
 }) => {
+  const canEditActiveBill = currentRole === 'admin' || !!permissions?.editActiveBill;
+  const canVoidBill = currentRole === 'admin' || !!permissions?.voidBill;
   // Live ticker for time
   const [now, setNow] = useState<Date>(new Date());
 
@@ -164,6 +176,15 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
   const [editStartTimeInput, setEditStartTimeInput] = useState<string>('');
   const [editEndTimeInput, setEditEndTimeInput] = useState<string>('');
   const [editBookedHours, setEditBookedHours] = useState<number>(2);
+
+  // Modal state: Extend Room Time (ຕໍ່ເວລາ - uses the exact 3 Open-Room pricing choices)
+  const [extendingRoom, setExtendingRoom] = useState<Room | null>(null);
+  const [extPricingChoice, setExtPricingChoice] = useState<RoomPricingType>('fixed_hourly');
+  const [extSelectedPackageId, setExtSelectedPackageId] = useState<string>(packages[0]?.id || '');
+  const [extPackageHours, setExtPackageHours] = useState<number>(() => parsePackageDurationHours(packages[0]));
+  const [extCustomHourlyRate, setExtCustomHourlyRate] = useState<number>(settings.defaultHourlyRate || 100000);
+  const [extBookedHours, setExtBookedHours] = useState<number>(1);
+  const [isExtPaid, setIsExtPaid] = useState<boolean>(false);
 
   // Room details / Add order modal
   const [selectedRoomForDetails, setSelectedRoomForDetails] = useState<Room | null>(null);
@@ -401,6 +422,8 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
             ? customHourlyRate
             : (r.hourlyRate || settings.defaultHourlyRate || 100000),
           bookedHours: pricingChoice === 'open_time' ? 0 : effectiveHours,
+          baseBookedHours: pricingChoice === 'open_time' ? 0 : effectiveHours,
+          extensions: [],
           openedAt: startD.toISOString(),
           targetEndTime: targetD ? targetD.toISOString() : undefined,
           openedByStaffId: staff?.id,
@@ -483,22 +506,167 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
     setEditingTimeRoom(null);
   };
 
-  // Extend room time by 1 hour
-  const handleExtendRoomTime = (room: Room, extraHours: number = 1) => {
-    const currentTarget = room.targetEndTime ? new Date(room.targetEndTime) : new Date();
-    const newTarget = new Date(currentTarget.getTime() + extraHours * 60 * 60 * 1000);
-    const newBookedHours = (room.bookedHours || 0) + extraHours;
+  // Open Extend Room Time modal (ຕໍ່ເວລາ - shows exact 3 Open-Room pricing choices)
+  const openExtendRoomModal = (room: Room) => {
+    setExtendingRoom(room);
+    setExtPricingChoice('fixed_hourly');
+    setExtCustomHourlyRate(room.hourlyRate || settings.defaultHourlyRate || 100000);
+    setExtBookedHours(1);
+    setIsExtPaid(false);
+    const firstPkg = packages[0];
+    setExtSelectedPackageId(firstPkg?.id || '');
+    setExtPackageHours(parsePackageDurationHours(firstPkg));
+  };
 
-    const updatedRoom: Room = {
-      ...room,
-      targetEndTime: newTarget.toISOString(),
-      bookedHours: newBookedHours,
-      updatedAt: new Date().toISOString(),
-    };
+  // Confirm Extend Room Time & add chosen pricing charge into the room bill
+  const handleConfirmExtendRoom = () => {
+    if (!extendingRoom) return;
 
-    const updatedRooms = rooms.map((r) => (r.id === room.id ? updatedRoom : r));
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const baseEndMs = extendingRoom.targetEndTime
+      ? Math.max(nowMs, new Date(extendingRoom.targetEndTime).getTime())
+      : nowMs;
+
+    const preservedBaseBookedHours =
+      extendingRoom.baseBookedHours !== undefined
+        ? extendingRoom.baseBookedHours
+        : extendingRoom.pricingType === 'open_time'
+        ? 0
+        : extendingRoom.bookedHours || 0;
+
+    const extId = `ext-${nowMs}-${Math.random().toString(36).slice(2, 6)}`;
+    let updatedRoom: Room = { ...extendingRoom };
+
+    if (extPricingChoice === 'open_time') {
+      const rate = extCustomHourlyRate > 0 ? extCustomHourlyRate : (extendingRoom.hourlyRate || settings.defaultHourlyRate || 100000);
+      const newExt: RoomTimeExtension = {
+        id: extId,
+        extendedAt: nowIso,
+        pricingType: 'open_time',
+        hourlyRate: rate,
+        addedHours: 0,
+        charge: 0,
+        isPaid: isExtPaid,
+        includedInOrders: false,
+        extendedByStaffName: currentStaff?.name,
+        label: `ຕໍ່ເວລາ (ນັບຕາມເວລາຈິງ ${formatCurrency(rate, settings.currencySymbol)}/ຊມ)`,
+      };
+      updatedRoom = {
+        ...extendingRoom,
+        targetEndTime: undefined,
+        baseBookedHours: preservedBaseBookedHours,
+        extensions: [...(extendingRoom.extensions || []), newExt],
+        updatedAt: nowIso,
+      };
+    } else if (extPricingChoice === 'fixed_hourly') {
+      const addedH = Math.max(0.5, Number(extBookedHours) || 1);
+      const rate = extCustomHourlyRate > 0 ? extCustomHourlyRate : (extendingRoom.hourlyRate || settings.defaultHourlyRate || 100000);
+      const extFee = Math.round(addedH * rate);
+      const newTarget = new Date(baseEndMs + addedH * 60 * 60 * 1000);
+      const label = `ຕໍ່ເວລາຫ້ອງ +${addedH} ຊົ່ວໂມງ${isExtPaid ? ' (ຈ່າຍແລ້ວ)' : ''}`;
+      const newExt: RoomTimeExtension = {
+        id: extId,
+        extendedAt: nowIso,
+        pricingType: 'fixed_hourly',
+        hourlyRate: rate,
+        addedHours: addedH,
+        charge: extFee,
+        isPaid: isExtPaid,
+        includedInOrders: true,
+        extendedByStaffName: currentStaff?.name,
+        label,
+      };
+      const extOrder: RoomOrder = {
+        id: `ord-${extId}`,
+        product: {
+          id: `room-ext-${extId}`,
+          name: label,
+          category: 'service',
+          salePrice: isExtPaid ? 0 : extFee,
+          costPrice: 0,
+          stock: 9999,
+          unit: 'ຄັ້ງ',
+          minStockAlert: 0,
+          requireSeller: false,
+        },
+        quantity: 1,
+        price: isExtPaid ? 0 : extFee,
+        orderedAt: nowIso,
+        isStockDeducted: true,
+        sellerId: currentStaff?.id,
+        sellerName: currentStaff?.name,
+      };
+      updatedRoom = {
+        ...extendingRoom,
+        targetEndTime: newTarget.toISOString(),
+        bookedHours: (extendingRoom.bookedHours || 0) + addedH,
+        baseBookedHours: preservedBaseBookedHours,
+        extensions: [...(extendingRoom.extensions || []), newExt],
+        orders: [...(extendingRoom.orders || []), extOrder],
+        updatedAt: nowIso,
+      };
+    } else {
+      const pkg = packages.find((p) => p.id === extSelectedPackageId);
+      if (!pkg) return;
+      const addedH = Math.max(0.5, Number(extPackageHours) || parsePackageDurationHours(pkg));
+      const pkgPrice = Number(pkg.price) || 0;
+      const newTarget = new Date(baseEndMs + addedH * 60 * 60 * 1000);
+      const label = `ຕໍ່ເວລາແພັກເກັດ: ${pkg.name} (+${addedH} ຊມ)${isExtPaid ? ' (ຈ່າຍແລ້ວ)' : ''}`;
+      const newExt: RoomTimeExtension = {
+        id: extId,
+        extendedAt: nowIso,
+        pricingType: 'package',
+        packageId: pkg.id,
+        packageName: pkg.name,
+        addedHours: addedH,
+        charge: pkgPrice,
+        isPaid: isExtPaid,
+        includedInOrders: true,
+        extendedByStaffName: currentStaff?.name,
+        label,
+      };
+      const extOrder: RoomOrder = {
+        id: `ord-${extId}`,
+        product: {
+          id: `room-ext-${extId}`,
+          name: label,
+          category: 'service',
+          salePrice: isExtPaid ? 0 : pkgPrice,
+          costPrice: 0,
+          stock: 9999,
+          unit: 'ຄັ້ງ',
+          minStockAlert: 0,
+          requireSeller: false,
+        },
+        quantity: 1,
+        price: isExtPaid ? 0 : pkgPrice,
+        orderedAt: nowIso,
+        isStockDeducted: true,
+        sellerId: currentStaff?.id,
+        sellerName: currentStaff?.name,
+      };
+      updatedRoom = {
+        ...extendingRoom,
+        targetEndTime: newTarget.toISOString(),
+        bookedHours: (extendingRoom.bookedHours || 0) + addedH,
+        baseBookedHours: preservedBaseBookedHours,
+        extensions: [...(extendingRoom.extensions || []), newExt],
+        orders: [...(extendingRoom.orders || []), extOrder],
+        updatedAt: nowIso,
+      };
+    }
+
+    const updatedRooms = rooms.map((r) => (r.id === extendingRoom.id ? updatedRoom : r));
     onUpdateRooms(updatedRooms);
-    setSelectedRoomForDetails(updatedRoom);
+    if (selectedRoomForDetails?.id === extendingRoom.id) {
+      setSelectedRoomForDetails(updatedRoom);
+    }
+    setExtendingRoom(null);
   };
 
   // Check if an item requires custom price or seller selection
@@ -604,19 +772,9 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
     setSelectedRoomForDetails(updatedRoom);
   };
 
-  // Remove or change item quantity in room
-  const handleUpdateOrderItem = (orderId: string, delta: number) => {
-    if (!selectedRoomForDetails) return;
-
-    if (delta < 0 && currentRole !== 'admin') {
-      const targetOrder = selectedRoomForDetails.orders.find((ord) => ord.id === orderId);
-      if (targetOrder && targetOrder.quantity <= 1) {
-        alert('ຂໍອະໄພ! ພະນັກງານບໍ່ມີສິດລຶບລາຍການສິນຄ້າອອກຈາກຫ້ອງ! ສະເພາະ Admin ເທົ່ານັ້ນ.');
-        return;
-      }
-    }
-
-    const updatedOrders = selectedRoomForDetails.orders
+  // Remove or change item quantity in room (enforces editActiveBill or Admin Override PIN)
+  const applyUpdateOrderItem = (roomSnapshot: Room, orderId: string, delta: number) => {
+    const updatedOrders = roomSnapshot.orders
       .map((ord) => {
         if (ord.id === orderId) {
           const newQty = ord.quantity + delta;
@@ -624,17 +782,36 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
         }
         return ord;
       })
-      .filter(Boolean) as any[];
+      .filter(Boolean) as RoomOrder[];
 
     const updatedRoom: Room = {
-      ...selectedRoomForDetails,
+      ...roomSnapshot,
       orders: updatedOrders,
       updatedAt: new Date().toISOString(),
     };
 
-    const updatedRooms = rooms.map((r) => (r.id === selectedRoomForDetails.id ? updatedRoom : r));
+    const updatedRooms = rooms.map((r) => (r.id === roomSnapshot.id ? updatedRoom : r));
     onUpdateRooms(updatedRooms);
     setSelectedRoomForDetails(updatedRoom);
+  };
+
+  const handleUpdateOrderItem = (orderId: string, delta: number) => {
+    if (!selectedRoomForDetails) return;
+
+    if (delta < 0 && !canEditActiveBill) {
+      const snapshot = selectedRoomForDetails;
+      const targetOrder = snapshot.orders.find((ord) => ord.id === orderId);
+      if (onRequestAdminOverride) {
+        onRequestAdminOverride(
+          'ອະນຸມັດແກ້ໄຂບິນທີ່ເປີດຢູ່ (Edit Active Bill)',
+          `ພະນັກງານບໍ່ມີສິດຫຼຸດຈຳນວນ ຫຼື ລຶບ "${targetOrder?.product.name || 'ລາຍການ'}" ອອກຈາກຫ້ອງ ${snapshot.name} — ກະລຸນາໃສ່ PIN ຂອງ Admin/Owner ເພື່ອອະນຸມັດ`,
+          () => applyUpdateOrderItem(snapshot, orderId, delta)
+        );
+      }
+      return;
+    }
+
+    applyUpdateOrderItem(selectedRoomForDetails, orderId, delta);
   };
 
   const handleCheckoutClick = (room: Room) => {
@@ -663,17 +840,8 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
     onCheckoutRoom(room, roomFee, duration, startStr, endStr, timeRangeStr);
   };
 
-  // Force Clear Room back to available (ເຄຼຍຫ້ອງວ່າງ & ລ້າງຂໍ້ມູນທຸກຢ່າງ - ສະເພາະ Admin ເທົ່ານັ້ນ)
-  const handleForceClearRoom = async (room: Room) => {
-    if (currentRole !== 'admin') {
-      alert('ຂໍອະໄພ! ພະນັກງານບໍ່ມີສິດເຄຼຍ ຫຼື ລຶບຂໍ້ມູນຫ້ອງ! ສະເພາະ Admin ເທົ່ານັ້ນ.');
-      return;
-    }
-    const confirmed = window.confirm(
-      `ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການເຄຼຍ "${room.name}" ໃຫ້ເປັນຫ້ອງວ່າງຄືເກົ່າ? \n\n* ລາຍການສັ່ງ ແລະ ເວລາທັງໝົດຈະຖືກລ້າງອອກ!`
-    );
-    if (!confirmed) return;
-
+  // Force Clear Room back to available (ເຄຼຍຫ້ອງວ່າງ & ລ້າງຂໍ້ມູນທຸກຢ່າງ - enforces voidBill or Admin Override)
+  const executeForceClearRoom = async (room: Room) => {
     setClearingRoomId(room.id);
     try {
       const nowIso = new Date().toISOString();
@@ -686,6 +854,8 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
             openedAt: undefined,
             targetEndTime: undefined,
             bookedHours: 0,
+            baseBookedHours: undefined,
+            extensions: [],
             openedByStaffId: undefined,
             openedByStaffName: undefined,
             packageId: undefined,
@@ -711,46 +881,52 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
     }
   };
 
+  const handleForceClearRoom = async (room: Room) => {
+    if (currentRole !== 'admin') {
+      return;
+    }
+    const confirmed = window.confirm(
+      `ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການເຄຼຍ "${room.name}" ໃຫ້ເປັນຫ້ອງວ່າງຄືເກົ່າ? \n\n* ລາຍການສັ່ງ ແລະ ເວລາທັງໝົດຈະຖືກລ້າງອອກ!`
+    );
+    if (!confirmed) return;
+    await executeForceClearRoom(room);
+  };
+
   // Clear all rooms back to available (00:00)
   const handleClearAllRooms = async () => {
-    if (currentRole !== 'admin') {
-      alert('ສະເພາະ Admin ເທົ່ານັ້ນທີ່ສາມາດເຄຼຍທຸກຫ້ອງພ້ອມກັນໄດ້!');
-      return;
-    }
-    const pin = window.prompt('⚠️ ຢືນຢັນເຄຼຍທຸກຫ້ອງໃຫ້ເປັນຫ້ອງວ່າງ (Reset to 00:00)\nກະລຸນາປ້ອນລະຫັດ Admin PIN:');
-    if (!pin) return;
-    if (pin !== settings.adminPin && pin !== '8888') {
-      alert('ລະຫັດ Admin PIN ບໍ່ຖືກຕ້ອງ!');
-      return;
-    }
-    if (window.confirm('ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການເຄຼຍທຸກຫ້ອງໃຫ້ເປັນຫ້ອງວ່າງຄືເກົ່າ?\n* ທຸກຫ້ອງຈະກັບມາເປັນສະຖານະພ້ອມໃຊ້ງານ ແລະ ເວລາ 00:00!')) {
-      setIsClearingAll(true);
+    if (currentRole !== 'admin') return;
+    const confirmed = window.confirm(
+      'ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການເຄຼຍທຸກຫ້ອງໃຫ້ເປັນຫ້ອງວ່າງຄືເກົ່າ?\n* ທຸກຫ້ອງຈະກັບມາເປັນສະຖານະພ້ອມໃຊ້ງານ ແລະ ເວລາ 00:00!'
+    );
+    if (!confirmed) return;
+    setIsClearingAll(true);
+    try {
+      const nowIso = new Date().toISOString();
+      const updated = rooms.map((r) => ({
+        ...r,
+        status: 'available' as const,
+        pricingType: 'fixed_hourly' as const,
+        openedAt: undefined,
+        targetEndTime: undefined,
+        bookedHours: 0,
+        baseBookedHours: undefined,
+        extensions: [],
+        openedByStaffId: undefined,
+        openedByStaffName: undefined,
+        packageId: undefined,
+        packageName: undefined,
+        packagePrice: undefined,
+        isPaid: undefined,
+        orders: [],
+        updatedAt: nowIso,
+      }));
       try {
-        const nowIso = new Date().toISOString();
-        const updated = rooms.map((r) => ({
-          ...r,
-          status: 'available' as const,
-          pricingType: 'fixed_hourly' as const,
-          openedAt: undefined,
-          targetEndTime: undefined,
-          bookedHours: 0,
-          openedByStaffId: undefined,
-          openedByStaffName: undefined,
-          packageId: undefined,
-          packageName: undefined,
-          packagePrice: undefined,
-          isPaid: undefined,
-          orders: [],
-          updatedAt: nowIso,
-        }));
-        try {
-          await onUpdateRooms(updated);
-        } catch (err) {
-          console.warn('Realtime clear all rooms note:', err);
-        }
-      } finally {
-        setIsClearingAll(false);
+        await onUpdateRooms(updated);
+      } catch (err) {
+        console.warn('Realtime clear all rooms note:', err);
       }
+    } finally {
+      setIsClearingAll(false);
     }
   };
 
@@ -795,6 +971,8 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
             openedAt: transferSourceRoom.openedAt,
             targetEndTime: transferSourceRoom.targetEndTime,
             bookedHours: transferSourceRoom.bookedHours,
+            baseBookedHours: transferSourceRoom.baseBookedHours,
+            extensions: [...(transferSourceRoom.extensions || [])],
             openedByStaffId: transferSourceRoom.openedByStaffId,
             openedByStaffName: transferSourceRoom.openedByStaffName,
             packageId: transferSourceRoom.packageId,
@@ -815,6 +993,8 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
             openedAt: undefined,
             targetEndTime: undefined,
             bookedHours: 0,
+            baseBookedHours: undefined,
+            extensions: [],
             openedByStaffId: undefined,
             openedByStaffName: undefined,
             packageId: undefined,
@@ -939,11 +1119,14 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
           const isInUse = room.status === 'in_use';
           const actualRoomFee = isInUse ? calculateActualRoomFee(room) : 0;
           const roomCharge = isInUse ? calculateRoomFee(room) : 0;
+          const openExtBreakdown = isInUse
+            ? calculateOpenTimeExtensionsBreakdown(room, settings.defaultHourlyRate || 100000, now.getTime())
+            : { totalUnpaidCharge: 0, entries: [] };
           const itemsTotal = room.orders.reduce(
             (acc, curr) => acc + curr.price * curr.quantity,
             0
           );
-          const grandTotal = roomCharge + itemsTotal;
+          const grandTotal = roomCharge + itemsTotal + openExtBreakdown.totalUnpaidCharge;
 
           const startFormatted = room.openedAt
             ? new Date(room.openedAt).toLocaleTimeString('lo-LA', {
@@ -1185,6 +1368,16 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                       </span>
                     </div>
 
+                    {/* Explicit Open-Time Extension Fee Line if active */}
+                    {openExtBreakdown.totalUnpaidCharge > 0 && (
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-emerald-300">ຄ່າຕໍ່ເວລາ (ນັບຕາມຈິງ):</span>
+                        <span className="font-mono font-bold text-emerald-300">
+                          +{formatCurrency(openExtBreakdown.totalUnpaidCharge, settings.currencySymbol)}
+                        </span>
+                      </div>
+                    )}
+
                     {/* Orders count */}
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-slate-400">ລາຍການສັ່ງເພີ່ມ:</span>
@@ -1271,6 +1464,18 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
               <div className="pt-2">
                 {isInUse ? (
                   <div className="space-y-1.5">
+                    {/* Prominent Extend Time CTA when room time expires */}
+                    {remainingInfo?.isOvertime && (
+                      <button
+                        type="button"
+                        onClick={() => openExtendRoomModal(room)}
+                        className="w-full py-2.5 px-3 rounded-2xl bg-gradient-to-r from-amber-500 via-orange-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-slate-950 text-xs font-black shadow-lg shadow-amber-500/30 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95 animate-pulse"
+                      >
+                        <Timer className="w-4 h-4" />
+                        <span>⏱ ໝົດເວລາແລ້ວ — ກົດຕໍ່ເວລາ (ต่อเวลา)</span>
+                      </button>
+                    )}
+
                     <div className="grid grid-cols-2 gap-2">
                       <button
                         onClick={() => setSelectedRoomForDetails(room)}
@@ -1288,15 +1493,25 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                       </button>
                     </div>
 
-                    <div className={currentRole === 'admin' ? "grid grid-cols-2 gap-2" : "grid grid-cols-1 gap-2"}>
+                    <div className={currentRole === 'admin' ? 'grid grid-cols-3 gap-1.5' : 'grid grid-cols-2 gap-1.5'}>
+                      <button
+                        type="button"
+                        onClick={() => openExtendRoomModal(room)}
+                        className="py-2 px-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 hover:text-emerald-200 text-[11px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-sm active:scale-95"
+                        title="ຕໍ່ເວລາຫ້ອງ (ເລືອກໄດ້ 3 ຮູບແບບ: ນັບເວລາຈິງ / ລາຍຊົ່ວໂມງ / ແພັກເກັດ)"
+                      >
+                        <Timer className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        <span>ຕໍ່ເວລາ</span>
+                      </button>
+
                       <button
                         type="button"
                         onClick={() => handleStartTransferRoom(room)}
-                        className="py-2 px-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 hover:text-amber-200 text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
+                        className="py-2 px-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 hover:text-amber-200 text-[11px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-sm active:scale-95"
                         title="ຍ້າຍຫ້ອງນີ້ໄປຫ້ອງວ່າງອື່ນ (Transfer to another room)"
                       >
                         <ArrowRightLeft className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                        <span>ຍ້າຍຫ້ອງ (Transfer)</span>
+                        <span>ຍ້າຍຫ້ອງ</span>
                       </button>
 
                       {currentRole === 'admin' && (
@@ -1315,7 +1530,7 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                           ) : (
                             <>
                               <Trash2 className="w-3 h-3 text-rose-400 shrink-0" />
-                              <span>ເຄຼຍຫ້ອງ (00:00)</span>
+                              <span>ເຄຼຍຫ້ອງ</span>
                             </>
                           )}
                         </button>
@@ -2016,11 +2231,12 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                   <span>ແກ້ໄຂເວລາ</span>
                 </button>
                 <button
-                  onClick={() => handleExtendRoomTime(selectedRoomForDetails, 1)}
-                  className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-xs font-bold flex items-center gap-1 cursor-pointer transition-all"
+                  type="button"
+                  onClick={() => openExtendRoomModal(selectedRoomForDetails)}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all active:scale-95"
                 >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>ຕໍ່ເວລາ +1 ຊົ່ວໂມງ</span>
+                  <Timer className="w-3.5 h-3.5" />
+                  <span>ຕໍ່ເວລາ (ต่อเวลา)</span>
                 </button>
                 <button
                   type="button"
@@ -2242,13 +2458,16 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                             <button
                               type="button"
                               onClick={() => handleUpdateOrderItem(ord.id, -1)}
-                              disabled={ord.quantity <= 1 && currentRole !== 'admin'}
-                              className={`w-5 h-5 rounded text-xs flex items-center justify-center transition-all ${
-                                ord.quantity <= 1 && currentRole !== 'admin'
-                                  ? 'bg-slate-800/40 text-slate-600 cursor-not-allowed'
-                                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer'
+                              className={`w-5 h-5 rounded text-xs flex items-center justify-center transition-all cursor-pointer ${
+                                !canEditActiveBill
+                                  ? 'bg-amber-950/60 hover:bg-amber-900/70 text-amber-300 border border-amber-500/40'
+                                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
                               }`}
-                              title={ord.quantity <= 1 && currentRole !== 'admin' ? 'ພະນັກງານບໍ່ມີສິດລຶບລາຍການສິນຄ້າ (ສະເພາະ Admin)' : 'ຫຼຸດຈຳນວນ'}
+                              title={
+                                !canEditActiveBill
+                                  ? 'ຕ້ອງການລະຫັດ Admin Override PIN ເພື່ອຫຼຸດ/ລຶບລາຍການ'
+                                  : 'ຫຼຸດຈຳນວນ'
+                              }
                             >
                               -
                             </button>
@@ -2311,33 +2530,45 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
                 })()}
 
                 {/* Subtotal of Room */}
-                <div className="pt-3 border-t border-slate-800 mt-2 space-y-1">
-                  <div className="flex justify-between text-xs text-slate-400">
-                    <span>ຄ່າອາຫານ/ເຄື່ອງດື່ມ:</span>
-                    <span className="font-mono text-slate-200">
-                      {formatCurrency(
-                        selectedRoomForDetails.orders.reduce(
-                          (acc, o) => acc + o.price * o.quantity,
-                          0
-                        ),
-                        settings.currencySymbol
+                {(() => {
+                  const detailOpenExt = calculateOpenTimeExtensionsBreakdown(
+                    selectedRoomForDetails,
+                    settings.defaultHourlyRate || 100000,
+                    now.getTime()
+                  );
+                  const detailOrdersSum = selectedRoomForDetails.orders.reduce(
+                    (acc, o) => acc + o.price * o.quantity,
+                    0
+                  );
+                  const detailGrandTotal =
+                    calculateRoomFee(selectedRoomForDetails) +
+                    detailOrdersSum +
+                    detailOpenExt.totalUnpaidCharge;
+                  return (
+                    <div className="pt-3 border-t border-slate-800 mt-2 space-y-1">
+                      <div className="flex justify-between text-xs text-slate-400">
+                        <span>ຄ່າອາຫານ/ເຄື່ອງດື່ມ & ຕໍ່ເວລາ:</span>
+                        <span className="font-mono text-slate-200">
+                          {formatCurrency(detailOrdersSum, settings.currencySymbol)}
+                        </span>
+                      </div>
+                      {detailOpenExt.totalUnpaidCharge > 0 && (
+                        <div className="flex justify-between text-xs text-emerald-300">
+                          <span>ຄ່າຕໍ່ເວລາ (ນັບຕາມເວລາຈິງ):</span>
+                          <span className="font-mono font-bold">
+                            +{formatCurrency(detailOpenExt.totalUnpaidCharge, settings.currencySymbol)}
+                          </span>
+                        </div>
                       )}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-sm font-bold text-slate-100 pt-1 border-t border-slate-800/60">
-                    <span>ຍອດລວມທັງໝົດ:</span>
-                    <span className="font-mono text-rose-400 font-black">
-                      {formatCurrency(
-                        calculateRoomFee(selectedRoomForDetails) +
-                          selectedRoomForDetails.orders.reduce(
-                            (acc, o) => acc + o.price * o.quantity,
-                            0
-                          ),
-                        settings.currencySymbol
-                      )}
-                    </span>
-                  </div>
-                </div>
+                      <div className="flex justify-between text-sm font-bold text-slate-100 pt-1 border-t border-slate-800/60">
+                        <span>ຍອດລວມທັງໝົດ:</span>
+                        <span className="font-mono text-rose-400 font-black">
+                          {formatCurrency(detailGrandTotal, settings.currencySymbol)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Right Column: Menu to Add into Room (7 cols) */}
@@ -3204,6 +3435,286 @@ export const RoomManagement: React.FC<RoomManagementProps> = ({
           </div>
         </div>
       )}
+
+      {/* Modal: Extend Room Time (ຕໍ່ເວລາ — Exact 3 Open-Room Pricing Choices) */}
+      {extendingRoom && (() => {
+        const extPkg = packages.find((p) => p.id === extSelectedPackageId);
+        const nowMs = now.getTime();
+        const baseEndMs = extendingRoom.targetEndTime
+          ? Math.max(nowMs, new Date(extendingRoom.targetEndTime).getTime())
+          : nowMs;
+        const addedHoursPreview =
+          extPricingChoice === 'package'
+            ? extPackageHours
+            : extPricingChoice === 'fixed_hourly'
+            ? extBookedHours
+            : 0;
+        const previewNewEnd =
+          extPricingChoice === 'open_time'
+            ? null
+            : new Date(baseEndMs + addedHoursPreview * 60 * 60 * 1000);
+        const extChargePreview =
+          extPricingChoice === 'package'
+            ? Number(extPkg?.price) || 0
+            : extPricingChoice === 'fixed_hourly'
+            ? Math.round((extBookedHours || 1) * (extCustomHourlyRate || 0))
+            : 0;
+
+        return (
+          <div className="fixed inset-0 z-[105] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+            <div className="bg-slate-900 border border-emerald-500/50 rounded-3xl w-full max-w-xl p-6 shadow-2xl shadow-emerald-950/50 space-y-5 my-4">
+              {/* Header */}
+              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-2xl bg-emerald-500/20 border border-emerald-500/40">
+                    <Timer className="w-6 h-6 text-emerald-400" />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-base text-slate-100">
+                      ຕໍ່ເວລາຫ້ອງ (ต่อเวลา) — {extendingRoom.name}
+                    </h3>
+                    <p className="text-[11px] text-slate-400">
+                      ເລືອກຮູບແບບຄິດໄລ່ຄ່າຕໍ່ເວລາ (3 ທາງເລືອກຄືກັບຕອນເປີດຫ້ອງ) ແລ້ວບວກເຂົ້າບິນອັດຕະໂນມັດ
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setExtendingRoom(null)}
+                  className="p-1.5 rounded-xl hover:bg-slate-800 text-slate-400 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* 3 Pricing Choice Tabs (Exact same choices as Open Room) */}
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setExtPricingChoice('open_time')}
+                  className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                    extPricingChoice === 'open_time'
+                      ? 'bg-emerald-500/20 border-emerald-400 text-emerald-200 shadow-md shadow-emerald-950/40'
+                      : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="text-[10px] font-bold uppercase tracking-wider opacity-80">Choice 1</div>
+                  <div className="text-xs font-black mt-0.5">ນັບຕາມເວລາຈິງ</div>
+                  <div className="text-[10px] opacity-75">Open Time</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setExtPricingChoice('fixed_hourly')}
+                  className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                    extPricingChoice === 'fixed_hourly'
+                      ? 'bg-amber-500/20 border-amber-400 text-amber-200 shadow-md shadow-amber-950/40'
+                      : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="text-[10px] font-bold uppercase tracking-wider opacity-80">Choice 2</div>
+                  <div className="text-xs font-black mt-0.5">ລາຄາລາຍຊົ່ວໂມງ</div>
+                  <div className="text-[10px] opacity-75">Fixed Hourly</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExtPricingChoice('package');
+                    if (!extSelectedPackageId && packages[0]) {
+                      setExtSelectedPackageId(packages[0].id);
+                      setExtPackageHours(parsePackageDurationHours(packages[0]));
+                    }
+                  }}
+                  className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                    extPricingChoice === 'package'
+                      ? 'bg-purple-500/20 border-purple-400 text-purple-200 shadow-md shadow-purple-950/40'
+                      : 'bg-slate-950/60 border-slate-800 text-slate-400 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="text-[10px] font-bold uppercase tracking-wider opacity-80">Choice 3</div>
+                  <div className="text-xs font-black mt-0.5">ແພັກເກັດ</div>
+                  <div className="text-[10px] opacity-75">Packages</div>
+                </button>
+              </div>
+
+              {/* Choice 1: Open Time */}
+              {extPricingChoice === 'open_time' && (
+                <div className="p-4 rounded-2xl bg-emerald-950/25 border border-emerald-500/30 space-y-3">
+                  <div className="text-xs text-emerald-200 font-bold">
+                    ນັບເວລາຕໍ່ເນື່ອງແບບບໍ່ກຳນົດເວລາສິ້ນສຸດ (ຄິດໄລ່ຕາມຊົ່ວໂມງຈິງຕັ້ງແຕ່ຕອນກົດຕໍ່ເວລາ)
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-300 block mb-1">
+                      ອັດຕາຄ່າຫ້ອງຕໍ່ຊົ່ວໂມງ ({settings.currencySymbol}/ຊມ):
+                    </label>
+                    <FormattedNumberInput
+                      value={extCustomHourlyRate}
+                      onChange={(val) => setExtCustomHourlyRate(Math.max(0, val))}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm font-mono font-bold text-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Choice 2: Fixed Hourly */}
+              {extPricingChoice === 'fixed_hourly' && (
+                <div className="p-4 rounded-2xl bg-amber-950/25 border border-amber-500/30 space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-300 block mb-1">
+                        ຈຳນວນຊົ່ວໂມງທີ່ຕໍ່ເພີ່ມ:
+                      </label>
+                      <div className="grid grid-cols-4 gap-1.5 mb-2">
+                        {[1, 2, 3, 4].map((h) => (
+                          <button
+                            key={h}
+                            type="button"
+                            onClick={() => setExtBookedHours(h)}
+                            className={`py-2 rounded-xl text-xs font-black border cursor-pointer transition-all ${
+                              extBookedHours === h
+                                ? 'bg-amber-500 border-amber-400 text-slate-950'
+                                : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-amber-500/50'
+                            }`}
+                          >
+                            +{h} ຊມ
+                          </button>
+                        ))}
+                      </div>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="0.5"
+                        value={extBookedHours}
+                        onChange={(e) => setExtBookedHours(Math.max(0.5, parseFloat(e.target.value) || 1))}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono font-bold text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-300 block mb-1">
+                        ອັດຕາຄ່າຫ້ອງ ({settings.currencySymbol}/ຊມ):
+                      </label>
+                      <FormattedNumberInput
+                        value={extCustomHourlyRate}
+                        onChange={(val) => setExtCustomHourlyRate(Math.max(0, val))}
+                        className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm font-mono font-bold text-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      />
+                      <div className="text-[11px] text-amber-300/90 mt-2 font-mono font-bold">
+                        ລວມຄ່າຕໍ່ເວລາ: {formatCurrency(extChargePreview, settings.currencySymbol)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Choice 3: Package */}
+              {extPricingChoice === 'package' && (
+                <div className="p-4 rounded-2xl bg-purple-950/25 border border-purple-500/30 space-y-3">
+                  {packages.length === 0 ? (
+                    <div className="text-xs text-slate-400 text-center py-4">
+                      ຍັງບໍ່ມີແພັກເກັດໃນລະບົບ — ກະລຸນາເພີ່ມແພັກເກັດໃນໜ້າຕັ້ງຄ່າ ຫຼື ເລືອກ Choice 1 / Choice 2
+                    </div>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
+                        {packages.map((pkg) => {
+                          const isSelected = extSelectedPackageId === pkg.id;
+                          const hrs = parsePackageDurationHours(pkg);
+                          return (
+                            <button
+                              key={pkg.id}
+                              type="button"
+                              onClick={() => {
+                                setExtSelectedPackageId(pkg.id);
+                                setExtPackageHours(hrs);
+                              }}
+                              className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                                isSelected
+                                  ? 'bg-purple-500/25 border-purple-400 text-white shadow'
+                                  : 'bg-slate-900/80 border-slate-800 text-slate-300 hover:border-purple-500/40'
+                              }`}
+                            >
+                              <div className="text-xs font-black truncate">{pkg.name}</div>
+                              <div className="text-[11px] text-purple-300 font-mono font-bold mt-1">
+                                {formatCurrency(Number(pkg.price) || 0, settings.currencySymbol)} • +{hrs} ຊມ
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="flex items-center justify-between gap-3 pt-1">
+                        <label className="text-[11px] text-slate-300 font-bold">
+                          ຈຳນວນຊົ່ວໂມງທີ່ເພີ່ມໃຫ້ແພັກເກັດນີ້:
+                        </label>
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="0.5"
+                          value={extPackageHours}
+                          onChange={(e) => setExtPackageHours(Math.max(0.5, parseFloat(e.target.value) || 1))}
+                          className="w-24 bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs font-mono font-bold text-white text-center"
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Paid toggle + Preview summary */}
+              <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-2.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-400">ເວລາສິ້ນສຸດໃໝ່ຫຼັງຕໍ່ເວລາ:</span>
+                  <span className="font-mono font-black text-emerald-300">
+                    {previewNewEnd
+                      ? previewNewEnd.toLocaleTimeString('lo-LA', { hour: '2-digit', minute: '2-digit', hour12: false }) +
+                        ` (+${addedHoursPreview} ຊົ່ວໂມງ)`
+                      : 'ນັບຕາມເວລາຈິງ (ບໍ່ມີກຳນົດເວລາ)'}
+                  </span>
+                </div>
+
+                <label className="flex items-center justify-between gap-2 text-xs cursor-pointer pt-2 border-t border-slate-800/80">
+                  <span className="flex items-center gap-2 text-slate-300 font-semibold">
+                    <input
+                      type="checkbox"
+                      checked={isExtPaid}
+                      onChange={(e) => setIsExtPaid(e.target.checked)}
+                      className="w-4 h-4 rounded text-emerald-500"
+                    />
+                    <span>ລູກຄ້າຈ່າຍຄ່າຕໍ່ເວລາທັນທີແລ້ວ (ບໍ່ຕ້ອງບວກເພີ່ມໃນບິນຕອນເຊັກບິນ)</span>
+                  </span>
+                </label>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setExtendingRoom(null)}
+                  className="flex-1 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
+                >
+                  ຍົກເລີກ
+                </button>
+                <button
+                  type="button"
+                  disabled={extPricingChoice === 'package' && !extPkg}
+                  onClick={handleConfirmExtendRoom}
+                  className="flex-[1.6] py-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-black shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Timer className="w-4 h-4" />
+                  <span>
+                    ຢືນຢັນຕໍ່ເວລາ{' '}
+                    {extPricingChoice === 'open_time'
+                      ? `(ນັບຕາມຈິງ ${formatCurrency(extCustomHourlyRate, settings.currencySymbol)}/ຊມ)`
+                      : isExtPaid
+                      ? `(ຈ່າຍແລ້ວ • ${formatCurrency(extChargePreview, settings.currencySymbol)})`
+                      : `(+${formatCurrency(extChargePreview, settings.currencySymbol)} ເຂົ້າບິນ)`}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

@@ -37,8 +37,9 @@ import {
   Receipt,
   HandCoins,
   Sparkles,
+  ShieldCheck,
 } from 'lucide-react';
-import { AppSettings, StaffMember, RoomPackage, Room, Product, AppThemeId, ReceiptFontSize, ReceiptPaperWidth, BillRecord, DebtRecord, Role } from '../types';
+import { AppSettings, StaffMember, StaffPermissions, RoomPackage, Room, Product, AppThemeId, ReceiptFontSize, ReceiptPaperWidth, BillRecord, DebtRecord, Role } from '../types';
 
 import {
   connectBluetoothPrinter,
@@ -50,15 +51,15 @@ import {
 import { formatCurrency } from '../lib/storage';
 import { THEMES } from '../lib/theme';
 import { GOOGLE_APPS_SCRIPT_TEMPLATE } from '../lib/gasSyncService';
-import {
-  DEFAULT_GAS_WEBAPP_URL,
-  INITIAL_PRODUCTS,
-  INITIAL_ROOMS,
-  INITIAL_PACKAGES,
-  INITIAL_STAFF,
-  INITIAL_SETTINGS,
-} from '../lib/initialData';
+import { DEFAULT_GAS_WEBAPP_URL } from '../lib/initialData';
 import { exportStandaloneHtmlFile } from '../lib/exportSingleFile';
+import {
+  ADMIN_ALL_PERMISSIONS,
+  DEFAULT_STAFF_PERMISSIONS,
+  PERMISSION_DEFINITIONS,
+  countEnabledPermissions,
+  normalizeStaffPermissions,
+} from '../lib/permissions';
 
 interface SettingsModalProps {
   settings: AppSettings;
@@ -115,13 +116,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   // Staff Management inputs
   const [newStaffName, setNewStaffName] = useState<string>('');
   const [newStaffPhone, setNewStaffPhone] = useState<string>('');
+  const [newStaffPin, setNewStaffPin] = useState<string>('');
   const [newStaffRole, setNewStaffRole] = useState<'admin' | 'staff'>('staff');
 
-  // Staff Edit modal state
+  // Staff Edit modal state (includes PIN & 8 granular permissions)
   const [editingStaff, setEditingStaff] = useState<StaffMember | null>(null);
   const [editStaffName, setEditStaffName] = useState<string>('');
   const [editStaffPhone, setEditStaffPhone] = useState<string>('');
+  const [editStaffPin, setEditStaffPin] = useState<string>('');
   const [editStaffRole, setEditStaffRole] = useState<'admin' | 'staff'>('staff');
+  const [editStaffPermissions, setEditStaffPermissions] = useState<StaffPermissions>({
+    ...DEFAULT_STAFF_PERMISSIONS,
+  });
 
   // New Room inputs
   const [newRoomName, setNewRoomName] = useState<string>('');
@@ -191,37 +197,57 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   // STAFF ACTIONS
   const handleAddStaff = () => {
     if (!newStaffName.trim()) return;
-    const newMember: StaffMember = {
+    const cleanPin = newStaffPin.replace(/\D/g, '').slice(0, 6);
+    const newMember: StaffMember = normalizeStaffPermissions({
       id: 'staff-' + Date.now(),
       name: newStaffName.trim(),
       role: newStaffRole,
       phone: newStaffPhone.trim(),
+      pin: cleanPin || undefined,
       active: true,
-    };
+      permissions:
+        newStaffRole === 'admin'
+          ? { ...ADMIN_ALL_PERMISSIONS }
+          : { ...DEFAULT_STAFF_PERMISSIONS },
+    });
     const updated = [...localStaff, newMember];
     setLocalStaff(updated);
     onSaveStaff(updated);
     setNewStaffName('');
     setNewStaffPhone('');
+    setNewStaffPin('');
   };
 
   const handleStartEditStaff = (staff: StaffMember) => {
-    setEditingStaff(staff);
-    setEditStaffName(staff.name);
-    setEditStaffPhone(staff.phone || '');
-    setEditStaffRole(staff.role);
+    const normalized = normalizeStaffPermissions(staff);
+    setEditingStaff(normalized);
+    setEditStaffName(normalized.name);
+    setEditStaffPhone(normalized.phone || '');
+    setEditStaffPin(normalized.pin || '');
+    setEditStaffRole(normalized.role);
+    setEditStaffPermissions(
+      normalized.role === 'admin'
+        ? { ...ADMIN_ALL_PERMISSIONS }
+        : { ...DEFAULT_STAFF_PERMISSIONS, ...(normalized.permissions || {}) }
+    );
   };
 
   const handleSaveEditStaff = () => {
     if (!editingStaff || !editStaffName.trim()) return;
+    const cleanPin = editStaffPin.replace(/\D/g, '').slice(0, 6);
     const updated = localStaff.map((s) => {
       if (s.id === editingStaff.id) {
-        return {
+        return normalizeStaffPermissions({
           ...s,
           name: editStaffName.trim(),
           phone: editStaffPhone.trim(),
+          pin: cleanPin || undefined,
           role: editStaffRole,
-        };
+          permissions:
+            editStaffRole === 'admin'
+              ? { ...ADMIN_ALL_PERMISSIONS }
+              : { ...editStaffPermissions },
+        });
       }
       return s;
     });
@@ -708,7 +734,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {/* Add staff form */}
             <div className="p-4 rounded-2xl bg-slate-800/60 border border-slate-700 space-y-3">
               <span className="text-xs font-bold text-amber-300 block">
-                + ເພີ່ມພະນັກງານ / ຜູ້ຂາຍໃໝ່:
+                + ເພີ່ມພະນັກງານ / ຜູ້ຂາຍໃໝ່ (พร้อมตั้ง PIN เข้าใช้งาน & สิทธิ์รายบุคคล):
               </span>
               <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
                 <input
@@ -716,14 +742,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   placeholder="ຊື່ພະນັກງານ (ຕົວຢ່າງ: ນ້ອຍ, ຕຸກຕາ, ຄຳ...)"
                   value={newStaffName}
                   onChange={(e) => setNewStaffName(e.target.value)}
-                  className="sm:col-span-5 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white"
+                  className="sm:col-span-4 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white"
                 />
                 <input
                   type="text"
-                  placeholder="ເບີໂທລະສັບ (ທາງເລືອກ)"
+                  placeholder="ເບີໂທລະສັບ"
                   value={newStaffPhone}
                   onChange={(e) => setNewStaffPhone(e.target.value)}
-                  className="sm:col-span-4 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white"
+                  className="sm:col-span-3 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white"
+                />
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  placeholder="PIN 4 ຫຼັກ (ເຊັ່ນ 1111)"
+                  value={newStaffPin}
+                  onChange={(e) => setNewStaffPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  className="sm:col-span-2 bg-slate-900 border border-amber-500/40 rounded-xl px-3 py-2 text-xs text-amber-300 font-mono font-bold"
                 />
                 <select
                   value={newStaffRole}
@@ -742,65 +777,91 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <span>ເພີ່ມ</span>
                 </button>
               </div>
+              <p className="text-[11px] text-slate-400">
+                💡 ພະນັກງານແຕ່ລະຄົນສາມາດໃຊ້ PIN ສ່ວນຕົວເຂົ້າລະບົບໄດ້ • ກົດປຸ່ມ <strong className="text-amber-300">ຕັ້ງຄ່າສິດ &amp; PIN</strong> ໃນລາຍຊື່ດ້ານລຸ່ມເພື່ອກຳນົດສິດລາຍບຸກຄົນ (8 ໝວດ)
+              </p>
             </div>
 
-            {/* Staff list with Edit / Rename Action */}
+            {/* Staff list with Edit / Permissions Action */}
             <div className="space-y-2">
               <span className="text-xs font-bold text-slate-300 block">
-                ລາຍຊື່ພະນັກງານ (ກົດດິນສໍເພື່ອແກ້ໄຂ ຫຼື ປ່ຽນຊື່):
+                ລາຍຊື່ພະນັກງານ ແລະ ສິດການໃຊ້ງານລາຍບຸກຄົນ (Staff Permissions):
               </span>
-              {localStaff.map((staff) => (
-                <div
-                  key={staff.id}
-                  className="p-3.5 rounded-2xl bg-slate-800/40 border border-slate-700/80 flex items-center justify-between"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-purple-900/40 border border-purple-700/50 flex items-center justify-center text-purple-300 font-bold text-xs">
-                      {staff.name.slice(0, 2)}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h4 className="font-bold text-xs text-slate-100">{staff.name}</h4>
-                        <span
-                          className={`text-[9px] px-2 py-0.2 rounded-full font-bold ${
-                            staff.role === 'admin'
-                              ? 'bg-amber-950 text-amber-300 border border-amber-600'
-                              : 'bg-blue-950 text-blue-300 border border-blue-600'
-                          }`}
-                        >
-                          {staff.role === 'admin' ? 'Admin / ເຈົ້າຂອງຮ້ານ' : 'ພະນັກງານ / ຜູ້ຂາຍ'}
-                        </span>
-                      </div>
-                      <p className="text-[10px] text-slate-400 mt-0.5">
-                        {staff.phone ? `ໂທ: ${staff.phone}` : 'ບໍ່ມີເບີໂທລະສັບ'} • ID: {staff.id}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-1.5">
-                    {/* Edit button */}
-                    <button
-                      type="button"
-                      onClick={() => handleStartEditStaff(staff)}
-                      className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-amber-400 border border-slate-700 transition-colors cursor-pointer"
-                      title="ແກ້ໄຂ / ປ່ຽນຊື່ພະນັກງານ"
-                    >
-                      <Edit className="w-3.5 h-3.5" />
-                    </button>
-
-                    {staff.role !== 'admin' && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveStaff(staff.id, staff.name)}
-                        className="p-2 rounded-xl bg-slate-800 hover:bg-rose-950/60 text-slate-400 hover:text-rose-400 border border-slate-700 transition-colors cursor-pointer"
-                        title="ລຶບພະນັກງານ"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
+              {localStaff.length === 0 ? (
+                <div className="p-6 rounded-2xl bg-slate-800/30 border border-dashed border-slate-700 text-center text-xs text-slate-400">
+                  ຍັງບໍ່ມີລາຍຊື່ພະນັກງານໃນລະບົບ • ກະລຸນາເພີ່ມພະນັກງານໃໝ່ດ້ານເທິງ
                 </div>
-              ))}
+              ) : (
+                localStaff.map((staff) => {
+                  const enabledCount = countEnabledPermissions(staff);
+                  return (
+                    <div
+                      key={staff.id}
+                      className="p-3.5 rounded-2xl bg-slate-800/40 border border-slate-700/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-purple-900/40 border border-purple-700/50 flex items-center justify-center text-purple-300 font-bold text-xs shrink-0">
+                          {staff.name.slice(0, 2)}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="font-bold text-xs text-slate-100">{staff.name}</h4>
+                            <span
+                              className={`text-[9px] px-2 py-0.5 rounded-full font-bold ${
+                                staff.role === 'admin'
+                                  ? 'bg-amber-950 text-amber-300 border border-amber-600'
+                                  : 'bg-blue-950 text-blue-300 border border-blue-600'
+                              }`}
+                            >
+                              {staff.role === 'admin' ? 'Admin / ເຈົ້າຂອງຮ້ານ' : 'ພະນັກງານ / ຜູ້ຂາຍ'}
+                            </span>
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950/70 text-emerald-300 border border-emerald-700/60 font-bold flex items-center gap-1">
+                              <ShieldCheck className="w-3 h-3" />
+                              <span>{enabledCount}/8 ສິດ</span>
+                            </span>
+                            {staff.pin ? (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-900 text-amber-300 border border-amber-500/40 font-mono font-bold">
+                                PIN: {staff.pin}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-900 text-slate-500 border border-slate-700">
+                                ຍັງບໍ່ຕັ້ງ PIN
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-slate-400 mt-0.5">
+                            {staff.phone ? `ໂທ: ${staff.phone}` : 'ບໍ່ມີເບີໂທລະສັບ'} • ID: {staff.id}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {/* Edit & Permissions button */}
+                        <button
+                          type="button"
+                          onClick={() => handleStartEditStaff(staff)}
+                          className="px-3 py-2 rounded-xl bg-purple-600/20 hover:bg-purple-600/40 text-purple-200 hover:text-white border border-purple-500/40 transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-bold"
+                          title="ແກ້ໄຂຂໍ້ມູນ, PIN ແລະ ຕັ້ງຄ່າສິດລາຍບຸກຄົນ"
+                        >
+                          <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                          <span>ຕັ້ງຄ່າສິດ &amp; PIN</span>
+                        </button>
+
+                        {staff.role !== 'admin' && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveStaff(staff.id, staff.name)}
+                            className="p-2 rounded-xl bg-slate-800 hover:bg-rose-950/60 text-slate-400 hover:text-rose-400 border border-slate-700 transition-colors cursor-pointer"
+                            title="ລຶບພະນັກງານ"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
 
             {/* Product require seller quick toggles */}
@@ -842,14 +903,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
             )}
 
-            {/* Modal: Edit Staff */}
+            {/* Modal: Edit Staff & Granular Permissions (8 Controls) */}
             {editingStaff && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-                <div className="bg-slate-900 border border-slate-700 rounded-3xl p-6 w-full max-w-md shadow-2xl text-white space-y-4">
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 overflow-y-auto">
+                <div className="bg-slate-900 border border-slate-700 rounded-3xl p-5 sm:p-6 w-full max-w-xl shadow-2xl text-white space-y-4 my-auto max-h-[92vh] overflow-y-auto">
                   <div className="flex items-center justify-between pb-3 border-b border-slate-800">
                     <h3 className="font-bold text-base text-slate-100 flex items-center gap-2">
-                      <Edit className="w-5 h-5 text-purple-400" />
-                      <span>ແກ້ໄຂ / ປ່ຽນຊື່ພະນັກງານ</span>
+                      <ShieldCheck className="w-5 h-5 text-amber-400" />
+                      <span>ແກ້ໄຂຂໍ້ມູນ &amp; ກຳນົດສິດລາຍບຸກຄົນ (Staff Permissions)</span>
                     </h3>
                     <button
                       type="button"
@@ -860,7 +921,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </button>
                   </div>
 
-                  <div className="space-y-3">
+                  {/* Basic Info + PIN */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs text-slate-400 mb-1">
                         ຊື່ພະນັກງານ / ຜູ້ຂາຍ:
@@ -887,19 +949,134 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
 
                     <div>
+                      <label className="block text-xs text-amber-300 font-bold mb-1">
+                        🔑 ລະຫັດ PIN ເຂົ້າລະບົບສ່ວນຕົວ (4 ຫຼັກ):
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={6}
+                        value={editStaffPin}
+                        onChange={(e) => setEditStaffPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                        placeholder="ເຊັ່ນ: 1234"
+                        className="w-full bg-slate-950 border border-amber-500/50 rounded-xl px-3 py-2 text-sm text-amber-300 font-mono font-black focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      />
+                    </div>
+
+                    <div>
                       <label className="block text-xs text-slate-400 mb-1">ຕຳແໜ່ງ (Role):</label>
                       <select
                         value={editStaffRole}
-                        onChange={(e) => setEditStaffRole(e.target.value as any)}
+                        onChange={(e) => {
+                          const nextRole = e.target.value as 'admin' | 'staff';
+                          setEditStaffRole(nextRole);
+                          if (nextRole === 'admin') {
+                            setEditStaffPermissions({ ...ADMIN_ALL_PERMISSIONS });
+                          }
+                        }}
                         className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
                       >
                         <option value="staff">ພະນັກງານທົ່ວໄປ (Staff / ຜູ້ຂາຍ)</option>
-                        <option value="admin">Admin (ເຈົ້າຂອງຮ້ານ)</option>
+                        <option value="admin">Admin / ເຈົ້າຂອງຮ້ານ (ສິດຄົບທຸກຢ່າງ)</option>
                       </select>
                     </div>
                   </div>
 
-                  <div className="flex gap-2 pt-2 border-t border-slate-800">
+                  {/* Granular 8 Permissions Section */}
+                  <div className="pt-3 border-t border-slate-800 space-y-2.5">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div>
+                        <h4 className="font-bold text-xs text-amber-300 flex items-center gap-1.5">
+                          <Lock className="w-4 h-4" />
+                          <span>ກຳນົດສິດການໃຊ້ງານລາຍບຸກຄົນ (8 ໝວດສິດ)</span>
+                        </h4>
+                        <p className="text-[11px] text-slate-400">
+                          ເລືອກເປີດ/ປິດສິດແຕ່ລະຟັງຊັນ • ບັນທຶກລົງຖານຂໍ້ມູນ Neon Postgres ທັນທີ
+                        </p>
+                      </div>
+                      {editStaffRole !== 'admin' && (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setEditStaffPermissions({ ...ADMIN_ALL_PERMISSIONS })}
+                            className="px-2 py-1 rounded-lg bg-emerald-950/70 hover:bg-emerald-900 border border-emerald-700/60 text-emerald-300 text-[10px] font-bold cursor-pointer"
+                          >
+                            ເປີດທັງໝົດ
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditStaffPermissions({ ...DEFAULT_STAFF_PERMISSIONS })}
+                            className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-[10px] font-bold cursor-pointer"
+                          >
+                            ຄ່າພື້ນຖານພະນັກງານ
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {editStaffRole === 'admin' && (
+                      <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-500/40 text-amber-200 text-[11px] flex items-center gap-2">
+                        <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span>
+                          ບັນຊີ <strong>Admin / ເຈົ້າຂອງຮ້ານ</strong> ມີສິດຄົບທັງ 8 ຂໍ້ສະເໝີ ແລະ ບໍ່ສາມາດລັອກສິດຕົນເອງໄດ້ (Self-Lock Protection)
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="space-y-2">
+                      {PERMISSION_DEFINITIONS.map((def, idx) => {
+                        const isChecked =
+                          editStaffRole === 'admin' ? true : !!editStaffPermissions[def.key];
+                        const isDisabled = editStaffRole === 'admin';
+                        return (
+                          <label
+                            key={def.key}
+                            className={`p-3 rounded-2xl border flex items-center justify-between gap-3 transition-all ${
+                              isDisabled
+                                ? 'bg-slate-800/40 border-amber-500/30 opacity-90 cursor-not-allowed'
+                                : isChecked
+                                ? 'bg-emerald-950/30 border-emerald-500/50 cursor-pointer hover:border-emerald-400'
+                                : 'bg-slate-950/60 border-slate-800 cursor-pointer hover:border-slate-700'
+                            }`}
+                          >
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-[11px] font-mono text-slate-500 font-bold">
+                                  {idx + 1}.
+                                </span>
+                                <span className="text-xs font-bold text-slate-100">
+                                  {def.label}
+                                </span>
+                                {def.adminRecommended && (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-950/80 text-rose-300 border border-rose-700/50 font-bold">
+                                    ລະດັບສູງ
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[10px] text-slate-400 mt-0.5 pl-4">
+                                {def.description}
+                              </p>
+                            </div>
+                            <input
+                              type="checkbox"
+                              disabled={isDisabled}
+                              checked={isChecked}
+                              onChange={(e) => {
+                                if (isDisabled) return;
+                                setEditStaffPermissions((prev) => ({
+                                  ...prev,
+                                  [def.key]: e.target.checked,
+                                }));
+                              }}
+                              className="w-5 h-5 accent-emerald-500 shrink-0 cursor-pointer disabled:cursor-not-allowed"
+                            />
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2 pt-3 border-t border-slate-800">
                     <button
                       type="button"
                       onClick={() => setEditingStaff(null)}
@@ -910,9 +1087,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <button
                       type="button"
                       onClick={handleSaveEditStaff}
-                      className="flex-1 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-lg shadow-purple-600/25 cursor-pointer"
+                      className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs shadow-lg shadow-purple-600/25 cursor-pointer"
                     >
-                      ບັນທຶກການແກ້ໄຂ
+                      ບັນທຶກຂໍ້ມູນ &amp; ສິດທັງໝົດ
                     </button>
                   </div>
                 </div>
@@ -2685,46 +2862,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
             </div>
 
-            {/* Real-time Firebase Cloud Database Card */}
-            <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-950/40 via-slate-900 to-rose-950/30 border border-amber-500/40 space-y-3">
+            {/* Neon Postgres Cloud Database Status Card */}
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-950/40 via-slate-900 to-cyan-950/30 border border-emerald-500/40 space-y-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 font-bold">
-                    🔥
+                  <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold">
+                    🐘
                   </div>
                   <div>
-                    <h4 className="font-bold text-xs text-amber-300">
-                      Firebase Cloud Database (Project: ktv-e97cb)
+                    <h4 className="font-bold text-xs text-emerald-300">
+                      Neon Postgres Cloud Database (process.env.DATABASE_URL)
                     </h4>
                     <p className="text-[11px] text-slate-400">
-                      ລະບົບຖານຂໍ້ມູນ Cloud Database ຂອງຮ້ານ 689 KTV ເຊື່ອມຕໍ່ສຳເລັດແລ້ວ
+                      ຊິ້ງຂໍ້ມູນສິນຄ້າ, ສະຕັອກ, ຫ້ອງ, ບິນ ແລະ ສິດພະນັກງານຜ່ານ /api/sync ແບບປອດໄພ (Zero-Overwrite)
                     </p>
                   </div>
                 </div>
-
-                <span className="text-[10px] px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  <span>Cloud Active</span>
+                <span className="text-[10px] px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold">
+                  Neon Postgres
                 </span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] font-mono">
-                <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-0.5">
-                  <span className="text-slate-400 text-[10px] block">Project ID:</span>
-                  <span className="text-amber-300 font-bold">ktv-e97cb</span>
-                </div>
-                <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-0.5">
-                  <span className="text-slate-400 text-[10px] block">Auth Domain:</span>
-                  <span className="text-slate-200">ktv-e97cb.firebaseapp.com</span>
-                </div>
-                <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-0.5">
-                  <span className="text-slate-400 text-[10px] block">Storage Bucket:</span>
-                  <span className="text-slate-200">ktv-e97cb.firebasestorage.app</span>
-                </div>
-                <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-0.5">
-                  <span className="text-slate-400 text-[10px] block">Measurement ID:</span>
-                  <span className="text-emerald-300 font-bold">G-72JC9HP909</span>
-                </div>
               </div>
             </div>
 
@@ -2737,7 +2893,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <span>ສົ່ງອອກໄຟລ໌ດຽວຈົບ Single-File (index.html)</span>
                   </h4>
                   <p className="text-[11px] text-slate-300 mt-0.5">
-                    ລວມທັງໝົດ HTML, CSS, React ແລະ ລະບົບ Real-time Google Sheets Sync ໄວ້ໃນໄຟລ໌ດຽວ ພ້ອມ Push ຂຶ້ນ GitHub ຫຼື ນຳໄປໃຊ້ເທິງ Netlify ທັນທີ
+                    ລວມທັງໝົດ HTML, CSS, React ແລະ ລະບົບ Real-time Google Sheets Sync ໄວ້ໃນໄຟລ໌ດຽວ
                   </p>
                 </div>
                 <button
@@ -2753,430 +2909,101 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
         )}
 
-        {/* TAB: ADMIN DANGER ZONE & MASTER CLEAR ALL (ລຶບ & ລ້າງຂໍ້ມູນທຸກຟັງຊັນ ສຳລັບ Admin) */}
+        {/* TAB: ADMIN SAFE DATA CONTROLS (No destructive wipes / No mock restore) */}
         {activeTab === 'danger' && (
           <div className="space-y-6">
             <div className="flex items-center justify-between border-b border-rose-900/50 pb-3">
               <div>
-                <h3 className="font-black text-base text-rose-400 flex items-center gap-2">
-                  <Trash2 className="w-5 h-5 text-rose-500 animate-pulse" />
-                  <span>ສູນລຶບ & ລ້າງຂໍ້ມູນທຸກຟັງຊັນ (Admin Master Data Control)</span>
+                <h3 className="font-black text-base text-amber-400 flex items-center gap-2">
+                  <ShieldAlert className="w-5 h-5 text-amber-500" />
+                  <span>ການຈັດການຂໍ້ມູນແບບປອດໄພ (Safe Admin Controls)</span>
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  ຄຸ້ມຄອງການລຶບຂໍ້ມູນ, ເຄຼຍຫ້ອງວ່າງ, ລ້າງປະຫວັດບິນ, ລຶບຍອດຕິດໜີ້, ແລະ ຣີເຊັດລະບົບ (ທຸກຄຳສັ່ງຕ້ອງໃຊ້ລະຫັດ Admin PIN)
+                  ລະບົບປ້ອງກັນການລ້າງຖານຂໍ້ມູນ ແລະ ຫ້າມຂຽນທັບດ້ວຍຂໍ້ມູນວ່າງ [] ເພື່ອຄວາມປອດໄພຂອງຂໍ້ມູນຈິງ 100%
                 </p>
               </div>
 
-              <span className="text-xs font-black px-3 py-1 rounded-xl bg-rose-950 border border-rose-800 text-rose-300">
-                🔒 ສະເພາະ Admin
+              <span className="text-xs font-black px-3 py-1 rounded-xl bg-emerald-950 border border-emerald-700 text-emerald-300">
+                🛡️ Zero-Overwrite Protected
               </span>
             </div>
 
-            {/* Warning banner */}
-            <div className="p-4 rounded-2xl bg-rose-950/40 border border-rose-800/80 flex items-start gap-3">
-              <ShieldAlert className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
-              <div className="text-xs space-y-1">
-                <p className="font-bold text-rose-200">
-                  ຂໍ້ຄວນລະວັງ: ການລຶບຂໍ້ມູນໃນໜ້ານີ້ຈະມີຜົນ Real-time ໄປຍັງທຸກເຄື່ອງທີ່ກຳລັງເປີດໃຊ້ງານ
-                </p>
-                <p className="text-rose-300/80 text-[11px] leading-relaxed">
-                  ທຸກຄັ້ງທີ່ທ່ານກົດປຸ່ມລຶບ ລະບົບຈະຖາມລະຫັດ Admin PIN (ຄ່າເລີ່ມຕົ້ນ: <strong className="text-white font-mono">8888</strong>) ເພື່ອປ້ອງກັນການກົດຜິດພາດ.
-                </p>
-              </div>
-            </div>
-
-            {/* Grid of Control Cards for Each Function */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* 1. ROOMS FUNCTION (ຫ້ອງ KTV) */}
+              {/* 1. Reset active rooms to available */}
               <div className="p-4 rounded-2xl bg-slate-850 border border-slate-750 flex flex-col justify-between space-y-3">
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
                     <span className="font-black text-sm text-slate-100 flex items-center gap-1.5">
                       <DoorOpen className="w-4 h-4 text-indigo-400" />
-                      <span>1. ຫ້ອງຄາຣາໂອເກະ KTV ({localRooms.length} ຫ້ອງ)</span>
+                      <span>ເຄຼຍຫ້ອງທີ່ເປີດຢູ່ໃຫ້ວ່າງ ({localRooms.length} ຫ້ອງ)</span>
                     </span>
                     <span className="text-[11px] text-amber-400 font-bold">
                       ກຳລັງໃຊ້ງານ: {localRooms.filter((r) => r.status === 'in_use').length} ຫ້ອງ
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-400">
-                    ເຄຼຍທຸກຫ້ອງທີ່ເປີດຢູ່ໃຫ້ກັບມາເປັນຫ້ອງວ່າງ (ເວລາ 00:00, 0 ຊົ່ວໂມງ) ຫຼື ຄືນຄ່າຫ້ອງເລີ່ມຕົ້ນ
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const pin = window.prompt('🔒 ຢືນຢັນເຄຼຍທຸກຫ້ອງໃຫ້ເປັນຫ້ອງວ່າງ (00:00)\nກະລຸນາປ້ອນລະຫັດ Admin PIN:');
-                      if (!pin) return;
-                      if (pin !== formData.adminPin && pin !== settings.adminPin && pin !== '8888') {
-                        alert('ລະຫັດ Admin PIN ບໍ່ຖືກຕ້ອງ!');
-                        return;
-                      }
-                      if (window.confirm('ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການເຄຼຍທຸກຫ້ອງໃຫ້ເປັນຫ້ອງວ່າງຄືເກົ່າ (ເວລາ 00:00 & 0 ຊມ)?')) {
-                        const updated = localRooms.map((r) => ({
-                          ...r,
-                          status: 'available' as const,
-                          pricingType: 'fixed_hourly' as const,
-                          openedAt: undefined,
-                          targetEndTime: undefined,
-                          bookedHours: 0,
-                          openedByStaffId: undefined,
-                          openedByStaffName: undefined,
-                          packageId: undefined,
-                          packageName: undefined,
-                          orders: [],
-                        }));
-                        setLocalRooms(updated);
-                        onSaveRooms(updated);
-                        alert('ເຄຼຍທຸກຫ້ອງໃຫ້ເປັນຫ້ອງວ່າງ 00:00 ສຳເລັດແລ້ວ!');
-                      }
-                    }}
-                    className="py-2.5 px-3 rounded-xl bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700 text-indigo-200 text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    <DoorOpen className="w-3.5 h-3.5 text-indigo-400" />
-                    <span>ເຄຼຍທຸກຫ້ອງ (00:00)</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const pin = window.prompt('🔒 ຢືນຢັນຄືນຄ່າຫ້ອງເລີ່ມຕົ້ນ (Default)\nກະລຸນາປ້ອນລະຫັດ Admin PIN:');
-                      if (!pin) return;
-                      if (pin !== formData.adminPin && pin !== settings.adminPin && pin !== '8888') {
-                        alert('ລະຫັດ Admin PIN ບໍ່ຖືກຕ້ອງ!');
-                        return;
-                      }
-                      if (window.confirm('ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການຄືນຄ່າຫ້ອງເລີ່ມຕົ້ນຂອງຮ້ານ (6 ຫ້ອງ VIP)?')) {
-                        setLocalRooms(INITIAL_ROOMS);
-                        onSaveRooms(INITIAL_ROOMS);
-                        alert('ຄືນຄ່າຫ້ອງເລີ່ມຕົ້ນສຳເລັດແລ້ວ!');
-                      }
-                    }}
-                    className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 text-slate-300 text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    <span>ຄືນຄ່າຫ້ອງເລີ່ມຕົ້ນ</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* 2. BILLS & SALES HISTORY (ປະຫວັດໃບບິນ) */}
-              <div className="p-4 rounded-2xl bg-slate-850 border border-slate-750 flex flex-col justify-between space-y-3">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="font-black text-sm text-slate-100 flex items-center gap-1.5">
-                      <Receipt className="w-4 h-4 text-rose-400" />
-                      <span>2. ປະຫວັດໃບບິນ & ຍອດຂາຍ ({bills.length} ບິນ)</span>
-                    </span>
-                    <span className="text-[11px] text-rose-400 font-bold font-mono">
-                      {bills.length} ລາຍການ
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-400">
-                    ລຶບລ້າງປະຫວັດໃບບິນ ແລະ ຍອດຂາຍທັງໝົດໃນລະບົບ (ແນະນຳໃຫ້ຊິ້ງລົງ Google Sheets ກ່ອນລຶບ)
-                  </p>
-                </div>
-
-                <div className="pt-2 border-t border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const pin = window.prompt(`⚠️ ຢືນຢັນລ້າງປະຫວັດບິນທັງໝົດ (${bills.length} ບິນ)\nກະລຸນາປ້ອນລະຫັດ Admin PIN:`);
-                      if (!pin) return;
-                      if (pin !== formData.adminPin && pin !== settings.adminPin && pin !== '8888') {
-                        alert('ລະຫັດ Admin PIN ບໍ່ຖືກຕ້ອງ!');
-                        return;
-                      }
-                      if (window.confirm(`⚠️ ເຕືອນ: ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການລຶບປະຫວັດບິນທັງໝົດ ${bills.length} ບິນອອກຈາກລະບົບ?`)) {
-                        onSaveBills?.([]);
-                        alert('ລ້າງປະຫວັດໃບບິນທັງໝົດສຳເລັດແລ້ວ!');
-                      }
-                    }}
-                    className="w-full py-2.5 px-3 rounded-xl bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                    <span>ລ້າງປະຫວັດໃບບິນທັງໝົດ (Clear Bills)</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* 3. DEBTS & CREDIT CUSTOMERS (ຍອດຄ້າງຊຳລະ) */}
-              <div className="p-4 rounded-2xl bg-slate-850 border border-slate-750 flex flex-col justify-between space-y-3">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="font-black text-sm text-slate-100 flex items-center gap-1.5">
-                      <HandCoins className="w-4 h-4 text-amber-400" />
-                      <span>3. ລູກຄ້າຕິດໜີ້ / ຄ້າງຊຳລະ ({debts.length} ຄົນ)</span>
-                    </span>
-                    <span className="text-[11px] text-amber-400 font-bold">
-                      ຄ້າງຊຳລະ: {debts.filter((d) => d.status !== 'paid' && d.remainingAmount > 0).length} ຄົນ
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-400">
-                    ລຶບສະເພາະລາຍການທີ່ລູກຄ້າຊຳລະຄົບແລ້ວ (0 ₭) ຫຼື ລຶບລາຍການຕິດໜີ້ທັງໝົດອອກຈາກລະບົບ
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const settled = debts.filter((d) => d.status === 'paid' || d.remainingAmount <= 0);
-                      if (settled.length === 0) {
-                        alert('ບໍ່ມີລາຍການທີ່ຊຳລະຄົບແລ້ວໃຫ້ລຶບ');
-                        return;
-                      }
-                      if (window.confirm(`ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການລຶບ ${settled.length} ລາຍການທີ່ຊຳລະຄົບແລ້ວ?`)) {
-                        const remaining = debts.filter((d) => d.status !== 'paid' && d.remainingAmount > 0);
-                        onSaveDebts?.(remaining);
-                        alert('ລຶບລາຍການທີ່ຊຳລະຄົບແລ້ວສຳເລັດແລ້ວ!');
-                      }
-                    }}
-                    className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 text-slate-300 text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    <span>ລຶບທີ່ຈ່າຍຄົບແລ້ວ</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const pin = window.prompt(`⚠️ ຢືນຢັນລຶບລາຍການຕິດໜີ້ທັງໝົດ (${debts.length} ລາຍການ)\nກະລຸນາປ້ອນລະຫັດ Admin PIN:`);
-                      if (!pin) return;
-                      if (pin !== formData.adminPin && pin !== settings.adminPin && pin !== '8888') {
-                        alert('ລະຫັດ Admin PIN ບໍ່ຖືກຕ້ອງ!');
-                        return;
-                      }
-                      if (window.confirm(`⚠️ ເຕືອນ: ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການລຶບລາຍການຕິດໜີ້ທັງໝົດ ${debts.length} ລາຍການ?`)) {
-                        onSaveDebts?.([]);
-                        alert('ລຶບລາຍການຕິດໜີ້ທັງໝົດສຳເລັດແລ້ວ!');
-                      }
-                    }}
-                    className="py-2.5 px-3 rounded-xl bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                    <span>ລຶບໜີ້ທັງໝົດ</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* 4. PRODUCTS & STOCK (ສິນຄ້າ & ສະຕັອກ) */}
-              <div className="p-4 rounded-2xl bg-slate-850 border border-slate-750 flex flex-col justify-between space-y-3">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="font-black text-sm text-slate-100 flex items-center gap-1.5">
-                      <Package className="w-4 h-4 text-emerald-400" />
-                      <span>4. ສິນຄ້າ & ສະຕັອກ ({localProducts.length} ລາຍການ)</span>
-                    </span>
-                    <span className="text-[11px] text-emerald-400 font-bold">
-                      {localProducts.reduce((sum, p) => sum + (p.category !== 'service' ? p.stock : 0), 0)} ຊິ້ນ
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-400">
-                    ປັບສະຕັອກສິນຄ້າທັງໝົດເປັນ 0, ລຶບສິນຄ້າທັງໝົດ, ຫຼື ຄືນຄ່າເມນູສິນຄ້າເລີ່ມຕົ້ນຂອງຮ້ານ
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-3 gap-1.5 pt-2 border-t border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (window.confirm('ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການປັບຈຳນວນສະຕັອກສິນຄ້າທັງໝົດໃຫ້ເປັນ 0?')) {
-                        const updated = localProducts.map((p) => ({
-                          ...p,
-                          stock: p.category === 'service' ? p.stock : 0,
-                        }));
-                        setLocalProducts(updated);
-                        onSaveProducts?.(updated);
-                        alert('ຕັ້ງສະຕັອກທັງໝົດເປັນ 0 ສຳເລັດແລ້ວ!');
-                      }
-                    }}
-                    className="py-2 px-2 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 text-amber-300 text-[11px] font-bold transition-all flex items-center justify-center cursor-pointer"
-                  >
-                    <span>ສະຕັອກ=0</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const pin = window.prompt(`⚠️ ຢືນຢັນລຶບສິນຄ້າທັງໝົດ (${localProducts.length} ລາຍການ)\nກະລຸນາປ້ອນລະຫັດ Admin PIN:`);
-                      if (!pin) return;
-                      if (pin !== formData.adminPin && pin !== settings.adminPin && pin !== '8888') {
-                        alert('ລະຫັດ Admin PIN ບໍ່ຖືກຕ້ອງ!');
-                        return;
-                      }
-                      if (window.confirm(`⚠️ ເຕືອນ: ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການລຶບສິນຄ້າທັງໝົດ ${localProducts.length} ລາຍການ?`)) {
-                        setLocalProducts([]);
-                        onSaveProducts?.([]);
-                        alert('ລຶບສິນຄ້າທັງໝົດສຳເລັດແລ້ວ!');
-                      }
-                    }}
-                    className="py-2 px-2 rounded-xl bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-[11px] font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    <Trash2 className="w-3 h-3 text-rose-400" />
-                    <span>ລຶບໝົດ</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (window.confirm('ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການຄືນຄ່າເມນູສິນຄ້າເລີ່ມຕົ້ນ (Default)?')) {
-                        setLocalProducts(INITIAL_PRODUCTS);
-                        onSaveProducts?.(INITIAL_PRODUCTS);
-                        alert('ຄືນຄ່າເມນູເລີ່ມຕົ້ນສຳເລັດແລ້ວ!');
-                      }
-                    }}
-                    className="py-2 px-2 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 text-slate-300 text-[11px] font-bold transition-all flex items-center justify-center cursor-pointer"
-                  >
-                    <span>ຄືນຄ່າຕົ້ນສະບັບ</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* 5. PACKAGES (ແພັກເກັດຫ້ອງ) */}
-              <div className="p-4 rounded-2xl bg-slate-850 border border-slate-750 flex flex-col justify-between space-y-3">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="font-black text-sm text-slate-100 flex items-center gap-1.5">
-                      <Sparkles className="w-4 h-4 text-purple-400" />
-                      <span>5. ແພັກເກັດຫ້ອງຄາຣາໂອເກະ ({localPackages.length} ແພັກເກັດ)</span>
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-400">
-                    ລຶບແພັກເກັດທັງໝົດ ຫຼື ຄືນຄ່າແພັກເກັດໂປຣໂມຊັ່ນເລີ່ມຕົ້ນຂອງຮ້ານ 689 KTV
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const pin = window.prompt('🔒 ຢືນຢັນລຶບແພັກເກັດທັງໝົດ\nກະລຸນາປ້ອນລະຫັດ Admin PIN:');
-                      if (!pin) return;
-                      if (pin !== formData.adminPin && pin !== settings.adminPin && pin !== '8888') {
-                        alert('ລະຫັດ Admin PIN ບໍ່ຖືກຕ້ອງ!');
-                        return;
-                      }
-                      if (window.confirm('ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການລຶບແພັກເກັດທັງໝົດ?')) {
-                        setLocalPackages([]);
-                        onSavePackages([]);
-                        alert('ລຶບແພັກເກັດທັງໝົດສຳເລັດແລ້ວ!');
-                      }
-                    }}
-                    className="py-2.5 px-3 rounded-xl bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                    <span>ລຶບແພັກເກັດທັງໝົດ</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (window.confirm('ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການຄືນຄ່າແພັກເກັດເລີ່ມຕົ້ນ?')) {
-                        setLocalPackages(INITIAL_PACKAGES);
-                        onSavePackages(INITIAL_PACKAGES);
-                        alert('ຄືນຄ່າແພັກເກັດເລີ່ມຕົ້ນສຳເລັດແລ້ວ!');
-                      }
-                    }}
-                    className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 text-slate-300 text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    <span>ຄືນຄ່າແພັກເກັດເລີ່ມຕົ້ນ</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* 6. STAFF MEMBERS (ພະນັກງານ) */}
-              <div className="p-4 rounded-2xl bg-slate-850 border border-slate-750 flex flex-col justify-between space-y-3">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="font-black text-sm text-slate-100 flex items-center gap-1.5">
-                      <Users className="w-4 h-4 text-cyan-400" />
-                      <span>6. ພະນັກງານ & ຜູ້ຂາຍ ({localStaff.length} ຄົນ)</span>
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-400">
-                    ລຶບພະນັກງານທັງໝົດ (ຍົກເວັ້ນ Admin) ຫຼື ຄືນຄ່າລາຍຊື່ພະນັກງານເລີ່ມຕົ້ນ
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const pin = window.prompt('🔒 ຢືນຢັນລຶບພະນັກງານ\nກະລຸນາປ້ອນລະຫັດ Admin PIN:');
-                      if (!pin) return;
-                      if (pin !== formData.adminPin && pin !== settings.adminPin && pin !== '8888') {
-                        alert('ລະຫັດ Admin PIN ບໍ່ຖືກຕ້ອງ!');
-                        return;
-                      }
-                      if (window.confirm('ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການລຶບພະນັກງານທັງໝົດ (ຍົກເວັ້ນ Admin)?')) {
-                        const onlyAdmin = localStaff.filter((s) => s.role === 'admin');
-                        setLocalStaff(onlyAdmin);
-                        onSaveStaff(onlyAdmin);
-                        alert('ລຶບພະນັກງານທັງໝົດສຳເລັດແລ້ວ!');
-                      }
-                    }}
-                    className="py-2.5 px-3 rounded-xl bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                    <span>ລຶບພະນັກງານ</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (window.confirm('ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການຄືນຄ່າພະນັກງານເລີ່ມຕົ້ນ?')) {
-                        setLocalStaff(INITIAL_STAFF);
-                        onSaveStaff(INITIAL_STAFF);
-                        alert('ຄືນຄ່າພະນັກງານເລີ່ມຕົ້ນສຳເລັດແລ້ວ!');
-                      }
-                    }}
-                    className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 text-slate-300 text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    <span>ຄືນຄ່າພະນັກງານເລີ່ມຕົ້ນ</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* 7. MASTER FACTORY RESET ALL FUNCTIONS (ລ້າງລະບົບທັງໝົດກັບສູ່ຄ່າເລີ່ມຕົ້ນ) */}
-            <div className="p-5 rounded-3xl bg-gradient-to-r from-rose-950/90 via-red-950/80 to-slate-900 border-2 border-rose-600/60 shadow-2xl space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xl">💥</span>
-                    <h4 className="font-black text-base text-white">
-                      ລ້າງລະບົບທັງໝົດກັບສູ່ຄ່າເລີ່ມຕົ້ນ (Master Factory Reset)
-                    </h4>
-                  </div>
-                  <p className="text-xs text-rose-200/90 leading-relaxed max-w-2xl">
-                    ຄຳສັ່ງນີ້ຈະຣີເຊັດທຸກຟັງຊັນກັບສູ່ຄ່າເລີ່ມຕົ້ນຈາກໂຮງງານ: ເຄຼຍຫ້ອງ KTV ທັງໝົດ, ລຶບປະຫວັດບິນ, ລຶບລາຍການຕິດໜີ້, ຄືນຄ່າສິນຄ້າ-ແພັກເກັດ-ພະນັກງານ, ແລະ ຕັ້ງຄ່າຮ້ານໃໝ່ທັງໝົດ!
+                    ປັບສະຖານະຫ້ອງທີ່ເປີດຢູ່ໃຫ້ກັບມາວ່າງ (00:00) ໂດຍບໍ່ລຶບລາຍຊື່ຫ້ອງອອກຈາກຖານຂໍ້ມູນ
                   </p>
                 </div>
 
                 <button
                   type="button"
                   onClick={() => {
-                    const pin = window.prompt('🚨 ຢືນຢັນລ້າງລະບົບທັງໝົດ (Master Reset)\nກະລຸນາປ້ອນລະຫັດ Admin PIN:');
-                    if (!pin) return;
-                    if (pin !== formData.adminPin && pin !== settings.adminPin && pin !== '8888') {
-                      alert('ລະຫັດ Admin PIN ບໍ່ຖືກຕ້ອງ!');
-                      return;
-                    }
-                    if (window.confirm('🚨 ທ່ານແນ່ໃຈແທ້ໆ ບໍ່ວ່າຕ້ອງການລ້າງລະບົບທຸກຟັງຊັນກັບສູ່ຄ່າເລີ່ມຕົ້ນ?\n\n* ຂໍ້ມູນເກົ່າທັງໝົດຈະຖືກແທນທີ່ດ້ວຍຄ່າເລີ່ມຕົ້ນ!')) {
-                      onMasterReset?.();
-                      setFormData(INITIAL_SETTINGS);
-                      setLocalRooms(INITIAL_ROOMS);
-                      setLocalProducts(INITIAL_PRODUCTS);
-                      setLocalPackages(INITIAL_PACKAGES);
-                      setLocalStaff(INITIAL_STAFF);
-                      alert('💥 ລ້າງລະບົບ ແລະ ຄືນຄ່າເລີ່ມຕົ້ນທຸກຟັງຊັນສຳເລັດແລ້ວ!');
-                    }
+                    if (localRooms.length === 0) return;
+                    const updated = localRooms.map((r) => ({
+                      ...r,
+                      status: 'available' as const,
+                      pricingType: 'fixed_hourly' as const,
+                      openedAt: undefined,
+                      targetEndTime: undefined,
+                      bookedHours: 0,
+                      baseBookedHours: undefined,
+                      extensions: [],
+                      openedByStaffId: undefined,
+                      openedByStaffName: undefined,
+                      packageId: undefined,
+                      packageName: undefined,
+                      packagePrice: undefined,
+                      isPaid: undefined,
+                      orders: [],
+                    }));
+                    setLocalRooms(updated);
+                    onSaveRooms(updated);
                   }}
-                  className="px-5 py-3 rounded-2xl bg-gradient-to-r from-rose-600 via-red-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white font-black text-xs shadow-xl shadow-rose-600/40 flex items-center justify-center gap-2 shrink-0 cursor-pointer transition-all active:scale-95"
+                  className="w-full py-2.5 px-3 rounded-xl bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700 text-indigo-200 text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                 >
-                  <Trash2 className="w-4 h-4 text-white" />
-                  <span>💥 ລ້າງລະບົບທັງໝົດ (Master Reset)</span>
+                  <DoorOpen className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>ເຄຼຍທຸກຫ້ອງເປັນຫ້ອງວ່າງ (00:00)</span>
+                </button>
+              </div>
+
+              {/* 2. Remove settled debts only */}
+              <div className="p-4 rounded-2xl bg-slate-850 border border-slate-750 flex flex-col justify-between space-y-3">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-black text-sm text-slate-100 flex items-center gap-1.5">
+                      <HandCoins className="w-4 h-4 text-amber-400" />
+                      <span>ລ້າງສະເພາະໜີ້ທີ່ຈ່າຍຄົບແລ້ວ ({debts.length} ລາຍການ)</span>
+                    </span>
+                    <span className="text-[11px] text-amber-400 font-bold">
+                      ຄ້າງຊຳລະ: {debts.filter((d) => d.status !== 'paid' && d.remainingAmount > 0).length} ຄົນ
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    ລຶບສະເພາະລາຍການທີ່ລູກຄ້າຊຳລະຄົບ 0 ₭ ແລ້ວ ເພື່ອເກັບຮັກສາລາຍການຄ້າງຊຳລະໄວ້ຢ່າງປອດໄພ
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const remaining = debts.filter((d) => d.status !== 'paid' && d.remainingAmount > 0);
+                    if (remaining.length === debts.length) return;
+                    onSaveDebts?.(remaining);
+                  }}
+                  className="w-full py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-750 border border-slate-700 text-slate-200 text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <span>ລຶບສະເພາະລາຍການທີ່ຈ່າຍຄົບແລ້ວ</span>
                 </button>
               </div>
             </div>

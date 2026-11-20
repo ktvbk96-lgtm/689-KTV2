@@ -1,8 +1,5 @@
 import { Product, Room, RoomPackage, StaffMember, AppSettings, BillRecord, DebtRecord } from '../types';
-import {
-  INITIAL_STAFF,
-  INITIAL_SETTINGS,
-} from './initialData';
+import { INITIAL_SETTINGS } from './initialData';
 import { normalizeImageUrl } from './imageUtils';
 
 const STORAGE_KEYS = {
@@ -14,6 +11,73 @@ const STORAGE_KEYS = {
   BILLS: '689ktv_bills',
   DEBTS: '689ktv_debts',
   ACTIVE_USER: '689ktv_active_user',
+  LAST_SYNCED_META: '689ktv_last_synced_meta',
+};
+
+export interface LastSyncedMeta {
+  version: number;
+  lastUpdated: string;
+  lastUpdatedByDevice?: string;
+  lastUpdatedDeviceType?: 'Mobile' | 'Tablet' | 'PC';
+  lastAction?: string;
+}
+
+export const getLastSyncedMeta = (): LastSyncedMeta | null => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.LAST_SYNCED_META);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      return {
+        version: Number(parsed.version) || 0,
+        lastUpdated: typeof parsed.lastUpdated === 'string' ? parsed.lastUpdated : '',
+        lastUpdatedByDevice:
+          typeof parsed.lastUpdatedByDevice === 'string' ? parsed.lastUpdatedByDevice : undefined,
+        lastUpdatedDeviceType:
+          parsed.lastUpdatedDeviceType === 'Mobile' ||
+          parsed.lastUpdatedDeviceType === 'Tablet' ||
+          parsed.lastUpdatedDeviceType === 'PC'
+            ? parsed.lastUpdatedDeviceType
+            : undefined,
+        lastAction: typeof parsed.lastAction === 'string' ? parsed.lastAction : undefined,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+export const saveLastSyncedMeta = (meta: LastSyncedMeta) => {
+  try {
+    localStorage.setItem(STORAGE_KEYS.LAST_SYNCED_META, JSON.stringify(meta));
+  } catch {
+    // ignore storage quota errors
+  }
+};
+
+export const hasAnyLocalStoredData = (): boolean => {
+  try {
+    const keys = [
+      STORAGE_KEYS.PRODUCTS,
+      STORAGE_KEYS.ROOMS,
+      STORAGE_KEYS.PACKAGES,
+      STORAGE_KEYS.STAFF,
+      STORAGE_KEYS.BILLS,
+      STORAGE_KEYS.DEBTS,
+    ];
+    for (const key of keys) {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
 };
 
 const isMockBill = (b: BillRecord) =>
@@ -25,34 +89,11 @@ const isMockDebt = (d: DebtRecord) =>
   !d || String(d.id || '').startsWith('debt-sample-');
 
 /**
- * Scrub any leftover Local Test Mode mock bills/debts or placeholder mock caches on startup
+ * Safe no-op: NEVER automatically clear or mutate existing browser localStorage on startup.
+ * Existing localStorage data is preserved intact as an emergency local backup.
  */
 export const purgeMockLocalStorage = () => {
-  try {
-    const rawBills = localStorage.getItem(STORAGE_KEYS.BILLS);
-    if (rawBills) {
-      const parsed: BillRecord[] = JSON.parse(rawBills);
-      if (Array.isArray(parsed)) {
-        const cleaned = parsed.filter((b) => !isMockBill(b));
-        if (cleaned.length !== parsed.length) {
-          localStorage.setItem(STORAGE_KEYS.BILLS, JSON.stringify(cleaned));
-        }
-      }
-    }
-
-    const rawDebts = localStorage.getItem(STORAGE_KEYS.DEBTS);
-    if (rawDebts) {
-      const parsed: DebtRecord[] = JSON.parse(rawDebts);
-      if (Array.isArray(parsed)) {
-        const cleaned = parsed.filter((d) => !isMockDebt(d));
-        if (cleaned.length !== parsed.length) {
-          localStorage.setItem(STORAGE_KEYS.DEBTS, JSON.stringify(cleaned));
-        }
-      }
-    }
-  } catch {
-    // ignore storage scrub errors
-  }
+  // Intentionally does not delete or mutate browser localStorage
 };
 
 export const getStoredProducts = (): Product[] => {
@@ -142,12 +183,12 @@ export const saveStoredPackages = (pkgs: RoomPackage[]) => {
 
 export const getStoredStaff = (): StaffMember[] => {
   const data = localStorage.getItem(STORAGE_KEYS.STAFF);
-  if (!data) return INITIAL_STAFF;
+  if (!data) return [];
   try {
     const parsed = JSON.parse(data);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : INITIAL_STAFF;
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
-    return INITIAL_STAFF;
+    return [];
   }
 };
 

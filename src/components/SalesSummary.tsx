@@ -51,7 +51,7 @@ import {
   CalendarRange,
   ListOrdered,
 } from 'lucide-react';
-import { BillRecord, Product, AppSettings, ProductCategory, Role, Room, RoomPackage } from '../types';
+import { BillRecord, Product, AppSettings, ProductCategory, Role, Room, RoomPackage, StaffPermissions } from '../types';
 import { formatCurrency } from '../lib/storage';
 import { normalizeImageUrl } from '../lib/imageUtils';
 import {
@@ -80,6 +80,8 @@ interface SalesSummaryProps {
   onSyncAllToSheets?: () => void;
   isSyncingSheets?: boolean;
   currentRole?: Role;
+  permissions?: StaffPermissions;
+  onRequestAdminOverride?: (title: string, description: string, onApproved: () => void) => void;
   onDeleteBill?: (billId: string) => void;
   onDeleteBills?: (billIds: string[]) => void;
   onClearAllBills?: () => void;
@@ -97,6 +99,8 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
   onSyncAllToSheets,
   isSyncingSheets,
   currentRole,
+  permissions,
+  onRequestAdminOverride,
   onDeleteBill,
   onDeleteBills,
   onClearAllBills,
@@ -104,6 +108,7 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
   bluetoothConnected,
   onOpenBluetoothSetup,
 }) => {
+  const canVoidBill = currentRole === 'admin' || !!permissions?.voidBill;
   // Choice 1: Overall Summary vs Choice 2: Itemized & Profit Breakdown vs Choice 3: Bills & Delete vs Choice 4: KTV Rooms & Time
   const [activeChoice, setActiveChoice] = useState<'overall' | 'itemized' | 'ktv_rooms' | 'bills'>('ktv_rooms');
 
@@ -247,7 +252,6 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
 
   const openDeleteSingleBill = (bill: BillRecord) => {
     if (currentRole !== 'admin') {
-      alert('ຂໍອະໄພ! ພະນັກງານບໍ່ມີສິດລຶບໃບບິນ! ສະເພາະ Admin ເທົ່ານັ້ນ.');
       return;
     }
     const resolvedBillTotal = getResolvedBillTotal(bill);
@@ -4875,7 +4879,7 @@ export const SalesSummary: React.FC<SalesSummaryProps> = ({
                     title="Admin ລຶບໃບບິນນີ້ອອກຈາກລະບົບ"
                   >
                     <Trash2 className="w-4 h-4 text-rose-400" />
-                    <span>ລຶບໃບບິນ (Admin)</span>
+                    <span>ລຶບໃບບິນ</span>
                   </button>
                 )}
               </div>

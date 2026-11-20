@@ -240,8 +240,12 @@ export const calculateRoomSessionFee = (
 
   if (room.pricingType === 'fixed_hourly') {
     const rate = room.hourlyRate || defaultHourlyRate || 100000;
-    if (room.bookedHours && room.bookedHours > 0) {
-      return Math.round(room.bookedHours * rate);
+    const baseHours =
+      room.baseBookedHours && room.baseBookedHours > 0
+        ? room.baseBookedHours
+        : room.bookedHours;
+    if (baseHours && baseHours > 0) {
+      return Math.round(baseHours * rate);
     }
   }
 
@@ -249,6 +253,56 @@ export const calculateRoomSessionFee = (
     elapsedMins,
     room.hourlyRate || defaultHourlyRate || 100000
   );
+};
+
+/**
+ * Calculate live fee for any open-time (Choice 1) room extensions not yet materialized as static orders.
+ */
+export const calculateOpenTimeExtensionsBreakdown = (
+  room: Room,
+  defaultHourlyRate: number = 100000,
+  nowMs: number = Date.now()
+): {
+  totalUnpaidCharge: number;
+  entries: {
+    id: string;
+    label: string;
+    durationMinutes: number;
+    charge: number;
+    isPaid: boolean;
+  }[];
+} => {
+  const exts = (room.extensions || []).filter(
+    (e) => e.pricingType === 'open_time' && !e.includedInOrders
+  );
+  if (exts.length === 0) {
+    return { totalUnpaidCharge: 0, entries: [] };
+  }
+
+  let totalUnpaidCharge = 0;
+  const entries = exts.map((ext) => {
+    const startMs = Date.parse(ext.extendedAt);
+    const durMins = Number.isFinite(startMs)
+      ? Math.max(1, Math.floor((nowMs - startMs) / 60000))
+      : 1;
+    const rate = ext.hourlyRate || room.hourlyRate || defaultHourlyRate || 100000;
+    const rawCharge = calculateOpenTimeHourlyCharge(durMins, rate);
+    const charge = ext.isPaid ? 0 : rawCharge;
+    totalUnpaidCharge += charge;
+    const hrs = Math.floor(durMins / 60);
+    const mins = durMins % 60;
+    return {
+      id: ext.id,
+      label: ext.isPaid
+        ? `${ext.label} (${hrs}ຊມ ${mins}ນ • ຈ່າຍແລ້ວ)`
+        : `${ext.label} (${hrs}ຊມ ${mins}ນ)`,
+      durationMinutes: durMins,
+      charge,
+      isPaid: !!ext.isPaid,
+    };
+  });
+
+  return { totalUnpaidCharge, entries };
 };
 
 /**

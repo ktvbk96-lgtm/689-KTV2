@@ -34,36 +34,45 @@ export const PinAuthModal: React.FC<PinAuthModalProps> = ({ settings, staffList,
   };
 
   const validatePin = (inputPin: string) => {
-    // 1. Check Admin PIN
-    if (inputPin === settings.adminPin) {
+    // 1. Check individual active staff member matching explicit PIN first
+    const matchedByPin = staffList.find(
+      (s) => s.active && s.pin && s.pin.trim() === inputPin
+    );
+    if (matchedByPin) {
+      onSuccess(matchedByPin.role || 'staff', matchedByPin);
+      return;
+    }
+
+    // 2. Check Master Admin PIN
+    if (inputPin === (settings.adminPin || '8888')) {
       const adminMember = staffList.find((s) => s.role === 'admin') || {
         id: 'staff-admin',
         name: 'Admin (ເຈົ້າຂອງຮ້ານ)',
-        role: 'admin',
+        role: 'admin' as const,
         active: true,
       };
       onSuccess('admin', adminMember);
       return;
     }
 
-    // 2. Check Staff PIN
-    if (inputPin === settings.staffPin) {
-      const staffMember = staffList.find((s) => s.role === 'staff') || {
+    // 3. Check Shared Staff PIN
+    if (inputPin === (settings.staffPin || '1234')) {
+      const staffMember = staffList.find((s) => s.role === 'staff' && s.active) || {
         id: 'staff-default',
         name: 'ພະນັກງານທົ່ວໄປ (Staff)',
-        role: 'staff',
+        role: 'staff' as const,
         active: true,
       };
       onSuccess('staff', staffMember);
       return;
     }
 
-    // 3. Check individual staff member matching PIN/phone
-    const matchedStaff = staffList.find(
-      (s) => s.active && ((s as any).pin === inputPin || s.phone?.replace(/\D/g, '').endsWith(inputPin))
+    // 4. Fallback: match last 4 digits of active staff phone
+    const matchedByPhone = staffList.find(
+      (s) => s.active && s.phone && s.phone.replace(/\D/g, '').endsWith(inputPin)
     );
-    if (matchedStaff) {
-      onSuccess(matchedStaff.role || 'staff', matchedStaff);
+    if (matchedByPhone) {
+      onSuccess(matchedByPhone.role || 'staff', matchedByPhone);
       return;
     }
 

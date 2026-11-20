@@ -18,16 +18,19 @@ import {
   Download,
   ExternalLink,
 } from 'lucide-react';
-import { Role, StaffMember, AppSettings, AppThemeId } from '../types';
+import { Role, StaffMember, StaffPermissions, AppSettings, AppThemeId } from '../types';
 import { THEMES } from '../lib/theme';
 import { exportStandaloneHtmlFile } from '../lib/exportSingleFile';
 import { isRunningInIframe } from '../lib/bluetoothPrinter';
+import { getEffectivePermissions } from '../lib/permissions';
 
 interface NavbarProps {
   activeTab: 'pos' | 'rooms' | 'stock' | 'debts' | 'reports' | 'settings';
   setActiveTab: (tab: 'pos' | 'rooms' | 'stock' | 'debts' | 'reports' | 'settings') => void;
   currentRole: Role;
   currentUser?: StaffMember;
+  permissions?: StaffPermissions;
+  onAccessDenied?: (reason: string) => void;
   onLockScreen: () => void;
   onOpenSheetsModal: () => void;
   onOpenBluetoothModal: () => void;
@@ -43,6 +46,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   setActiveTab,
   currentRole,
   currentUser,
+  permissions,
+  onAccessDenied,
   onLockScreen,
   onOpenSheetsModal,
   onOpenBluetoothModal,
@@ -52,6 +57,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   settings,
   pendingDebtsCount = 0,
 }) => {
+  const effectivePerms = permissions || getEffectivePermissions(currentRole, currentUser);
   const [timeStr, setTimeStr] = useState<string>('');
   const [showThemePicker, setShowThemePicker] = useState<boolean>(false);
 
@@ -77,7 +83,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       id: 'pos' as const,
       label: 'ຂາຍສິນຄ້າ (POS)',
       icon: ShoppingCart,
-      adminOnly: false,
+      allowed: effectivePerms.posSales,
       activeGradient: 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-600/30',
       iconColor: 'text-emerald-400',
     },
@@ -85,7 +91,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       id: 'rooms' as const,
       label: 'ເປີດຫ້ອງ KTV',
       icon: DoorOpen,
-      adminOnly: false,
+      allowed: effectivePerms.roomManagement,
       activeGradient: 'bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-700 text-white shadow-md shadow-indigo-600/30',
       iconColor: 'text-indigo-400',
     },
@@ -93,7 +99,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       id: 'stock' as const,
       label: 'ກວດສອບສະຕັອກ',
       icon: Boxes,
-      adminOnly: false,
+      allowed: effectivePerms.manageStock,
       activeGradient: 'bg-gradient-to-r from-amber-600 to-yellow-600 text-white shadow-md shadow-amber-600/30',
       iconColor: 'text-amber-400',
     },
@@ -102,7 +108,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       label: 'ຍອດຄ້າງຊຳລະ',
       badge: pendingDebtsCount > 0 ? pendingDebtsCount : undefined,
       icon: HandCoins,
-      adminOnly: false,
+      allowed: effectivePerms.posSales || effectivePerms.roomManagement || effectivePerms.viewReports,
       activeGradient: 'bg-gradient-to-r from-rose-600 via-rose-500 to-amber-500 text-white shadow-md shadow-rose-600/30',
       iconColor: 'text-rose-400',
     },
@@ -110,7 +116,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       id: 'reports' as const,
       label: 'ສະຫຼຸບຍອດຂາຍ',
       icon: BarChart3,
-      adminOnly: false,
+      allowed: effectivePerms.viewReports,
       activeGradient: 'bg-gradient-to-r from-sky-600 to-blue-600 text-white shadow-md shadow-blue-600/30',
       iconColor: 'text-sky-400',
     },
@@ -118,7 +124,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       id: 'settings' as const,
       label: 'ຕັ້ງຄ່າລະບົບ',
       icon: Settings,
-      adminOnly: true,
+      allowed: effectivePerms.manageStaff,
       activeGradient: 'bg-gradient-to-r from-slate-700 to-slate-800 text-white shadow-md shadow-slate-700/30',
       iconColor: 'text-slate-400',
     },
@@ -153,38 +159,39 @@ export const Navbar: React.FC<NavbarProps> = ({
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = activeTab === item.id;
-              const isRestricted = item.adminOnly && currentRole !== 'admin';
+              const isRestricted = !item.allowed;
 
               return (
                 <button
                   key={item.id}
+                  type="button"
+                  disabled={isRestricted}
                   onClick={() => {
                     if (isRestricted) {
-                      alert('ເມນູນີ້ສຳລັບ Admin / ເຈົ້າຂອງຮ້ານ ເທົ່ານັ້ນ!');
+                      onAccessDenied?.(`ທ່ານບໍ່ມີສິດເຂົ້າເມນູ "${item.label}"`);
                       return;
                     }
                     setActiveTab(item.id);
                   }}
-                  className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                  title={isRestricted ? `ລັອກສິດ: ບໍ່ມີສິດເຂົ້າ ${item.label}` : item.label}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all ${
                     isActive
                       ? item.activeGradient
                       : isRestricted
-                      ? 'text-slate-500 hover:text-slate-400 opacity-60'
-                      : 'text-slate-300 hover:text-white hover:bg-slate-700/60'
+                      ? 'text-slate-600 opacity-45 cursor-not-allowed'
+                      : 'text-slate-300 hover:text-white hover:bg-slate-700/60 cursor-pointer'
                   }`}
                 >
                   <Icon className={`w-4 h-4 ${!isActive ? item.iconColor : 'text-white'}`} />
                   <span className="flex items-center gap-1.5">
                     <span>{item.label}</span>
-                    {item.badge !== undefined && (
+                    {item.badge !== undefined && !isRestricted && (
                       <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-rose-500 text-white font-black">
                         {item.badge}
                       </span>
                     )}
                   </span>
-                  {item.adminOnly && currentRole !== 'admin' && (
-                    <Lock className="w-3 h-3 text-slate-500" />
-                  )}
+                  {isRestricted && <Lock className="w-3 h-3 text-slate-500" />}
                 </button>
               );
             })}
@@ -349,28 +356,25 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Mobile Navigation bar */}
         <div className="flex md:hidden items-center justify-around py-2 border-t border-slate-800/80 gap-1 overflow-x-auto">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => {
-                  if (item.adminOnly && currentRole !== 'admin') {
-                    alert('ເມນູນີ້ສຳລັບ Admin ເທົ່ານັ້ນ!');
-                    return;
-                  }
-                  setActiveTab(item.id);
-                }}
-                className={`flex flex-col items-center gap-1 py-1 px-2 rounded-xl text-[10px] font-semibold transition-all whitespace-nowrap ${
-                  isActive ? `${item.iconColor} bg-slate-800 font-bold shadow-inner` : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <Icon className={`w-4 h-4 ${isActive ? item.iconColor : ''}`} />
-                <span>{item.label.split(' ')[0]}</span>
-              </button>
-            );
-          })}
+          {navItems
+            .filter((item) => item.allowed)
+            .map((item) => {
+              const Icon = item.icon;
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setActiveTab(item.id)}
+                  className={`flex flex-col items-center gap-1 py-1 px-2 rounded-xl text-[10px] font-semibold transition-all whitespace-nowrap ${
+                    isActive ? `${item.iconColor} bg-slate-800 font-bold shadow-inner` : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <Icon className={`w-4 h-4 ${isActive ? item.iconColor : ''}`} />
+                  <span>{item.label.split(' ')[0]}</span>
+                </button>
+              );
+            })}
         </div>
       </div>
     </header>

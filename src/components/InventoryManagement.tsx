@@ -23,9 +23,8 @@ import {
   Package,
   RefreshCw,
 } from 'lucide-react';
-import { Product, ProductCategory, Role, AppSettings } from '../types';
+import { Product, ProductCategory, Role, AppSettings, StaffPermissions } from '../types';
 import { formatCurrency } from '../lib/storage';
-import { INITIAL_PRODUCTS } from '../lib/initialData';
 import { FormattedNumberInput } from './FormattedNumberInput';
 import { calculateAvailablePacksAndSingles } from '../lib/multiUnitInventory';
 import { normalizeImageUrl, uploadProductImage } from '../lib/imageUtils';
@@ -35,6 +34,8 @@ interface InventoryManagementProps {
   products: Product[];
   currentRole: Role;
   settings: AppSettings;
+  permissions?: StaffPermissions;
+  onRequestAdminOverride?: (title: string, description: string, onApproved: () => void) => void;
   onSaveProducts: (updatedProducts: Product[]) => void;
 }
 
@@ -42,8 +43,11 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
   products,
   currentRole,
   settings,
+  permissions,
+  onRequestAdminOverride,
   onSaveProducts,
 }) => {
+  const canDeleteProduct = currentRole === 'admin';
   const [search, setSearch] = useState<string>('');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [stockStatusFilter, setStockStatusFilter] = useState<'all' | 'out' | 'low' | 'normal'>('all');
@@ -274,8 +278,7 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
   };
 
   const handleDeleteProduct = (id: string, name: string) => {
-    if (currentRole !== 'admin') {
-      alert('ສະເພາະ Admin ເທົ່ານັ້ນທີ່ສາມາດລຶບສິນຄ້າໄດ້!');
+    if (!canDeleteProduct || currentRole !== 'admin') {
       return;
     }
     if (confirm(`ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການລຶບສິນຄ້າ "${name}" ອອກຈາກລະບົບ?`)) {
@@ -283,43 +286,14 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
     }
   };
 
-  const handleClearAllProducts = () => {
-    if (currentRole !== 'admin') {
-      alert('ສະເພາະ Admin ເທົ່ານັ້ນທີ່ສາມາດລຶບສິນຄ້າທັງໝົດໄດ້!');
-      return;
-    }
-    const pin = window.prompt(`⚠️ ຢືນຢັນລຶບສິນຄ້າທັງໝົດ (${products.length} ລາຍການ)\nກະລຸນາປ້ອນລະຫັດ Admin PIN:`);
-    if (!pin) return;
-    if (pin !== settings.adminPin && pin !== '8888') {
-      alert('ລະຫັດ Admin PIN ບໍ່ຖືກຕ້ອງ!');
-      return;
-    }
-    if (window.confirm(`⚠️ ເຕືອນ: ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການລຶບສິນຄ້າທັງໝົດ ${products.length} ລາຍການອອກຈາກລະບົບ?`)) {
-      onSaveProducts([]);
-    }
-  };
-
   const handleResetAllStockToZero = () => {
-    if (currentRole !== 'admin') {
-      alert('ສະເພາະ Admin ເທົ່ານັ້ນທີ່ສາມາດຣີເຊັດສະຕັອກໄດ້!');
-      return;
-    }
+    if (currentRole !== 'admin') return;
     if (window.confirm('ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການປັບຈຳນວນສະຕັອກສິນຄ້າທັງໝົດໃຫ້ເປັນ 0?')) {
       const updated = products.map((p) => ({
         ...p,
         stock: p.category === 'service' ? p.stock : 0,
       }));
       onSaveProducts(updated);
-    }
-  };
-
-  const handleRestoreDefaultProducts = () => {
-    if (currentRole !== 'admin') {
-      alert('ສະເພາະ Admin ເທົ່ານັ້ນທີ່ສາມາດຄືນຄ່າເລີ່ມຕົ້ນໄດ້!');
-      return;
-    }
-    if (window.confirm('ທ່ານແນ່ໃຈບໍ່ວ່າຕ້ອງການຄືນຄ່າເມນູສິນຄ້າເລີ່ມຕົ້ນຂອງຮ້ານ (Default)?')) {
-      onSaveProducts(INITIAL_PRODUCTS);
     }
   };
 
@@ -410,18 +384,9 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
             <span>ໃກ້ໝົດ: {lowStockCount} ລາຍການ</span>
           </button>
 
-          {/* Admin Bulk Actions */}
-          {currentRole === 'admin' && (
+          {/* Admin Safe Bulk Action (Zero-Overwrite Protected) */}
+          {currentRole === 'admin' && products.length > 0 && (
             <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={handleClearAllProducts}
-                className="px-3 py-2 rounded-2xl bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 hover:text-white text-xs font-bold flex items-center gap-1 transition-all cursor-pointer shadow-sm"
-                title="Admin ລຶບສິນຄ້າທັງໝົດອອກຈາກລະບົບ"
-              >
-                <Trash2 className="w-3.5 h-3.5 text-rose-400" />
-                <span>ລຶບທັງໝົດ</span>
-              </button>
               <button
                 type="button"
                 onClick={handleResetAllStockToZero}
@@ -429,15 +394,6 @@ export const InventoryManagement: React.FC<InventoryManagementProps> = ({
                 title="Admin ຕັ້ງຄ່າສະຕັອກສິນຄ້າທັງໝົດໃຫ້ເປັນ 0"
               >
                 <span>ສະຕັອກ=0</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleRestoreDefaultProducts}
-                className="px-3 py-2 rounded-2xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white text-xs font-bold flex items-center gap-1 transition-all cursor-pointer"
-                title="Admin ຄືນຄ່າເມນູເລີ່ມຕົ້ນ (Default)"
-              >
-                <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
-                <span>ຄືນຄ່າເລີ່ມຕົ້ນ</span>
               </button>
             </div>
           )}

@@ -15,7 +15,7 @@ import {
   ExternalLink,
   RefreshCw,
 } from 'lucide-react';
-import { BillRecord, AppSettings, ReceiptFontSize, ReceiptPaperWidth } from '../types';
+import { BillRecord, AppSettings, ReceiptFontSize, ReceiptPaperWidth, Role, StaffPermissions } from '../types';
 import { formatCurrency, saveStoredSettings } from '../lib/storage';
 import {
   printReceiptAsImageViaBluetooth,
@@ -34,6 +34,9 @@ import { FormattedNumberInput } from './FormattedNumberInput';
 interface BillingModalProps {
   bill: BillRecord;
   settings: AppSettings;
+  currentRole?: Role;
+  permissions?: StaffPermissions;
+  onRequestAdminOverride?: (title: string, description: string, onApproved: () => void) => void;
   isDraftBill?: boolean;
   onClose: () => void;
   onCancelBill?: () => void;
@@ -47,6 +50,9 @@ interface BillingModalProps {
 export const BillingModal: React.FC<BillingModalProps> = ({
   bill,
   settings,
+  currentRole,
+  permissions,
+  onRequestAdminOverride,
   isDraftBill = false,
   onClose,
   onCancelBill,
@@ -56,6 +62,10 @@ export const BillingModal: React.FC<BillingModalProps> = ({
   onSyncGoogleSheet,
   onUpdateSettings,
 }) => {
+  const canApplyDiscount = currentRole === 'admin' || !!permissions?.applyDiscount;
+  const canVoidBill = currentRole === 'admin' || !!permissions?.voidBill;
+  const [overrideDiscountApproved, setOverrideDiscountApproved] = useState<boolean>(false);
+
   const [discount, setDiscount] = useState<number>(bill.discount || 0);
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'transfer'>(
     bill.payment?.method === 'transfer' ? 'transfer' : 'cash'
@@ -144,15 +154,53 @@ export const BillingModal: React.FC<BillingModalProps> = ({
     };
   }, [discount, paymentMethod, activeSettings.receiptLogoUrl, receiptFontSize, receiptPaperWidth]);
 
-  // Handle discount adjustments
+  // Handle discount adjustments (enforces applyDiscount or Admin Override PIN)
   const handleSetDiscount = (val: number) => {
     const safeDiscount = Math.min(bill.subtotal, Math.max(0, val));
+    if (safeDiscount === 0) {
+      setDiscount(0);
+      return;
+    }
+    if (!canApplyDiscount && !overrideDiscountApproved) {
+      if (onRequestAdminOverride) {
+        onRequestAdminOverride(
+          'ອະນຸມັດໃຫ້ສ່ວນຫຼຸດ (Apply Discount)',
+          `ພະນັກງານບໍ່ມີສິດໃຫ້ສ່ວນຫຼຸດໃນບິນ ${bill.billNumber} — ກະລຸນາໃສ່ PIN ຂອງ Admin/Owner ເພື່ອອະນຸມັດ`,
+          () => {
+            setOverrideDiscountApproved(true);
+            setDiscount(safeDiscount);
+          }
+        );
+      }
+      return;
+    }
     setDiscount(safeDiscount);
   };
 
   const handleApplyPercent = (percent: number) => {
     const amount = Math.round((bill.subtotal * percent) / 100);
     handleSetDiscount(amount);
+  };
+
+  const handleCancelDraftBill = () => {
+    const proceed = () => {
+      if (onCancelBill) {
+        onCancelBill();
+      } else {
+        onClose();
+      }
+    };
+    if (!canVoidBill) {
+      if (onRequestAdminOverride) {
+        onRequestAdminOverride(
+          'ອະນຸມັດຍົກເລີກບິນ (Void / Cancel Bill)',
+          `ພະນັກງານບໍ່ມີສິດຍົກເລີກບິນ ${bill.billNumber} — ກະລຸນາໃສ່ PIN ຂອງ Admin/Owner ເພື່ອອະນຸມັດ`,
+          proceed
+        );
+      }
+      return;
+    }
+    proceed();
   };
 
   const [localBtStatus, setLocalBtStatus] = useState<BluetoothPrinterStatus>(getBluetoothStatus());
@@ -741,17 +789,35 @@ export const BillingModal: React.FC<BillingModalProps> = ({
             </div>
 
             <div className="flex items-center justify-end gap-1.5">
-              <span className="text-[11px] text-slate-400">ປ້ອນເອງ:</span>
-              <div className="w-36">
-                <FormattedNumberInput
-                  value={discount || ''}
-                  onChange={(num) => handleSetDiscount(num)}
-                  placeholder="0"
-                  max={bill.subtotal}
-                  suffix={settings.currencySymbol}
-                  className="bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1 text-right font-mono font-bold text-xs text-amber-400 focus:ring-1 focus:ring-amber-500"
-                />
-              </div>
+              <span className="text-[11px] text-slate-400">
+                ປ້ອນເອງ{!canApplyDiscount && !overrideDiscountApproved ? ' 🔒' : ''}:
+              </span>
+              {canApplyDiscount || overrideDiscountApproved ? (
+                <div className="w-36">
+                  <FormattedNumberInput
+                    value={discount || ''}
+                    onChange={(num) => handleSetDiscount(num)}
+                    placeholder="0"
+                    max={bill.subtotal}
+                    suffix={settings.currencySymbol}
+                    className="bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1 text-right font-mono font-bold text-xs text-amber-400 focus:ring-1 focus:ring-amber-500"
+                  />
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onRequestAdminOverride?.(
+                      'ອະນຸມັດໃຫ້ສ່ວນຫຼຸດ (Apply Discount)',
+                      `ພະນັກງານບໍ່ມີສິດໃຫ້ສ່ວນຫຼຸດໃນບິນ ${bill.billNumber} — ກະລຸນາໃສ່ PIN ຂອງ Admin/Owner ເພື່ອປົດລັອກ`,
+                      () => setOverrideDiscountApproved(true)
+                    )
+                  }
+                  className="px-2.5 py-1 rounded-xl bg-amber-950/60 hover:bg-amber-900/60 border border-amber-500/40 text-[11px] font-bold text-amber-300 cursor-pointer"
+                >
+                  🔒 ຂໍ PIN Admin
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -933,13 +999,17 @@ export const BillingModal: React.FC<BillingModalProps> = ({
             {isDraftBill && (
               <button
                 type="button"
-                onClick={() => (onCancelBill ? onCancelBill() : onClose())}
+                onClick={handleCancelDraftBill}
                 disabled={isSyncingSheet}
                 className="sm:col-span-4 py-3 px-3 rounded-2xl bg-slate-800 hover:bg-rose-950/80 border border-slate-700 hover:border-rose-500/60 text-slate-300 hover:text-rose-300 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-[0.98]"
-                title="ຍົກເລີກບິນໂດຍບໍ່ບັນທຶກລົງສະຫຼຸບຍອດຂາຍ"
+                title={
+                  canVoidBill
+                    ? 'ຍົກເລີກບິນໂດຍບໍ່ບັນທຶກລົງສະຫຼຸບຍອດຂາຍ'
+                    : 'ຕ້ອງການລະຫັດ Admin Override PIN ເພື່ອຍົກເລີກບິນ'
+                }
               >
                 <X className="w-4 h-4 text-rose-400" />
-                <span>ຍົກເລີກບິນ</span>
+                <span>{canVoidBill ? 'ຍົກເລີກບິນ' : '🔒 ຍົກເລີກບິນ'}</span>
               </button>
             )}
 

@@ -16,18 +16,24 @@ export default async function handler(req: any, res: any) {
 
   if (req.method === 'GET') {
     try {
-      const { store, effectiveVersion } = await readAuthoritativeStore();
+      const result = await readAuthoritativeStore();
       return res.status(200).json({
         success: true,
-        version: effectiveVersion,
-        lastUpdated: store.lastUpdated,
-        data: store,
+        mode: result.mode,
+        hasDatabase: result.hasDatabase,
+        version: result.effectiveVersion,
+        lastUpdated: result.store?.lastUpdated || '',
+        lastUpdatedByDevice: result.store?.lastUpdatedByDevice || '',
+        lastUpdatedDeviceType: result.store?.lastUpdatedDeviceType,
+        lastSenderId: result.store?.lastSenderId || '',
+        lastAction: result.store?.lastAction || '',
+        data: result.store,
       });
     } catch (err: any) {
-      console.error('GET /api/sync error:', err);
+      console.error('GET /api/sync Neon Postgres error:', err);
       return res.status(500).json({
         success: false,
-        error: err?.message || 'Failed to read authoritative store',
+        error: err?.message || 'Failed to read from Neon Postgres',
       });
     }
   }
@@ -38,10 +44,10 @@ export default async function handler(req: any, res: any) {
       const result = await applyGranularMergeAndSave(body);
       return res.status(200).json(result);
     } catch (err: any) {
-      console.error('POST /api/sync error:', err);
+      console.error('POST /api/sync Neon Postgres error:', err);
       return res.status(500).json({
         success: false,
-        error: err?.message || 'Failed to save sync mutation',
+        error: err?.message || 'Failed to save to Neon Postgres',
       });
     }
   }

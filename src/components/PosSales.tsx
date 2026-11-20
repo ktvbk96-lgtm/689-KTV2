@@ -24,7 +24,7 @@ import {
   Package,
   Boxes,
 } from 'lucide-react';
-import { Product, ProductCategory, CartItem, StaffMember, Room, AppSettings } from '../types';
+import { Product, ProductCategory, CartItem, StaffMember, Room, AppSettings, Role, StaffPermissions } from '../types';
 import { formatCurrency } from '../lib/storage';
 import {
   FormattedNumberInput,
@@ -42,7 +42,10 @@ interface PosSalesProps {
   staffList: StaffMember[];
   activeRooms: Room[];
   settings: AppSettings;
+  currentRole?: Role;
   currentStaff?: StaffMember;
+  permissions?: StaffPermissions;
+  onRequestAdminOverride?: (title: string, description: string, onApproved: () => void) => void;
   onCheckoutPosSale: (
     items: CartItem[],
     discount: number,
@@ -58,10 +61,17 @@ export const PosSales: React.FC<PosSalesProps> = ({
   staffList,
   activeRooms,
   settings,
+  currentRole,
   currentStaff,
+  permissions,
+  onRequestAdminOverride,
   onCheckoutPosSale,
   onTransferToRoom,
 }) => {
+  const canEditActiveBill = currentRole === 'admin' || !!permissions?.editActiveBill;
+  const canApplyDiscount = currentRole === 'admin' || !!permissions?.applyDiscount;
+  const [overrideDiscountApproved, setOverrideDiscountApproved] = useState<boolean>(false);
+
   const [selectedCategory, setSelectedCategory] = useState<ProductCategory | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -284,13 +294,14 @@ export const PosSales: React.FC<PosSalesProps> = ({
     });
   };
 
-  const updateQuantity = (index: number, newQty: number) => {
+  const executeUpdateQuantity = (index: number, newQty: number) => {
     if (newQty <= 0) {
-      removeFromCart(index);
+      executeRemoveFromCart(index);
       return;
     }
 
     const item = cart[index];
+    if (!item) return;
     const otherItems = cart.filter((_, idx) => idx !== index);
     const check = checkMultiUnitStockAvailability(
       item.product,
@@ -306,12 +317,30 @@ export const PosSales: React.FC<PosSalesProps> = ({
 
     setCart((prev) => {
       const updated = [...prev];
-      updated[index].quantity = newQty;
+      if (updated[index]) {
+        updated[index] = { ...updated[index], quantity: newQty };
+      }
       return updated;
     });
   };
 
-  const removeFromCart = (index: number) => {
+  const updateQuantity = (index: number, newQty: number) => {
+    const item = cart[index];
+    if (!item) return;
+    if (newQty < item.quantity && !canEditActiveBill) {
+      if (onRequestAdminOverride) {
+        onRequestAdminOverride(
+          'ອະນຸມັດແກ້ໄຂບິນທີ່ເປີດຢູ່ (Edit Active Bill)',
+          `ພະນັກງານບໍ່ມີສິດຫຼຸດຈຳນວນ ຫຼື ລຶບ "${item.product.name}" ອອກຈາກກະຕ່າ — ກະລຸນາໃສ່ PIN ຂອງ Admin/Owner ເພື່ອອະນຸມັດ`,
+          () => executeUpdateQuantity(index, newQty)
+        );
+      }
+      return;
+    }
+    executeUpdateQuantity(index, newQty);
+  };
+
+  const executeRemoveFromCart = (index: number) => {
     setCart((prev) => prev.filter((_, i) => i !== index));
     if (editingPriceIndex === index) {
       setEditingPriceIndex(null);
@@ -321,17 +350,84 @@ export const PosSales: React.FC<PosSalesProps> = ({
     }
   };
 
+  const removeFromCart = (index: number) => {
+    const item = cart[index];
+    if (!canEditActiveBill) {
+      if (onRequestAdminOverride) {
+        onRequestAdminOverride(
+          'ອະນຸມັດລຶບລາຍການໃນບິນ (Edit Active Bill)',
+          `ພະນັກງານບໍ່ມີສິດລຶບ "${item?.product.name || 'ລາຍການ'}" ອອກຈາກກະຕ່າ — ກະລຸນາໃສ່ PIN ຂອງ Admin/Owner ເພື່ອອະນຸມັດ`,
+          () => executeRemoveFromCart(index)
+        );
+      }
+      return;
+    }
+    executeRemoveFromCart(index);
+  };
+
   const clearCart = () => {
     setCart([]);
     setDiscountAmount(0);
+    setOverrideDiscountApproved(false);
     setEditingPriceIndex(null);
     setEditingSellerIndex(null);
   };
 
-  // Custom price update on a cart row
+  const handleRequestClearCart = () => {
+    if (cart.length === 0) return;
+    if (!canEditActiveBill) {
+      if (onRequestAdminOverride) {
+        onRequestAdminOverride(
+          'ອະນຸມັດລ້າງກະຕ່າສິນຄ້າ (Edit Active Bill)',
+          'ພະນັກງານບໍ່ມີສິດລ້າງລາຍການໃນບິນ — ກະລຸນາໃສ່ PIN ຂອງ Admin/Owner ເພື່ອອະນຸມັດ',
+          () => clearCart()
+        );
+      }
+      return;
+    }
+    clearCart();
+  };
+
+  // Custom price update on a cart row (enforces applyDiscount or Admin Override PIN)
   const handleStartEditPrice = (index: number, currentPrice: number) => {
+    if (!canApplyDiscount && !overrideDiscountApproved) {
+      if (onRequestAdminOverride) {
+        onRequestAdminOverride(
+          'ອະນຸມັດແກ້ໄຂລາຄາສິນຄ້າ (Edit Price)',
+          'ພະນັກງານບໍ່ມີສິດແກ້ໄຂລາຄາ ຫຼື ໃຫ້ສ່ວນຫຼຸດ — ກະລຸນາໃສ່ PIN ຂອງ Admin/Owner ເພື່ອອະນຸມັດ',
+          () => {
+            setOverrideDiscountApproved(true);
+            setEditingPriceIndex(index);
+            setTempPriceInput(formatWithSeparators(currentPrice));
+          }
+        );
+      }
+      return;
+    }
     setEditingPriceIndex(index);
     setTempPriceInput(formatWithSeparators(currentPrice));
+  };
+
+  const handleApplyDiscountWithGuard = (newAmount: number) => {
+    const safeAmount = Math.min(subtotal, Math.max(0, newAmount));
+    if (safeAmount === 0) {
+      setDiscountAmount(0);
+      return;
+    }
+    if (!canApplyDiscount && !overrideDiscountApproved) {
+      if (onRequestAdminOverride) {
+        onRequestAdminOverride(
+          'ອະນຸມັດໃຫ້ສ່ວນຫຼຸດ (Apply Discount)',
+          'ພະນັກງານບໍ່ມີສິດໃຫ້ສ່ວນຫຼຸດ — ກະລຸນາໃສ່ PIN ຂອງ Admin/Owner ເພື່ອອະນຸມັດຊົ່ວຄາວສຳລັບບິນນີ້',
+          () => {
+            setOverrideDiscountApproved(true);
+            setDiscountAmount(safeAmount);
+          }
+        );
+      }
+      return;
+    }
+    setDiscountAmount(safeAmount);
   };
 
   const handleSaveCustomPrice = (index: number) => {
@@ -458,7 +554,7 @@ export const PosSales: React.FC<PosSalesProps> = ({
           {cart.length > 0 && (
             <button
               type="button"
-              onClick={clearCart}
+              onClick={handleRequestClearCart}
               className="p-2 rounded-xl bg-slate-800 hover:bg-rose-950 border border-slate-700 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
               title="ລ້າງກະຕ່າສິນຄ້າ"
             >
@@ -739,7 +835,7 @@ export const PosSales: React.FC<PosSalesProps> = ({
               </div>
               {cart.length > 0 && (
                 <button
-                  onClick={clearCart}
+                  onClick={handleRequestClearCart}
                   className="text-xs text-rose-400 hover:text-rose-300 flex items-center gap-1 font-semibold cursor-pointer"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -955,25 +1051,43 @@ export const PosSales: React.FC<PosSalesProps> = ({
               {/* Discount input with quick percentage buttons */}
               <div className="space-y-1.5 text-xs">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-slate-400">ສ່ວນຫຼຸດ (Discount):</span>
-                  <div className="w-32">
-                    <FormattedNumberInput
-                      value={discountAmount || ''}
-                      onChange={(num) => setDiscountAmount(num)}
-                      placeholder="0"
-                      max={subtotal}
-                      suffix={settings.currencySymbol}
-                      className="bg-slate-800 border border-slate-700 rounded-xl px-2 py-1 text-right text-xs text-amber-400 font-mono focus:ring-1 focus:ring-rose-500"
-                    />
-                  </div>
+                  <span className="text-slate-400">
+                    ສ່ວນຫຼຸດ (Discount){!canApplyDiscount && !overrideDiscountApproved ? ' 🔒' : ''}:
+                  </span>
+                  {canApplyDiscount || overrideDiscountApproved ? (
+                    <div className="w-32">
+                      <FormattedNumberInput
+                        value={discountAmount || ''}
+                        onChange={(num) => handleApplyDiscountWithGuard(num)}
+                        placeholder="0"
+                        max={subtotal}
+                        suffix={settings.currencySymbol}
+                        className="bg-slate-800 border border-slate-700 rounded-xl px-2 py-1 text-right text-xs text-amber-400 font-mono focus:ring-1 focus:ring-rose-500"
+                      />
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onRequestAdminOverride?.(
+                          'ອະນຸມັດໃຫ້ສ່ວນຫຼຸດ (Apply Discount)',
+                          'ພະນັກງານບໍ່ມີສິດໃຫ້ສ່ວນຫຼຸດ — ກະລຸນາໃສ່ PIN ຂອງ Admin/Owner ເພື່ອປົດລັອກສ່ວນຫຼຸດສຳລັບບິນນີ້',
+                          () => setOverrideDiscountApproved(true)
+                        )
+                      }
+                      className="px-2.5 py-1 rounded-xl bg-amber-950/60 hover:bg-amber-900/60 border border-amber-500/40 text-[11px] font-bold text-amber-300 cursor-pointer"
+                    >
+                      🔒 ຂໍອະນຸມັດ Admin PIN
+                    </button>
+                  )}
                 </div>
                 <div className="flex items-center justify-end gap-1">
                   {[5, 10, 20].map((p) => (
                     <button
                       key={p}
                       type="button"
-                      onClick={() => setDiscountAmount(Math.round((subtotal * p) / 100))}
-                      className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 font-bold"
+                      onClick={() => handleApplyDiscountWithGuard(Math.round((subtotal * p) / 100))}
+                      className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 font-bold cursor-pointer"
                     >
                       {p}%
                     </button>
@@ -982,7 +1096,7 @@ export const PosSales: React.FC<PosSalesProps> = ({
                     <button
                       type="button"
                       onClick={() => setDiscountAmount(0)}
-                      className="px-2 py-0.5 rounded-lg bg-rose-950/60 text-rose-300 text-[10px] font-bold"
+                      className="px-2 py-0.5 rounded-lg bg-rose-950/60 text-rose-300 text-[10px] font-bold cursor-pointer"
                     >
                       ລ້າງ
                     </button>

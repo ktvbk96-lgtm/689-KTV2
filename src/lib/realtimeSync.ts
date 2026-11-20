@@ -2,15 +2,19 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * 689 KTV - Real-Time Multi-Device Sync Engine (Vercel Serverless Compatible)
- * Supports seamless synchronization across iOS, Android, and Windows PC.
+ * 689 KTV - Real-Time Multi-Device Sync Engine (Neon Postgres + Vercel Serverless)
  * Implements:
- * 1. Read-First / Fetch-First on Load (GET /api/sync — Server is Single Source of Truth)
- * 2. Granular Delta + Timestamp-Guarded Updates (POST /api/sync — No full state overwrite)
- * 3. Smart 3.5s Version Polling (GET /api/sync/version) + Tab Focus/Wakeup + Local BroadcastChannel
+ * 1. Device Identity & Last Updated Timestamp (Mobile / Tablet / PC) on every write
+ * 2. Cloud File Update Confirmation (Microsoft / WPS Style): prompts user before overwriting active screen when another device updates Cloud
+ * 3. Preview Safety: When DATABASE_URL is absent (mode === 'local_preview'), stays strictly in localStorage
+ * 4. Strict Zero-Overwrite Guard: Never pushes empty payloads or auto-pushes localStorage on load
+ * 5. Smart 3.5s Version Polling (GET /api/sync/version) + Tab Focus / Visibility / Online Wakeup
  */
 
 import { Product, Room, RoomPackage, StaffMember, AppSettings, DebtRecord, BillRecord } from '../types';
+import { getLastSyncedMeta, saveLastSyncedMeta, hasAnyLocalStoredData } from './storage';
+
+export type DeviceType = 'Mobile' | 'Tablet' | 'PC';
 
 export interface StockDeductionItem {
   productId: string;
@@ -40,6 +44,9 @@ export interface SyncPayload {
   bill?: BillRecord;
   lastUpdated?: string;
   lastSenderId?: string;
+  lastUpdatedByDevice?: string;
+  lastUpdatedDeviceType?: DeviceType;
+  lastAction?: string;
 }
 
 export type SyncAction =
@@ -54,27 +61,91 @@ export type SyncAction =
   | 'deleteBill'
   | 'deleteBills'
   | 'clearAllBills'
-  | 'clearAll'
-  | 'resetAll'
+  | 'uploadLocalToCloud'
   | 'syncAll';
+
+export interface CloudUpdateNotice {
+  version: number;
+  lastUpdated: string;
+  lastUpdatedByDevice: string;
+  lastUpdatedDeviceType: DeviceType;
+  lastSenderId?: string;
+  lastAction?: string;
+  data: SyncPayload;
+}
 
 export interface SyncReceiveMeta {
   isInitialSync?: boolean;
   isFullSnapshot?: boolean;
   version?: number;
+  lastUpdated?: string;
+  lastUpdatedByDevice?: string;
+  lastUpdatedDeviceType?: DeviceType;
+  lastAction?: string;
+  mode?: 'neon_postgres' | 'local_preview';
+  hasDatabase?: boolean;
 }
 
 export interface SyncPushResult {
   success: boolean;
+  mode?: 'neon_postgres' | 'local_preview';
+  hasDatabase?: boolean;
+  skippedRemoteWrite?: boolean;
   version?: number;
   lastUpdated?: string;
+  lastUpdatedByDevice?: string;
+  lastUpdatedDeviceType?: DeviceType;
   rejectedStale?: boolean;
   data?: SyncPayload;
 }
 
 export interface SyncCallbacks {
   onDataReceived: (payload: SyncPayload, action?: SyncAction, meta?: SyncReceiveMeta) => void;
-  onStatusChange?: (status: 'connected' | 'syncing' | 'offline' | 'error', message?: string) => void;
+  onCloudUpdateAvailable?: (notice: CloudUpdateNotice) => void;
+  hasLocalData?: () => boolean;
+  onLocalPreviewDetected?: () => void;
+  onStatusChange?: (status: 'connected' | 'syncing' | 'offline' | 'error' | 'preview', message?: string) => void;
+}
+
+export function getDeviceType(): DeviceType {
+  try {
+    const ua = navigator.userAgent || '';
+    const isIpad =
+      /iPad/i.test(ua) ||
+      (/Macintosh/i.test(ua) && typeof navigator.maxTouchPoints === 'number' && navigator.maxTouchPoints > 1);
+    if (isIpad || /Tablet|PlayBook|Silk/i.test(ua) || (/Android/i.test(ua) && !/Mobile/i.test(ua))) {
+      return 'Tablet';
+    }
+    if (/iPhone|iPod|Android.*Mobile|Windows Phone|BlackBerry|Mobile/i.test(ua)) {
+      return 'Mobile';
+    }
+    return 'PC';
+  } catch {
+    return 'PC';
+  }
+}
+
+export function getDeviceLabel(): string {
+  try {
+    const ua = navigator.userAgent || '';
+    const type = getDeviceType();
+    const os = /iPhone|iPod/i.test(ua)
+      ? 'iPhone'
+      : /iPad/i.test(ua) || (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1)
+      ? 'iPad'
+      : /Android/i.test(ua)
+      ? 'Android'
+      : /Windows/i.test(ua)
+      ? 'Windows'
+      : /Macintosh/i.test(ua)
+      ? 'Mac'
+      : /Linux/i.test(ua)
+      ? 'Linux'
+      : 'Browser';
+    return `${type} (${os})`;
+  } catch {
+    return 'PC';
+  }
 }
 
 // Generate or retrieve persistent Device ID
@@ -101,7 +172,18 @@ export function getDeviceId(): string {
   }
 }
 
-// BroadcastChannel for instant same-browser / multi-tab synchronization
+function isCloudPayloadNonEmpty(data: SyncPayload | null | undefined): boolean {
+  if (!data || typeof data !== 'object') return false;
+  return Boolean(
+    (Array.isArray(data.products) && data.products.length > 0) ||
+      (Array.isArray(data.rooms) && data.rooms.length > 0) ||
+      (Array.isArray(data.packages) && data.packages.length > 0) ||
+      (Array.isArray(data.staff) && data.staff.length > 0) ||
+      (Array.isArray(data.bills) && data.bills.length > 0) ||
+      (Array.isArray(data.debts) && data.debts.length > 0)
+  );
+}
+
 let broadcastChannel: BroadcastChannel | null = null;
 try {
   if (typeof BroadcastChannel !== 'undefined') {
@@ -111,8 +193,12 @@ try {
   console.warn('BroadcastChannel not supported', e);
 }
 
-let currentServerVersion = 0;
-let currentServerLastUpdated = '';
+const initialLocalMeta = getLastSyncedMeta();
+let currentServerVersion = initialLocalMeta?.version || 0;
+let currentServerLastUpdated = initialLocalMeta?.lastUpdated || '';
+let lastNotifiedVersion = currentServerVersion;
+let lastNotifiedLastUpdated = currentServerLastUpdated;
+let isLocalPreviewMode = false;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let isBroadcasting = false;
 let isFetchingState = false;
@@ -122,24 +208,61 @@ export function getCurrentServerVersion(): number {
   return currentServerVersion;
 }
 
+export function getIsLocalPreviewMode(): boolean {
+  return isLocalPreviewMode;
+}
+
+export function markCloudSnapshotApplied(meta: {
+  version?: number;
+  lastUpdated?: string;
+  lastUpdatedByDevice?: string;
+  lastUpdatedDeviceType?: DeviceType;
+  lastAction?: string;
+}) {
+  if (typeof meta.version === 'number' && meta.version >= 0) {
+    currentServerVersion = meta.version;
+    lastNotifiedVersion = Math.max(lastNotifiedVersion, meta.version);
+  }
+  if (typeof meta.lastUpdated === 'string' && meta.lastUpdated) {
+    currentServerLastUpdated = meta.lastUpdated;
+    lastNotifiedLastUpdated = meta.lastUpdated;
+  }
+  saveLastSyncedMeta({
+    version: currentServerVersion,
+    lastUpdated: currentServerLastUpdated,
+    lastUpdatedByDevice: meta.lastUpdatedByDevice,
+    lastUpdatedDeviceType: meta.lastUpdatedDeviceType,
+    lastAction: meta.lastAction,
+  });
+}
+
 /**
- * Push a granular delta update to the Server (/api/sync) and notify other tabs.
- * Never called automatically on page load — only on explicit user mutations.
+ * Push a granular delta update to Neon Postgres (/api/sync).
+ * Never called automatically on page load — only on explicit user actions.
  */
 export async function pushMultiDeviceUpdate(
   action: SyncAction,
   data: SyncPayload
 ): Promise<SyncPushResult> {
+  // Zero-Overwrite Guard: Reject completely empty payload objects
+  if (!data || typeof data !== 'object' || Object.keys(data).length === 0) {
+    return { success: false, skippedRemoteWrite: true };
+  }
+
   isBroadcasting = true;
   const deviceId = getDeviceId();
+  const deviceType = getDeviceType();
+  const deviceLabel = getDeviceLabel();
 
-  // 1. Send via local BroadcastChannel for zero-latency multi-tab updates in same browser
+  // 1. Local BroadcastChannel for instant same-browser multi-tab sync
   if (broadcastChannel) {
     try {
       broadcastChannel.postMessage({
         action,
         data,
         senderDeviceId: deviceId,
+        deviceType,
+        deviceLabel,
         timestamp: Date.now(),
       });
     } catch (e) {
@@ -147,7 +270,24 @@ export async function pushMultiDeviceUpdate(
     }
   }
 
-  // 2. Send granular delta + baseVersion to Vercel Serverless API (/api/sync)
+  // Preview Mode Guard: Never attempt remote writes when DATABASE_URL is absent
+  if (isLocalPreviewMode) {
+    setTimeout(() => {
+      isBroadcasting = false;
+    }, 300);
+    return {
+      success: true,
+      mode: 'local_preview',
+      hasDatabase: false,
+      skippedRemoteWrite: true,
+      version: 0,
+      lastUpdated: new Date().toISOString(),
+      lastUpdatedByDevice: deviceLabel,
+      lastUpdatedDeviceType: deviceType,
+    };
+  }
+
+  // 2. Push to Vercel Serverless /api/sync (Neon Postgres)
   try {
     const res = await fetch('/api/sync', {
       method: 'POST',
@@ -158,6 +298,8 @@ export async function pushMultiDeviceUpdate(
         action,
         data,
         senderDeviceId: deviceId,
+        deviceType,
+        deviceLabel,
         baseVersion: currentServerVersion,
       }),
     });
@@ -166,18 +308,40 @@ export async function pushMultiDeviceUpdate(
       const contentType = res.headers.get('content-type') || '';
       if (contentType.includes('application/json')) {
         const json = await res.json();
-        if (typeof json?.version === 'number') {
-          currentServerVersion = json.version;
+        if (json?.mode === 'local_preview' || json?.hasDatabase === false) {
+          isLocalPreviewMode = true;
+          return {
+            success: true,
+            mode: 'local_preview',
+            hasDatabase: false,
+            skippedRemoteWrite: true,
+            version: 0,
+            lastUpdated: json?.lastUpdated,
+            lastUpdatedByDevice: deviceLabel,
+            lastUpdatedDeviceType: deviceType,
+          };
         }
-        if (typeof json?.lastUpdated === 'string') {
-          currentServerLastUpdated = json.lastUpdated;
+
+        isLocalPreviewMode = false;
+        if (json?.success) {
+          markCloudSnapshotApplied({
+            version: typeof json.version === 'number' ? json.version : currentServerVersion,
+            lastUpdated: typeof json.lastUpdated === 'string' ? json.lastUpdated : new Date().toISOString(),
+            lastUpdatedByDevice: json.lastUpdatedByDevice || deviceLabel,
+            lastUpdatedDeviceType: json.lastUpdatedDeviceType || deviceType,
+            lastAction: action,
+          });
         }
         return {
           success: !!json?.success,
+          mode: 'neon_postgres',
+          hasDatabase: true,
           version: json?.version,
           lastUpdated: json?.lastUpdated,
+          lastUpdatedByDevice: json?.lastUpdatedByDevice || deviceLabel,
+          lastUpdatedDeviceType: json?.lastUpdatedDeviceType || deviceType,
           rejectedStale: !!json?.rejectedStale,
-          data: json?.data,
+          data: json?.data || undefined,
         };
       }
     }
@@ -193,87 +357,205 @@ export async function pushMultiDeviceUpdate(
 }
 
 /**
- * Fetch latest authoritative snapshot from Server (Read-Only GET /api/sync — never overwrites server)
+ * Fetch latest authoritative snapshot from Neon Postgres (Read-Only GET /api/sync)
+ * Called explicitly when the user clicks "ดึงข้อมูลล่าสุดจาก Cloud".
  */
-export async function fetchLatestServerSnapshot(isManual = false): Promise<boolean> {
-  if (!activeCallbacks) return false;
-  if (isFetchingState) return false;
+export async function fetchLatestServerSnapshot(isManual = false): Promise<{
+  ok: boolean;
+  mode: 'neon_postgres' | 'local_preview' | 'offline';
+  version?: number;
+  lastUpdated?: string;
+  lastUpdatedByDevice?: string;
+  lastUpdatedDeviceType?: DeviceType;
+}> {
+  if (!activeCallbacks) return { ok: false, mode: 'offline' };
+  if (isFetchingState) return { ok: false, mode: isLocalPreviewMode ? 'local_preview' : 'neon_postgres' };
   isFetchingState = true;
 
   try {
     if (isManual) {
-      activeCallbacks.onStatusChange?.('syncing', 'ກຳລັງດຶງຂໍ້ມູນລ່າສຸດຈາກ Server...');
+      activeCallbacks.onStatusChange?.('syncing', 'ກຳລັງດຶງຂໍ້ມູນລ່າສຸດຈາກ Neon Postgres...');
     }
     const res = await fetch(`/api/sync?_t=${Date.now()}`, { cache: 'no-store' });
     if (res.ok) {
       const contentType = res.headers.get('content-type') || '';
       if (contentType.includes('application/json')) {
         const json = await res.json();
+        if (json?.mode === 'local_preview' || json?.hasDatabase === false) {
+          isLocalPreviewMode = true;
+          activeCallbacks.onLocalPreviewDetected?.();
+          activeCallbacks.onStatusChange?.(
+            'preview',
+            'ໂໝດ Preview (LocalStorage ເທົ່ານັ້ນ • ບໍ່ແຕະຖານຂໍ້ມູນຈິງ)'
+          );
+          return { ok: true, mode: 'local_preview' };
+        }
+
         if (json?.data) {
-          if (typeof json.version === 'number') {
-            currentServerVersion = json.version;
-          }
-          if (typeof json.lastUpdated === 'string') {
-            currentServerLastUpdated = json.lastUpdated;
-          }
+          isLocalPreviewMode = false;
+          markCloudSnapshotApplied({
+            version: typeof json.version === 'number' ? json.version : 0,
+            lastUpdated: typeof json.lastUpdated === 'string' ? json.lastUpdated : '',
+            lastUpdatedByDevice: json.lastUpdatedByDevice,
+            lastUpdatedDeviceType: json.lastUpdatedDeviceType,
+            lastAction: json.lastAction,
+          });
           activeCallbacks.onDataReceived(json.data, 'syncAll', {
             isInitialSync: isManual,
             isFullSnapshot: true,
             version: json.version,
+            lastUpdated: json.lastUpdated,
+            lastUpdatedByDevice: json.lastUpdatedByDevice,
+            lastUpdatedDeviceType: json.lastUpdatedDeviceType,
+            lastAction: json.lastAction,
+            mode: 'neon_postgres',
+            hasDatabase: true,
           });
           activeCallbacks.onStatusChange?.(
             'connected',
-            'ຊິ້ງຫຼາຍເຄື່ອງ Real-time (Polling 3.5s) ເຊື່ອມຕໍ່ແລ້ວ'
+            'ເຊື່ອມຕໍ່ Neon Postgres Cloud ແລ້ວ (ແຈ້ງເຕືອນອັດເດດອັດຕະໂນມັດ)'
           );
-          return true;
+          return {
+            ok: true,
+            mode: 'neon_postgres',
+            version: json.version,
+            lastUpdated: json.lastUpdated,
+            lastUpdatedByDevice: json.lastUpdatedByDevice,
+            lastUpdatedDeviceType: json.lastUpdatedDeviceType,
+          };
         }
       }
     }
-    return false;
+    return { ok: false, mode: 'offline' };
   } catch (err) {
     console.warn('Manual /api/sync fetch note:', err);
     activeCallbacks.onStatusChange?.('offline', 'ໂໝດອອບລາຍ (ບໍ່ສາມາດເຊື່ອມຕໍ່ Server ຊົ່ວຄາວ)');
-    return false;
+    return { ok: false, mode: 'offline' };
   } finally {
     isFetchingState = false;
   }
 }
 
 /**
- * Initialize Multi-Device Real-Time Listener (Fetch-First GET /api/sync + 3.5s Version Polling + Tab Wakeup)
+ * Initialize Multi-Device Real-Time Listener:
+ * - Read-First GET /api/sync on load
+ * - Microsoft/WPS Cloud Update Confirmation whenever another device saved newer data while this device has existing data
+ * - 3.5s Version Polling (GET /api/sync/version) + Focus/Visibility/Online Wakeup
  */
 export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
   const deviceId = getDeviceId();
   activeCallbacks = callbacks;
 
-  // 1. Read-First on Load (GET /api/sync — Server is the Single Source of Truth)
+  const checkHasLocalData = (): boolean => {
+    try {
+      if (callbacks.hasLocalData) return callbacks.hasLocalData();
+      return hasAnyLocalStoredData();
+    } catch {
+      return hasAnyLocalStoredData();
+    }
+  };
+
   const fetchFullState = async (isInitialSync: boolean) => {
     if (isFetchingState) return;
     isFetchingState = true;
     try {
       if (isInitialSync) {
-        callbacks.onStatusChange?.('syncing', 'ກຳລັງດຶງຂໍ້ມູນລ່າສຸດຈາກ Server...');
+        callbacks.onStatusChange?.('syncing', 'ກຳລັງກວດສອບຂໍ້ມູນລ່າສຸດຈາກ Neon Postgres...');
       }
       const res = await fetch(`/api/sync?_t=${Date.now()}`, { cache: 'no-store' });
       if (res.ok) {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           const json = await res.json();
+          if (json?.mode === 'local_preview' || json?.hasDatabase === false) {
+            isLocalPreviewMode = true;
+            callbacks.onLocalPreviewDetected?.();
+            callbacks.onStatusChange?.(
+              'preview',
+              'ໂໝດ Preview (LocalStorage ເທົ່ານັ້ນ • ບໍ່ແຕະຖານຂໍ້ມູນຈິງ)'
+            );
+            return;
+          }
+
           if (json?.data) {
-            if (typeof json.version === 'number') {
-              currentServerVersion = json.version;
+            isLocalPreviewMode = false;
+            const cloudVersion = typeof json.version === 'number' ? json.version : 0;
+            const cloudLastUpdated = typeof json.lastUpdated === 'string' ? json.lastUpdated : '';
+            const cloudSenderId = typeof json.lastSenderId === 'string' ? json.lastSenderId : '';
+            const cloudDeviceLabel =
+              typeof json.lastUpdatedByDevice === 'string' && json.lastUpdatedByDevice
+                ? json.lastUpdatedByDevice
+                : 'ອີກເຄື່ອງໜຶ່ງ (Another Device)';
+            const cloudDeviceType: DeviceType =
+              json.lastUpdatedDeviceType === 'Mobile' ||
+              json.lastUpdatedDeviceType === 'Tablet' ||
+              json.lastUpdatedDeviceType === 'PC'
+                ? json.lastUpdatedDeviceType
+                : 'PC';
+            const cloudAction = typeof json.lastAction === 'string' ? json.lastAction : undefined;
+
+            const localMeta = getLastSyncedMeta();
+            const localVersion = Math.max(currentServerVersion, localMeta?.version || 0);
+            const localLastUpdated = currentServerLastUpdated || localMeta?.lastUpdated || '';
+            const cloudTs = cloudLastUpdated ? new Date(cloudLastUpdated).getTime() : 0;
+            const localTs = localLastUpdated ? new Date(localLastUpdated).getTime() : 0;
+
+            const isCloudNewer =
+              cloudVersion > localVersion || (cloudTs > 0 && (localTs === 0 || cloudTs > localTs));
+            const isFromAnotherDevice = !cloudSenderId || cloudSenderId !== deviceId;
+            const deviceHasLocalData = checkHasLocalData();
+            const cloudHasData = isCloudPayloadNonEmpty(json.data);
+
+            // Cloud File Confirmation Mode (Microsoft / WPS style):
+            // If this device ALREADY has local data AND Cloud has newer data from another device,
+            // do NOT silently overwrite the screen — prompt the user to confirm updating!
+            if (
+              deviceHasLocalData &&
+              cloudHasData &&
+              isCloudNewer &&
+              isFromAnotherDevice &&
+              callbacks.onCloudUpdateAvailable
+            ) {
+              lastNotifiedVersion = Math.max(lastNotifiedVersion, cloudVersion);
+              if (cloudLastUpdated) lastNotifiedLastUpdated = cloudLastUpdated;
+              callbacks.onCloudUpdateAvailable({
+                version: cloudVersion,
+                lastUpdated: cloudLastUpdated,
+                lastUpdatedByDevice: cloudDeviceLabel,
+                lastUpdatedDeviceType: cloudDeviceType,
+                lastSenderId: cloudSenderId,
+                lastAction: cloudAction,
+                data: json.data,
+              });
+              callbacks.onStatusChange?.(
+                'connected',
+                'ພົບຂໍ້ມູນອັບເດດລ່າສຸດຈາກອີກເຄື່ອງ • ລໍຖ້າຢືນຢັນ'
+              );
+              return;
             }
-            if (typeof json.lastUpdated === 'string') {
-              currentServerLastUpdated = json.lastUpdated;
-            }
+
+            // Otherwise (empty device on first open, or same device, or same version): apply safely
+            markCloudSnapshotApplied({
+              version: cloudVersion,
+              lastUpdated: cloudLastUpdated,
+              lastUpdatedByDevice: cloudDeviceLabel,
+              lastUpdatedDeviceType: cloudDeviceType,
+              lastAction: cloudAction,
+            });
             callbacks.onDataReceived(json.data, 'syncAll', {
               isInitialSync,
               isFullSnapshot: true,
-              version: json.version,
+              version: cloudVersion,
+              lastUpdated: cloudLastUpdated,
+              lastUpdatedByDevice: cloudDeviceLabel,
+              lastUpdatedDeviceType: cloudDeviceType,
+              lastAction: cloudAction,
+              mode: 'neon_postgres',
+              hasDatabase: true,
             });
             callbacks.onStatusChange?.(
               'connected',
-              'ຊິ້ງຫຼາຍເຄື່ອງ Real-time (Polling 3.5s) ເຊື່ອມຕໍ່ແລ້ວ'
+              'ເຊື່ອມຕໍ່ Neon Postgres Cloud ແລ້ວ (ແຈ້ງເຕືອນອັດເດດອັດຕະໂນມັດ)'
             );
             return;
           }
@@ -282,7 +564,7 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
       callbacks.onStatusChange?.('offline', 'ບໍ່ສາມາດດຶງ /api/sync ໄດ້ຊົ່ວຄາວ');
     } catch (err) {
       console.warn('Initial /api/sync note:', err);
-      callbacks.onStatusChange?.('offline', 'ໂໝດອອບລາຍ (ກຳລັງໃຊ້ຂໍ້ມູນສຳຮອງ)');
+      callbacks.onStatusChange?.('offline', 'ໂໝດອອບລາຍ (ກຳລັງໃຊ້ຂໍ້ມູນໃນເຄື່ອງຊົ່ວຄາວ)');
     } finally {
       isFetchingState = false;
     }
@@ -290,7 +572,7 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
 
   fetchFullState(true);
 
-  // 2. Listen on local BroadcastChannel (Same-browser multi-tab instant updates)
+  // Listen on local BroadcastChannel (Same-browser multi-tab instant updates)
   const handleBroadcastMessage = (event: MessageEvent) => {
     const { action, data, senderDeviceId } = event.data || {};
     if (senderDeviceId !== deviceId && data) {
@@ -305,29 +587,51 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
     broadcastChannel.addEventListener('message', handleBroadcastMessage);
   }
 
-  // 3. Smart Version Polling every 3.5s via /api/sync/version (100% Vercel Serverless compatible)
+  // Smart Version Polling every 3.5s via /api/sync/version
   const checkVersion = async () => {
-    if (isBroadcasting || isFetchingState) return;
+    if (isBroadcasting || isFetchingState || isLocalPreviewMode) return;
     try {
       const res = await fetch(`/api/sync/version?_t=${Date.now()}`, { cache: 'no-store' });
       if (res.ok) {
         const contentType = res.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           const json = await res.json();
-          const versionChanged =
-            typeof json?.version === 'number' && json.version !== currentServerVersion;
-          const tsChanged =
-            typeof json?.lastUpdated === 'string' &&
-            json.lastUpdated !== '' &&
-            json.lastUpdated !== currentServerLastUpdated;
+          if (json?.mode === 'local_preview' || json?.hasDatabase === false) {
+            isLocalPreviewMode = true;
+            return;
+          }
 
-          if (versionChanged || tsChanged) {
+          const remoteVersion = typeof json?.version === 'number' ? json.version : 0;
+          const remoteTs = typeof json?.lastUpdated === 'string' ? json.lastUpdated : '';
+          const remoteSenderId = typeof json?.lastSenderId === 'string' ? json.lastSenderId : '';
+
+          const knownVersion = Math.max(currentServerVersion, lastNotifiedVersion);
+          const knownTs = lastNotifiedLastUpdated || currentServerLastUpdated;
+
+          const versionNewer = remoteVersion > knownVersion;
+          const tsNewer =
+            !!remoteTs &&
+            remoteTs !== knownTs &&
+            (!knownTs || new Date(remoteTs).getTime() > new Date(knownTs).getTime());
+
+          if (versionNewer || tsNewer) {
+            // If this very device was the last sender, sync metadata quietly
+            if (remoteSenderId && remoteSenderId === deviceId) {
+              markCloudSnapshotApplied({
+                version: remoteVersion,
+                lastUpdated: remoteTs,
+                lastUpdatedByDevice: json.lastUpdatedByDevice,
+                lastUpdatedDeviceType: json.lastUpdatedDeviceType,
+                lastAction: json.lastAction,
+              });
+              return;
+            }
             await fetchFullState(false);
           }
         }
       }
     } catch {
-      // Ignore transient network errors during background version poll
+      // Ignore transient network errors during background poll
     }
   };
 
@@ -337,7 +641,6 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
     }
   }, 3500);
 
-  // 4. Immediate sync check when switching tabs, unlocking mobile phone, or reconnecting network
   const handleWakeUp = () => {
     if (document.visibilityState === 'visible' && navigator.onLine !== false) {
       checkVersion();
@@ -348,7 +651,6 @@ export function initMultiDeviceSync(callbacks: SyncCallbacks): () => void {
   document.addEventListener('visibilitychange', handleWakeUp);
   window.addEventListener('online', handleWakeUp);
 
-  // Return cleanup function
   return () => {
     if (pollTimer) clearInterval(pollTimer);
     if (broadcastChannel) {

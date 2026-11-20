@@ -1,11 +1,24 @@
 export type Role = 'admin' | 'staff';
 
+export interface StaffPermissions {
+  posSales: boolean;       // 1. สิทธิ์เข้าหน้าขายสินค้า (POS / เปิดบิล / รับออเดอร์)
+  roomManagement: boolean; // 2. สิทธิ์เปิดห้อง / ปิดห้อง / ต่อเวลาห้อง (Room Management)
+  editActiveBill: boolean; // 3. สิทธิ์แก้ไขบิลที่เปิดอยู่ (Edit Active Bill / ลดจำนวนหรือแก้รายการในบิล)
+  voidBill: boolean;       // 4. สิทธิ์ยกเลิกบิล / ลบบิล (Void / Cancel Bill)
+  applyDiscount: boolean;  // 5. สิทธิ์ให้ส่วนลด / แก้ไขราคา (Apply Discount / Edit Price)
+  manageStock: boolean;    // 6. สิทธิ์เข้าดูและจัดการสต็อกสินค้า (View / Add / Edit Stock)
+  viewReports: boolean;    // 7. สิทธิ์เข้าดูรายงานยอดขาย / สรุปยอดเงิน (Sales Reports / Revenue)
+  manageStaff: boolean;    // 8. สิทธิ์จัดการพนักงานและตั้งค่าสิทธิ์ (Manage Staff & Permissions - เฉพาะ Admin/เจ้าของร้าน)
+}
+
 export interface StaffMember {
   id: string;
   name: string;
   role: Role;
+  pin?: string;
   phone?: string;
   active: boolean;
+  permissions?: StaffPermissions;
   updatedAt?: string;
 }
 
@@ -74,6 +87,21 @@ export interface RoomOrder {
   isStockDeducted?: boolean;
 }
 
+export interface RoomTimeExtension {
+  id: string;
+  extendedAt: string; // ISO string
+  pricingType: RoomPricingType;
+  label: string;
+  addedHours: number;
+  hourlyRate?: number;
+  packageId?: string;
+  packageName?: string;
+  charge: number;
+  isPaid?: boolean;
+  includedInOrders?: boolean;
+  extendedByStaffName?: string;
+}
+
 export interface Room {
   id: string;
   name: string; // e.g. ຫ້ອງ VIP 689, ຫ້ອງ VIP 01
@@ -87,10 +115,12 @@ export interface Room {
   openedAt?: string; // ISO string
   targetEndTime?: string; // ISO string (e.g. 08:00 + 4 hours -> 12:00)
   bookedHours?: number; // e.g. 4
+  baseBookedHours?: number; // Original booked hours before extensions
   openedByStaffId?: string;
   openedByStaffName?: string;
   isPaid?: boolean; // ລູກຄ້າຈ່າຍແລ້ວ / ຊຳລະຄ່າຫ້ອງແລ້ວ (ຖ້າຕິກແລ້ວບໍ່ຕ້ອງຄິດໄລ່ເງິນ ຄິດໄລ່ແຕ່ເວລາ)
   orders: RoomOrder[];
+  extensions?: RoomTimeExtension[];
   updatedAt?: string; // ISO string for mutation versioning & race condition protection
 }
 
